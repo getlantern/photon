@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"runtime"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -669,5 +671,256 @@ func TestTakeOverNeedsQUICStream(t *testing.T) {
 	}
 	if stream.closes != 1 {
 		t.Fatal("response not finished", stream.closes)
+	}
+}
+
+// recordedControl stands in for the QUIC stream beneath a raw stream.
+type recordedControl struct {
+	mu                    sync.Mutex
+	urgency               int8
+	incremental           bool
+	read, write, deadline time.Time
+}
+
+func (c *recordedControl) SetDeadline(t time.Time) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.deadline = t
+	return nil
+}
+func (c *recordedControl) SetReadDeadline(t time.Time) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.read = t
+	return nil
+}
+func (c *recordedControl) SetWriteDeadline(t time.Time) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.write = t
+	return nil
+}
+func (c *recordedControl) SetPriority(urgency int8, incremental bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.urgency, c.incremental = urgency, incremental
+}
+
+func TestRawStreamForwardsStreamControls(t *testing.T) {
+	session, transport, config, _ := rawFixture(t, bytes.NewReader(nil))
+	stream, err := session.openRequestStream(context.Background(), transport, nil, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	control := &recordedControl{urgency: 3, incremental: true}
+	stream.control = control
+	stream.SetPriority(1, false)
+	read, write, both := time.Unix(1, 0), time.Unix(2, 0), time.Unix(3, 0)
+	if stream.SetReadDeadline(read) != nil || stream.SetWriteDeadline(write) != nil || stream.SetDeadline(both) != nil {
+		t.Fatal("deadline setters failed")
+	}
+	if control.urgency != 1 || control.incremental || !control.read.Equal(read) || !control.write.Equal(write) || !control.deadline.Equal(both) {
+		t.Fatalf("%+v", control)
+	}
+	stream.CancelRead(0x10c)
+	stream.CancelWrite(0x10c)
+}
+
+// blockedFixture is a raw stream whose decoder has a dynamic table, so a
+// section can wait for an insertion that the test controls.
+func blockedFixture(t *testing.T, source io.Reader, feedback io.Writer) (*Session, *FieldDecoder, *ClientStream, *rawTestStream, *atomic.Int32) {
+	t.Helper()
+	stream, config, done := exchangeFixture(t, source)
+	decoder, err := NewFieldDecoder(decoderLimits(), feedback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { decoder.Close(context.Canceled) })
+	if err := decoderUpdate(t, decoder, qpack.EncoderInstruction{Type: qpack.SetDynamicCapacity, Index: 128}); err != nil {
+		t.Fatal(err)
+	}
+	config.Decoder = decoder
+	session := managedExchangeSession(t, config)
+	transport := &rawTestStream{stream}
+	raw, err := session.openRequestStream(context.Background(), transport, nil, ClientStreamConfig{MaxEncodedHeaders: 4096, MaxInformational: 4, Done: func() { done.Add(1) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw.control = &recordedControl{}
+	request, _ := http.NewRequest("GET", "https://example.com/", nil)
+	if err := raw.SendRequestHeader(request); err != nil {
+		t.Fatal(err)
+	}
+	return session, decoder, raw, transport, done
+}
+
+func awaitBlockedSection(t *testing.T, decoder *FieldDecoder) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		decoder.mu.Lock()
+		blocked := len(decoder.pending) == 1
+		decoder.mu.Unlock()
+		if blocked {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("section never waited for the dynamic table")
+		}
+		runtime.Gosched()
+	}
+}
+
+// A section waiting for the dynamic table reads nothing from the request
+// stream, so the receive controls have to reach the wait itself.
+func TestClientStreamReceiveControlsReachQPACKWait(t *testing.T) {
+	// Required Insert Count 1, Base 1, dynamic entry 0: the whole section.
+	blocked := readerFrame(t, h3.Headers, []byte{2, 0, 0x80})
+	for _, section := range []string{"headers", "trailers"} {
+		for _, control := range []string{"deadline", "cancel"} {
+			t.Run(section+"/"+control, func(t *testing.T) {
+				wire, insert := blocked, qpack.EncoderInstruction{Type: qpack.InsertLiteralName, Name: ":status", Value: "200"}
+				if section == "trailers" {
+					wire = append(readerHeaders(t, responseFields("200")...), readerFrame(t, h3.Data, []byte("body"))...)
+					wire = append(wire, blocked...)
+					insert = qpack.EncoderInstruction{Type: qpack.InsertLiteralName, Name: "x-end", Value: "done"}
+				}
+				_, decoder, stream, transport, _ := blockedFixture(t, bytes.NewReader(wire), io.Discard)
+				defer func() { stream.CancelRead(0x10c); stream.CancelWrite(0x10c) }()
+				var response *http.Response
+				// receive is the call that waits: ReadResponse for the response
+				// header, Read for trailers.
+				receive := func() (err error) {
+					response, err = stream.ReadResponse()
+					return err
+				}
+				if section == "trailers" {
+					if err := receive(); err != nil {
+						t.Fatal(err)
+					}
+					body := make([]byte, 4)
+					if _, err := io.ReadFull(stream, body); err != nil || string(body) != "body" {
+						t.Fatalf("%q %v", body, err)
+					}
+					receive = func() error {
+						_, err := stream.Read(make([]byte, 1))
+						return err
+					}
+				}
+				result := make(chan error, 1)
+				go func() { result <- receive() }()
+				awaitBlockedSection(t, decoder)
+				if control == "cancel" {
+					stream.CancelRead(0x77)
+				} else {
+					stream.SetReadDeadline(time.Now().Add(-time.Second))
+				}
+				var err error
+				select {
+				case err = <-result:
+				case <-time.After(3 * time.Second):
+					t.Fatal("receive control left the QPACK wait blocked")
+				}
+				if control == "cancel" {
+					var reset *quic.StreamError
+					if !errors.As(err, &reset) || reset.Remote || reset.ErrorCode != 0x77 {
+						t.Fatal(err)
+					}
+					if reads, _ := transport.codes(); len(reads) == 0 || reads[0] != 0x77 {
+						t.Fatal(reads)
+					}
+					if err := receive(); err == nil {
+						t.Fatal("received after CancelRead")
+					}
+					return
+				}
+				if !errors.Is(err, os.ErrDeadlineExceeded) {
+					t.Fatal(err)
+				}
+				// The deadline cost nothing: the section is still waiting, and
+				// the repeated call gets it once the insertion arrives.
+				awaitBlockedSection(t, decoder)
+				if err := receive(); !errors.Is(err, os.ErrDeadlineExceeded) {
+					t.Fatal("expired deadline no longer applies:", err)
+				}
+				stream.SetReadDeadline(time.Time{})
+				if err := decoderUpdate(t, decoder, insert); err != nil {
+					t.Fatal(err)
+				}
+				err = receive()
+				if section == "headers" {
+					if err != nil || response.StatusCode != 200 {
+						t.Fatal(response, err)
+					}
+				} else if err != io.EOF || response.Trailer.Get("X-End") != "done" {
+					t.Fatal(err, response.Trailer)
+				}
+			})
+		}
+	}
+}
+
+// blockedWriter is a decoder stream out of flow-control credit.
+type blockedWriter struct {
+	release chan struct{}
+	writes  atomic.Int32
+}
+
+func (w *blockedWriter) Write(p []byte) (int, error) {
+	w.writes.Add(1)
+	<-w.release
+	return len(p), nil
+}
+
+// A response read through its end has no QPACK work left to cancel, so its
+// release must not depend on the decoder stream.
+func TestClientStreamEOFSkipsQPACKCancellation(t *testing.T) {
+	wire := append(readerHeaders(t, responseFields("200")...), readerFrame(t, h3.Data, []byte("body"))...)
+	feedback := &blockedWriter{release: make(chan struct{})}
+	defer close(feedback.release)
+	session, _, stream, _, done := blockedFixture(t, bytes.NewReader(wire), feedback)
+	if _, err := stream.ReadResponse(); err != nil {
+		t.Fatal(err)
+	}
+	if body, err := io.ReadAll(stream); err != nil || string(body) != "body" {
+		t.Fatalf("%q %v", body, err)
+	}
+	if err := stream.Close(); err != nil {
+		t.Fatal(err)
+	}
+	awaitRelease(t, session, done)
+	if writes := feedback.writes.Load(); writes != 0 {
+		t.Fatal("complete response wrote QPACK cancellation feedback:", writes)
+	}
+}
+
+// stoppedStream fails Close the way a QUIC stream does after STOP_SENDING.
+type stoppedStream struct {
+	*rawTestStream
+	code quic.StreamErrorCode
+}
+
+func (s *stoppedStream) Close() error {
+	s.sendCancel(context.Canceled)
+	return &quic.StreamError{ErrorCode: s.code, Remote: true}
+}
+
+// A server may stop a request's send direction with H3_NO_ERROR once it has
+// responded. Close then has nothing left to do, which is not a failure.
+func TestRawStreamCloseAfterPeerStopped(t *testing.T) {
+	for code, stopped := range map[quic.StreamErrorCode]bool{0x100: true, 0x10c: false} {
+		session, transport, config, _ := rawFixture(t, bytes.NewReader(nil))
+		stream, err := session.openRequestStream(context.Background(), &stoppedStream{rawTestStream: transport, code: code}, nil, config)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request, _ := http.NewRequest("GET", "https://example.com/", nil)
+		if err := stream.SendRequestHeader(request); err != nil {
+			t.Fatal(err)
+		}
+		if err := stream.Close(); (err == nil) != stopped {
+			t.Fatalf("code %#x: %v", code, err)
+		}
+		stream.CancelRead(0x10c)
 	}
 }

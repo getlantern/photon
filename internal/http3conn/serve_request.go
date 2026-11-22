@@ -247,6 +247,7 @@ func ServeRequest(parent context.Context, stream ServerRequestStream, config Ser
 		}
 		taken := newRawStream(transport, underlying, task, config.HandlerError)
 		taken.body = body.ReadCloser
+		taken.attachFields(fields)
 		taken.noWriter = fmt.Errorf("http3: invalid use of Stream.Write before sending the response header")
 		// Without a final status no response is ever sent: WriteHeader is
 		// unavailable from here on, so the stream stays unwritable.

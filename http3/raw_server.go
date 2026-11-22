@@ -27,10 +27,12 @@ type RawServerConn struct {
 
 // NewRawServerConn starts HTTP/3 on an accepted connection without accepting
 // its streams. It validates the configuration and the connection (ALPN h3,
-// datagram support), charges it to MaxConnections and runs ConnContext; those
-// failures are returned and leave conn with the caller. It does not block on
-// the peer: the control and QPACK streams are opened in the background, and a
-// failure there closes the connection.
+// datagram support) and charges it to MaxConnections; those failures are
+// returned and leave conn with the caller. ConnContext then runs on the
+// admitted connection: if it returns a canceled context, that error is
+// returned and conn is closed, and a nil context panics. The call does not
+// block on the peer: the control and QPACK streams are opened in the
+// background, and a failure there closes the connection.
 func (s *Server) NewRawServerConn(conn *quic.Conn) (*RawServerConn, error) {
 	admitted, err := s.admit(context.Background(), conn)
 	if err != nil {

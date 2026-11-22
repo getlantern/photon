@@ -3,7 +3,9 @@ package http3conn
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
+	"time"
 
 	"github.com/getlantern/photon/internal/qpack"
 )
@@ -20,13 +22,42 @@ type FieldStream struct {
 	mu             sync.Mutex
 	busy, canceled bool
 	cancelErr      error
+	// A raw stream's receive controls reach a wait for the dynamic table:
+	// nothing arrives on the request stream to carry them there.
+	pending  <-chan DecodedSection // section a read deadline left undecided
+	deadline time.Time
+	changed  chan struct{} // closed when deadline changes
+	stopped  chan struct{} // closed by StopReading
+	stopErr  error
 }
 
 func NewFieldStream(decoder *FieldDecoder, id uint64) (*FieldStream, error) {
 	if decoder == nil || id > qpack.MaxInteger {
 		return nil, fmt.Errorf("http3: invalid field stream")
 	}
-	return &FieldStream{decoder: decoder, id: id}, nil
+	return &FieldStream{decoder: decoder, id: id, changed: make(chan struct{}), stopped: make(chan struct{})}, nil
+}
+
+// SetReadDeadline bounds Decode's wait, including one already in progress. An
+// expired deadline returns os.ErrDeadlineExceeded and keeps the section: the
+// next Decode resumes waiting for it and ignores its argument.
+func (s *FieldStream) SetReadDeadline(t time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.deadline = t
+	close(s.changed)
+	s.changed = make(chan struct{})
+}
+
+// StopReading makes the current and every later Decode return err, without
+// writing to the decoder stream. The owner still calls Cancel on cleanup.
+func (s *FieldStream) StopReading(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stopErr == nil {
+		s.stopErr = err
+		close(s.stopped)
+	}
 }
 func (s *FieldStream) Decode(ctx context.Context, section []byte) ([]qpack.DecodedField, error) {
 	if err := ctx.Err(); err != nil {
@@ -44,26 +75,60 @@ func (s *FieldStream) Decode(ctx context.Context, section []byte) ([]qpack.Decod
 		}
 		return nil, ErrFieldSectionCanceled
 	}
+	if s.stopErr != nil {
+		err := s.stopErr
+		s.mu.Unlock()
+		return nil, err
+	}
 	if s.busy {
 		s.mu.Unlock()
 		return nil, qpack.ErrPendingSection
 	}
-	result, err := s.decoder.Submit(s.id, section)
-	if err != nil {
-		s.mu.Unlock()
-		return nil, err
-	}
-	s.busy = true
-	s.mu.Unlock()
-	defer func() { s.mu.Lock(); s.busy = false; s.mu.Unlock() }()
-	select {
-	case decoded := <-result:
-		return decoded.Fields, decoded.Err
-	case <-ctx.Done():
-		if err := s.Cancel(); err != nil {
+	result := s.pending
+	if result == nil {
+		submitted, err := s.decoder.Submit(s.id, section)
+		if err != nil {
+			s.mu.Unlock()
 			return nil, err
 		}
-		return nil, ctx.Err()
+		result = submitted
+	}
+	s.pending, s.busy = nil, true
+	s.mu.Unlock()
+	defer func() { s.mu.Lock(); s.busy = false; s.mu.Unlock() }()
+	for {
+		// A section that is ready wins over a deadline that has passed.
+		select {
+		case decoded := <-result:
+			return decoded.Fields, decoded.Err
+		default:
+		}
+		s.mu.Lock()
+		deadline, changed := s.deadline, s.changed
+		s.mu.Unlock()
+		var expired <-chan time.Time
+		if !deadline.IsZero() {
+			timer := time.NewTimer(time.Until(deadline))
+			defer timer.Stop()
+			expired = timer.C
+		}
+		select {
+		case decoded := <-result:
+			return decoded.Fields, decoded.Err
+		case <-ctx.Done():
+			if err := s.Cancel(); err != nil {
+				return nil, err
+			}
+			return nil, ctx.Err()
+		case <-s.stopped:
+			return nil, s.stopErr
+		case <-expired:
+			s.mu.Lock()
+			s.pending = result
+			s.mu.Unlock()
+			return nil, os.ErrDeadlineExceeded
+		case <-changed:
+		}
 	}
 }
 

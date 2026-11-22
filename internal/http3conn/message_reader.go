@@ -36,8 +36,9 @@ type MessageReader struct {
 	message    *Message
 	maxHeaders uint64
 	data       bool
-	headers    *h3.Header // HEADERS frame whose block is still being read
+	headers    *h3.Header // HEADERS frame not yet decoded
 	block      []byte
+	decoding   bool // the block is read; its QPACK decoding is undecided
 	err        error
 }
 
@@ -85,13 +86,14 @@ func (r *MessageReader) Next(ctx context.Context) (MessageEvent, error) {
 			return MessageEvent{}, r.fail(&h3.Error{Code: h3.ExcessiveLoad, Reason: "encoded HEADERS exceeds local limit"})
 		}
 		r.headers = &header
-		for {
+		for !r.decoding {
 			if len(r.block) == cap(r.block) {
 				r.block = append(r.block, 0)[:len(r.block)]
 			}
 			n, err := r.frames.Read(r.block[len(r.block):cap(r.block)])
 			r.block = r.block[:len(r.block)+n]
 			if err == io.EOF {
+				r.decoding = true
 				break
 			}
 			if h3.IsDeadline(err) {
@@ -101,10 +103,15 @@ func (r *MessageReader) Next(ctx context.Context) (MessageEvent, error) {
 				return MessageEvent{}, r.fail(err)
 			}
 		}
+		// After a deadline the field stream still holds the section.
 		block := r.block
-		r.headers, r.block = nil, nil
+		r.block = nil
 		var err error
 		event.Fields, err = r.fields.Decode(ctx, block)
+		if h3.IsDeadline(err) {
+			return MessageEvent{}, err
+		}
+		r.headers, r.decoding = nil, false
 		if err != nil {
 			return MessageEvent{}, r.fail(err)
 		}

@@ -83,6 +83,9 @@ func (s *Session) openRequestStream(parent context.Context, stream ClientExchang
 	raw.noWriter = fmt.Errorf("http3: invalid use of RequestStream.Write before SendRequestHeader")
 	raw.noBody = fmt.Errorf("http3: invalid use of RequestStream.Read before ReadResponse")
 	c := &ClientStream{RawStream: raw, session: s, config: config, ctx: ctx}
+	// As for ExchangeRequest: after a validated end of response every section
+	// was decoded and acknowledged, so there is no QPACK work to cancel.
+	raw.completed = func() { c.complete.Store(true) }
 	observed := make(chan struct{})
 	observeLease := func() {
 		cause := context.Cause(lease.Context())
@@ -189,6 +192,7 @@ func (c *ClientStream) SendRequestHeader(request *http.Request) (err error) {
 	c.mu.Lock()
 	c.sent, c.request, c.fields, c.reader = true, &effective, fields, reader
 	c.mu.Unlock()
+	c.attachFields(fields)
 	// A failed HEADERS write is terminal for sending, and Write reports it.
 	c.writer = writer
 	if err := writer.Headers(outbound); err != nil {
@@ -203,9 +207,9 @@ func (c *ClientStream) SendRequestHeader(request *http.Request) (err error) {
 
 // ReadResponse reads through the final response header; interim responses go to
 // the configured Information callback. The response body is this stream's
-// receive direction: closing it cancels reading. Any failure, including an
-// expired read deadline, ends the receive direction. It may be called once,
-// after SendRequestHeader.
+// receive direction: closing it cancels reading. It may be called once, after
+// SendRequestHeader, and again after an expired read deadline, which keeps
+// what was read. Any other failure ends the receive direction.
 func (c *ClientStream) ReadResponse() (response *http.Response, err error) {
 	defer func() { err = c.mapError.apply(err) }()
 	c.readMu.Lock()
@@ -237,6 +241,13 @@ func (c *ClientStream) ReadResponse() (response *http.Response, err error) {
 			return nil
 		}},
 	})
+	if h3.IsDeadline(err) {
+		// The reader kept what it had; the call can be repeated.
+		c.mu.Lock()
+		c.responded = false
+		c.mu.Unlock()
+		return nil, err
+	}
 	if err != nil {
 		var protocol *h3.Error
 		var message *MessageError

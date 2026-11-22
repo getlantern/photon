@@ -2,6 +2,7 @@ package http3conn
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -41,6 +42,13 @@ func ReadHTTPResponse(ctx context.Context, request *http.Request, reader *Messag
 	interim := 0
 	for {
 		event, e := reader.Next(ctx)
+		// A read deadline interrupted the skipping of a frame in an earlier call.
+		if errors.Is(e, h3.ErrPayloadPending) {
+			if _, e := io.Copy(io.Discard, reader); e != nil {
+				return nil, e
+			}
+			continue
+		}
 		if e != nil {
 			return nil, e
 		}

@@ -87,7 +87,9 @@ type Server struct {
 	ErrorHandler func(ctx context.Context, streamID uint64, err error)
 
 	// IdleTimeout closes a connection with H3_NO_ERROR once it has had no
-	// request stream open for that long, counting from when serving starts.
+	// request stream open for that long. The period also bounds opening the
+	// control and QPACK streams, which the peer's credit can delay, and starts
+	// again when request serving begins.
 	// Only HTTP/3 requests count: QUIC activity such as PING does not, and a
 	// stream taken over with HTTPStreamer does until it is finished. Zero or
 	// negative means no timeout.
@@ -243,8 +245,31 @@ func (c *servedConn) serve() (err error) {
 		}
 		datagramConfig = &http3conn.DatagramSessionConfig{Dispatch: dispatch, Source: transport, Sender: transport, AbortRequest: dispatch.AbortRequest}
 	}
+	// The peer's stream and flow-control credit can hold setup up indefinitely
+	// while its PINGs keep QUIC alive. No request can exist yet, so that is
+	// idle time. The request loop takes over with a period of its own.
+	setupExpired := func() bool { return false }
+	if s.IdleTimeout > 0 {
+		fired, stopped := make(chan struct{}), false
+		timer := time.AfterFunc(s.IdleTimeout, func() {
+			defer close(fired)
+			conn.CloseWithError(0x100, "idle timeout")
+		})
+		defer timer.Stop()
+		setupExpired = func() bool {
+			if stopped || timer.Stop() {
+				stopped = true
+				return false
+			}
+			<-fired
+			return true
+		}
+	}
 	local, err := http3conn.OpenLocal(ctx, transport, settings)
 	if err != nil {
+		if setupExpired() {
+			return nil
+		}
 		return err
 	}
 	priorities, err := http3conn.NewRequestPriorities(requests)
@@ -273,6 +298,9 @@ func (c *servedConn) serve() (err error) {
 		return err
 	}
 	defer func() { session.Stop(err) }()
+	if setupExpired() {
+		return nil
+	}
 	return session.ServeRequests(ctx, acceptor, http3conn.ServeRequestsConfig{
 		MaxActive: requests, Drain: entry.drain, IdleTimeout: s.IdleTimeout, Report: s.requestReport(),
 		Request: http3conn.ServeRequestConfig{Priorities: priorities, HandlerError: httpError, HandlerPolicy: func(next http.Handler) http.Handler {

@@ -22,6 +22,7 @@ import (
 type RawStream struct {
 	stream    ClientExchangeStream // through the datagram binding when there is one
 	quic      *quic.Stream
+	control   streamControl   // quic, except under test
 	datagrams *DatagramStream // nil without datagram semantics
 	task      *requestTask
 	mapError  handlerErrorMap
@@ -36,10 +37,44 @@ type RawStream struct {
 
 	received     chan struct{} // closed when the application is done receiving
 	receivedOnce sync.Once
+	completed    func() // reports a validated end of message, before received closes
+
+	fieldsMu     sync.Mutex
+	fields       *FieldStream // the receive direction's QPACK waits, once it has any
+	readDeadline time.Time
+}
+
+// streamControl is the part of a QUIC stream that HTTP/3 framing passes through.
+type streamControl interface {
+	SetDeadline(time.Time) error
+	SetReadDeadline(time.Time) error
+	SetWriteDeadline(time.Time) error
+	SetPriority(urgency int8, incremental bool)
 }
 
 func newRawStream(stream ClientExchangeStream, underlying *quic.Stream, task *requestTask, mapError handlerErrorMap) *RawStream {
-	return &RawStream{stream: stream, quic: underlying, task: task, mapError: mapError, received: make(chan struct{})}
+	s := &RawStream{stream: stream, quic: underlying, task: task, mapError: mapError, received: make(chan struct{})}
+	if underlying != nil {
+		s.control = underlying
+	}
+	return s
+}
+
+// attachFields extends the read deadline and CancelRead to header and trailer
+// sections waiting on the QPACK dynamic table.
+func (s *RawStream) attachFields(fields *FieldStream) {
+	s.fieldsMu.Lock()
+	defer s.fieldsMu.Unlock()
+	s.fields = fields
+	fields.SetReadDeadline(s.readDeadline)
+}
+func (s *RawStream) setReadDeadline(t time.Time) {
+	s.fieldsMu.Lock()
+	defer s.fieldsMu.Unlock()
+	s.readDeadline = t
+	if s.fields != nil {
+		s.fields.SetReadDeadline(t)
+	}
 }
 
 // quicStreamOf finds the QUIC stream beneath datagram and endpoint adapters.
@@ -73,6 +108,9 @@ func (s *RawStream) Read(p []byte) (n int, err error) {
 		var message *MessageError
 		if errors.As(err, &protocol) || errors.As(err, &message) {
 			s.task.fail(err, 0x10e)
+		}
+		if err == io.EOF && s.completed != nil {
+			s.completed()
 		}
 		s.receiveEnded()
 	}
@@ -111,18 +149,32 @@ func (s *RawStream) TryWriteAll(p []byte) (err error) {
 
 // Close ends the send direction with FIN. It waits for a Write in progress and
 // fails while a DATA frame interrupted by a deadline is unfinished; CancelWrite
-// abandons such a stream. Receiving is unaffected.
+// abandons such a stream. Receiving is unaffected. A peer that already stopped
+// this direction with H3_NO_ERROR, as a server may once it has responded, has
+// ended it just as well: that is not an error.
 func (s *RawStream) Close() error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	var err error
 	if s.writer == nil {
-		return s.mapError.apply(s.ended(s.stream.Close()))
+		err = s.stream.Close()
+	} else {
+		err = s.writer.Close()
 	}
-	return s.mapError.apply(s.ended(s.writer.Close()))
+	if normalUploadStop(err) {
+		return nil
+	}
+	return s.mapError.apply(s.ended(err))
 }
 
 // CancelRead aborts receiving, as quic.Stream.CancelRead does, and unblocks Read.
 func (s *RawStream) CancelRead(code quic.StreamErrorCode) {
+	s.fieldsMu.Lock()
+	fields := s.fields
+	s.fieldsMu.Unlock()
+	if fields != nil {
+		fields.StopReading(&quic.StreamError{StreamID: s.stream.StreamID(), ErrorCode: code})
+	}
 	s.stream.CancelRead(code)
 	s.receiveEnded()
 }
@@ -134,13 +186,19 @@ func (s *RawStream) CancelWrite(code quic.StreamErrorCode) { s.stream.CancelWrit
 func (s *RawStream) Context() context.Context { return s.stream.Context() }
 func (s *RawStream) StreamID() quic.StreamID  { return s.stream.StreamID() }
 
-func (s *RawStream) SetDeadline(t time.Time) error      { return s.quic.SetDeadline(t) }
-func (s *RawStream) SetReadDeadline(t time.Time) error  { return s.quic.SetReadDeadline(t) }
-func (s *RawStream) SetWriteDeadline(t time.Time) error { return s.quic.SetWriteDeadline(t) }
+func (s *RawStream) SetDeadline(t time.Time) error {
+	s.setReadDeadline(t)
+	return s.control.SetDeadline(t)
+}
+func (s *RawStream) SetReadDeadline(t time.Time) error {
+	s.setReadDeadline(t)
+	return s.control.SetReadDeadline(t)
+}
+func (s *RawStream) SetWriteDeadline(t time.Time) error { return s.control.SetWriteDeadline(t) }
 
 // SetPriority sets the QUIC stream's scheduling priority.
 func (s *RawStream) SetPriority(urgency int8, incremental bool) {
-	s.quic.SetPriority(urgency, incremental)
+	s.control.SetPriority(urgency, incremental)
 }
 
 // QUICStream bypasses HTTP/3 framing and this stream's bookkeeping.

@@ -166,8 +166,8 @@ func (s *RequestStream) SendRequestHeader(req *http.Request) error {
 // Interim (1xx) responses are passed to ClientConfig.Information. It does not
 // set Response.Request or Response.TLS. The response body is the stream's
 // receive direction, the same data Read returns; closing it cancels reading.
-// It may be used once, after SendRequestHeader. If it fails, including by an
-// expired read deadline, the receive direction is unusable.
+// It may be used once, after SendRequestHeader, and again after an expired
+// read deadline. Any other failure leaves the receive direction unusable.
 func (s *RequestStream) ReadResponse() (*http.Response, error) { return s.stream.ReadResponse() }
 
 // Read reads the response body. It can only be used after ReadResponse.
@@ -183,7 +183,8 @@ func (s *RequestStream) TryWriteAll(b []byte) error { return s.stream.TryWriteAl
 
 // Close closes the send direction of the stream. It does not close the
 // receive direction. It fails while a DATA frame interrupted by a write
-// deadline is unfinished.
+// deadline is unfinished. It succeeds if the server already stopped the
+// direction with H3_NO_ERROR, as it may once it has responded.
 func (s *RequestStream) Close() error { return s.stream.Close() }
 
 // CancelRead aborts receiving on this stream, as quic.Stream.CancelRead does.

@@ -33,7 +33,12 @@ func startRawServer(ctx context.Context, t *testing.T, server *Server, alpn stri
 	t.Helper()
 	config := testServerTLS()
 	config.NextProtos = []string{alpn}
-	listener, err := quic.ListenAddr("127.0.0.1:0", config, &quic.Config{EnableDatagrams: server.EnableDatagrams})
+	transport := &quic.Config{}
+	if server.QUICConfig != nil {
+		transport = server.QUICConfig.Clone()
+	}
+	transport.EnableDatagrams = transport.EnableDatagrams || server.EnableDatagrams
+	listener, err := quic.ListenAddr("127.0.0.1:0", config, transport)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,7 +296,12 @@ func TestRawServerConnUnknownUnidirectionalStream(t *testing.T) {
 // offers the server's bidirectional streams to the test.
 func rawClient(ctx context.Context, t *testing.T, transport *Transport, address string) (*RawClientConn, <-chan *quic.Stream) {
 	t.Helper()
-	conn := dialRaw(ctx, t, address, NextProtoH3, &quic.Config{EnableDatagrams: transport.EnableDatagrams})
+	config := &quic.Config{}
+	if transport.QUICConfig != nil {
+		config = transport.QUICConfig.Clone()
+	}
+	config.EnableDatagrams = config.EnableDatagrams || transport.EnableDatagrams
+	conn := dialRaw(ctx, t, address, NextProtoH3, config)
 	raw := transport.NewRawClientConn(conn)
 	bidirectional := make(chan *quic.Stream, 1)
 	var loops sync.WaitGroup
@@ -622,4 +632,118 @@ func TestServerLogger(t *testing.T) {
 	if err := await(ctx, t, "error handler", reported); err == nil {
 		t.Fatal("no error reported")
 	}
+}
+
+// A peer can stall HTTP/3 setup by granting no unidirectional streams while its
+// PINGs keep QUIC alive. That is idle time too, and must not hold the
+// connection's place in the server forever.
+func TestServerIdleTimeoutDuringSetup(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	const idle = 100 * time.Millisecond
+	server := &Server{IdleTimeout: idle}
+	address := listenTestServer(ctx, t, server)
+	conn := dialRaw(ctx, t, address, NextProtoH3, &quic.Config{MaxIncomingUniStreams: -1, KeepAlivePeriod: idle / 5})
+	select {
+	case <-conn.Context().Done():
+	case <-ctx.Done():
+		t.Fatal("connection stalled in setup outlived the idle timeout")
+	}
+	var closed *quic.PeerCloseError
+	if cause := context.Cause(conn.Context()); !errors.As(cause, &closed) || !closed.Application || closed.Code != uint64(ErrCodeNoError) || closed.Reason != "idle timeout" {
+		t.Fatal(cause)
+	}
+	// The stalled connection gave its admission slot back.
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		server.mu.Lock()
+		admitted := len(server.connections)
+		server.mu.Unlock()
+		if admitted == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("stalled connection kept its admission slot")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// openDisposable opens unidirectional streams of an unknown type, one after
+// the other. HTTP/3 refuses each, and the next needs the credit that returns.
+func openDisposable(ctx context.Context, t *testing.T, conn *quic.Conn, count int) {
+	t.Helper()
+	for i := 0; i < count; i++ {
+		stream, err := conn.OpenUniStreamSync(ctx)
+		if err != nil {
+			t.Fatalf("unidirectional stream %d got no credit: %v", i, err)
+		}
+		if _, err := stream.Write([]byte{0x21}); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-stream.Context().Done():
+		case <-ctx.Done():
+			t.Fatalf("unidirectional stream %d was never refused", i)
+		}
+	}
+}
+
+// With RequireStreamCreditRelease the peer gets a stream back only once its
+// owner releases it. HTTP/3 owns the streams it handles, on every accept path.
+func TestStreamCreditRelease(t *testing.T) {
+	// Two request streams; the three critical streams and one more.
+	limited := &quic.Config{MaxIncomingStreams: 2, MaxIncomingUniStreams: 4, RequireStreamCreditRelease: true}
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "ok") })
+	requests := func(ctx context.Context, t *testing.T, client *ClientConn, origin string) {
+		t.Helper()
+		for i := 0; i < 6; i++ {
+			request, _ := http.NewRequestWithContext(ctx, "GET", origin+"/", nil)
+			response, err := client.RoundTrip(request)
+			if err != nil {
+				t.Fatalf("request %d got no stream credit: %v", i, err)
+			}
+			io.Copy(io.Discard, response.Body)
+			response.Body.Close()
+		}
+	}
+	t.Run("served", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		client, origin := dialTestServer(ctx, t, &Server{Handler: handler, QUICConfig: limited}, nil)
+		requests(ctx, t, client, origin)
+		openDisposable(ctx, t, client.conn, 4)
+	})
+	t.Run("raw server", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		app := startRawServer(ctx, t, &Server{Handler: handler, QUICConfig: limited}, NextProtoH3)
+		client, err := Dial(ctx, app.origin(), &tls.Config{InsecureSkipVerify: true}, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer client.Close()
+		requests(ctx, t, client, app.origin())
+		openDisposable(ctx, t, client.conn, 4)
+	})
+	t.Run("client", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		app := startRawServer(ctx, t, &Server{Handler: handler}, NextProtoH3)
+		client, err := Dial(ctx, app.origin(), &tls.Config{InsecureSkipVerify: true}, limited, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer client.Close()
+		requests(ctx, t, client, app.origin())
+		openDisposable(ctx, t, await(ctx, t, "connection", app.conns), 4)
+	})
+	t.Run("raw client", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		app := startRawServer(ctx, t, &Server{Handler: handler}, NextProtoH3)
+		raw, _ := rawClient(ctx, t, &Transport{QUICConfig: limited}, app.listener.Addr().String())
+		requests(ctx, t, raw.ClientConn, app.origin())
+		openDisposable(ctx, t, await(ctx, t, "connection", app.conns), 4)
+	})
 }

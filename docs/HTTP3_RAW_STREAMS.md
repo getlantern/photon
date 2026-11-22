@@ -32,12 +32,16 @@ is sent and `Stream.Write`/`TryWriteAll` fail. Afterwards `WriteHeader` panics
 and `Write` returns `http.ErrHijacked`. Repeated calls return the same `Stream`.
 
 The request task does not end when the handler returns. It waits until the
-application has finished both directions (send: `Close`, `CancelWrite` or a
-failed write; receive: `Read` returned EOF or a terminal error, or
+application has finished both directions (send: `Close`, `CancelWrite` or the
+peer's STOP_SENDING; receive: `Read` returned EOF or a terminal error, or
 `CancelRead`), or until the connection ends, and only then releases QPACK
 state, the datagram registration and the request slot. The QUIC receive
 context cannot stand in for the second condition: it ends when FIN arrives,
-before the application has read what is buffered. Until then the request
+before the application has read what is buffered. A `Write` or `Close` that
+fails local validation, such as a declared Content-Length, does not end
+sending: the application must call `CancelWrite`. `Close` succeeds when the
+peer has already stopped the direction with H3_NO_ERROR, which a server may do
+once it has responded. Until then the request
 context stays live. Peer resets no longer abort the other direction; they are
 returned from `Read`/`Write`. Protocol violations still close the connection
 and malformed messages still reset the request. When the request ended first
@@ -86,8 +90,10 @@ over the ones that are HTTP/3's:
   still accept and reject such streams themselves.
 
 `Server.NewRawServerConn` validates and admits the connection synchronously
-(configuration, ALPN, `MaxConnections`, `ConnContext`) and returns an error for
-those. Critical-stream setup continues in the background and fails by closing
+(configuration, ALPN, `MaxConnections`) and returns an error for those, leaving
+the connection with the caller. `ConnContext` runs after admission, as for
+`ServeQUICConn`: if it returns a canceled context the error is returned and the
+connection is closed, and a nil context panics. Critical-stream setup continues in the background and fails by closing
 the connection, so the call never blocks on the peer. `ServeQUICConn` is the
 same admission followed by the same serving code, run inline.
 
@@ -109,7 +115,9 @@ setting.
   blocks while the server limit is reached.
 - `Server.IdleTimeout` runs in the request loop for both served and raw
   connections: armed while no request stream is active, it closes the
-  connection with H3_NO_ERROR.
+  connection with H3_NO_ERROR. A separate period of the same length bounds
+  critical-stream setup, which a peer can stall by withholding credit while
+  its PINGs keep QUIC alive.
 - Early data: raw request streams never use 0-RTT. Remembered SETTINGS are
   bound to tickets only through `DialEarly`, so `OpenRequestStream` and the
   `Transport` constructors wait for the handshake. `AllowEarlyData` gates
@@ -132,9 +140,17 @@ with H3_DATAGRAM_ERROR, as before. Sending requires the peer's SETTINGS.
 A stream deadline that expires (`os.ErrDeadlineExceeded`) is retryable: the
 frame reader keeps a partially read frame header or HEADERS block, and the
 writer finishes a partially written DATA frame on the next `Write` or
-`TryWriteAll`. `Close` fails while a DATA frame is unfinished. A deadline that
-expires while HEADERS are being written is terminal for the send direction,
-and one that expires during `ReadResponse` fails the response.
+`TryWriteAll`. `Close` fails while a DATA frame is unfinished. `ReadResponse`
+can likewise be repeated. A deadline that expires while HEADERS are being
+written is terminal for the send direction.
+
+A header or trailer section waiting for a QPACK dynamic-table insertion reads
+nothing from the request stream, so the QUIC stream's own controls cannot
+reach it. The read deadline is therefore also applied to that wait, which
+keeps the undecided section for the repeated call, and `CancelRead` ends it
+without writing to the decoder stream; the QPACK cancellation follows at
+cleanup. A response read through its validated end needs no cancellation, so
+releasing it does not depend on decoder-stream credit.
 
 ## Knowing differences from upstream
 

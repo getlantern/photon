@@ -119,8 +119,11 @@ Response TLS metadata is populated from the connection.
 ClientConfig can set request/header/informational limits, trailer permissions
 and informational-response callbacks. Close cancels active work and joins
 connection-level processing, but callers remain responsible for response-body
-closure. ClientConn itself does not dial. There is no pooling, origin coalescing, decompression,
-Expect/continue upload scheduling yet. CONNECT byte tunnels are available through
+closure. ClientConn itself does not dial. There is no pooling, origin coalescing,
+Expect/continue upload scheduling yet. A ClientConn from `NewClientConn`, `Dial`
+or `DialEarly` is pinned to its origin and does not decompress; one from
+`Transport.NewClientConn` or `NewRawClientConn` is not pinned and negotiates
+gzip unless `DisableCompression` is set (see Raw connections). CONNECT byte tunnels are available through
 OpenTunnel and OpenExtendedTunnel (documented below). The large v2
 upstream interoperability failure remains unresolved.
 
@@ -225,8 +228,9 @@ or Range header key is present and the method is neither HEAD nor CONNECT.
 `DisableCompression` disables this behavior. Explicit encoding choices (including
 an empty or nil header entry) are preserved. Only automatically negotiated,
 single-gzip response encodings are decoded; bodyless 204/205/304 metadata and
-other or stacked encodings are left intact. Direct ClientConn and Dial clients
-continue to expose encoded bodies.
+other or stacked encodings are left intact. `NewClientConn`, `Dial` and
+`DialEarly` clients continue to expose encoded bodies; `Transport.NewClientConn`
+and `NewRawClientConn` clients follow the Transport's setting.
 
 Automatic decoding sets Response.Uncompressed, removes Content-Encoding and
 Content-Length, and sets ContentLength to -1. Wire length validation and HTTP/3
@@ -673,8 +677,12 @@ populate `Request.Trailer`. The caller must finish both directions: `Close` or
 `CancelWrite`, and `Read` to EOF or `CancelRead`. Until then the stream keeps
 its `MaxConcurrentRequests` slot, the request context stays live, and
 `Shutdown` waits for it. A peer reset of one direction is returned from that
-direction's calls and leaves the other open. An expired deadline
-(`os.ErrDeadlineExceeded`) leaves the stream usable. `TryWriteAll` queues a
+direction's calls and leaves the other open. A `Write` or `Close` that fails
+for a local reason, such as a declared Content-Length, does not finish
+sending: call `CancelWrite`. `Close` succeeds if the peer already stopped the
+direction with H3_NO_ERROR. An expired deadline (`os.ErrDeadlineExceeded`)
+leaves the stream usable, and the read deadline and `CancelRead` also end a
+wait for QPACK state. `TryWriteAll` queues a
 whole DATA frame or returns `quic.ErrWouldBlock`. `QUICStream` exposes the
 QUIC stream beneath the framing.
 
@@ -706,7 +714,8 @@ for the server's SETTINGS and sends the header. A CONNECT request whose `Proto`
 is not `HTTP/1.1` is an Extended CONNECT with that `:protocol`. Content-Length
 is sent only for a positive `ContentLength`, which `Write` and `Close` then
 enforce. `ReadResponse` returns the final response, without `Request` or `TLS`;
-interim responses go to `ClientConfig.Information`. `Read` and
+interim responses go to `ClientConfig.Information`. After an expired read
+deadline it can be called again. `Read` and
 `Response.Body` are the same receive direction, and closing the body cancels
 it. The stream holds its slot until both directions are finished, as above. A
 GOAWAY that rejects the stream, or closing the client, resets it.
@@ -754,7 +763,10 @@ themselves. The handlers release each stream's credit
 The client constructors return immediately and set up HTTP/3 in the
 background after the handshake. If that fails the connection is closed and
 later calls return the error. `NewRawServerConn` returns configuration, ALPN
-and `MaxConnections` failures and never blocks on the peer.
+and `MaxConnections` failures, which leave the connection with the caller, and
+never blocks on the peer. `ConnContext` runs after admission: a canceled
+context from it is returned as an error with the connection closed, and a nil
+context panics.
 `HandleRequestStream` returns when the request, including a taken-over stream,
 is finished, and blocks while `MaxConcurrentRequests` requests are running. A
 raw server connection is registered with its `Server`: `Shutdown` sends GOAWAY,
@@ -764,7 +776,8 @@ ones and then closes the connection; `Close` aborts it.
 ### Idle timeout and logging
 
 `Server.IdleTimeout` closes a connection with H3_NO_ERROR once it has had no
-request stream open for that long; QUIC-level activity does not count.
+request stream open for that long; QUIC-level activity does not count. The
+same period bounds opening the control and QPACK streams.
 `Server.Logger` receives handler panics at error level and request and
 connection failures at debug level, in addition to `ErrorHandler`.
 `Transport.Logger` receives connection setup failures at debug level. Nil

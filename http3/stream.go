@@ -17,7 +17,8 @@ type StreamType uint64
 // HTTPStreamer lets a handler take over its HTTP/3 request stream. The
 // http.ResponseWriter passed to handlers implements it. The caller then owns
 // the stream beyond the handler and must finish both directions: Close or
-// CancelWrite, and Read to EOF or CancelRead. Until it has, the stream keeps
+// CancelWrite, and Read to EOF or CancelRead. A Write or Close that fails
+// does not finish sending. Until it has, the stream keeps
 // its Server.MaxConcurrentRequests slot and its request context stays live.
 //
 // If WriteHeader set a final status before HTTPStream, the response header is

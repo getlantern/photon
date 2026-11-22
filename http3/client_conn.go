@@ -47,10 +47,14 @@ type ClientConfig struct {
 	Information           func(status int, header http.Header) error // may run concurrently across requests
 }
 
-// ClientConn implements RoundTripper for one explicitly bound HTTPS origin.
-// It does not dial, pool, retry, decompress or coalesce origins. Close cancels
-// active work; callers must still close every returned response Body. Construct
-// it exactly once on a connection before opening any HTTP/3 streams.
+// ClientConn implements RoundTripper on one QUIC connection. It does not dial,
+// pool, retry or coalesce origins. One made by NewClientConn, Dial or DialEarly
+// is bound to its HTTPS origin, rejects requests for any other, and does not
+// decompress. One made by Transport.NewClientConn or NewRawClientConn is not
+// bound to an origin, and negotiates and decodes gzip unless the Transport's
+// DisableCompression is set. Close cancels active work; callers must still
+// close every returned response Body. Construct it exactly once on a
+// connection before opening any HTTP/3 streams.
 type ClientConn struct {
 	earlySession       bool
 	recoveryLock       chan struct{}
