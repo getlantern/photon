@@ -55,10 +55,12 @@ existing requests and connection cleanup. Its deadline does not abort handlers;
 `Close()` cancels owned connections and handlers without waiting for application
 code to return. For listeners passed to Serve, Shutdown stops acceptance and
 closes the listener after connection workers finish; Close closes it
-immediately. Closing a listener from `quic.ListenAddr` also closes its UDP
-socket. Closing one from `Transport.Listen` or the PacketConn `quic.Listen`
-only stops admission: the socket and the Transport's reader stay with the
-caller, who must close the Transport to stop them. Listeners passed to ServeListener or used independently with
+immediately. What closing the listener releases depends on its constructor.
+One from `quic.ListenAddr` closes its UDP socket and accepted connections. One
+from the PacketConn `quic.Listen` terminates its accepted connections and its
+reader but leaves the borrowed socket open. One from `Transport.Listen` only
+stops admission: accepted connections, the socket and the Transport's reader
+continue until the caller closes the Transport. Listeners passed to ServeListener or used independently with
 ServeQUICConn remain caller-owned. ServeListener returns when its accept loop
 stops, without waiting for active handlers; Shutdown still joins those workers.
 An accept error from a custom listener leaves existing requests running.
