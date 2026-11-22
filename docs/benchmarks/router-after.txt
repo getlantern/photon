@@ -1,0 +1,24 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/getlantern/photon/internal/transport
+cpu: Apple M4
+BenchmarkRouter/1/dispatch-10         	 5578722	        20.53 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouter/1/dispatch-10         	 6843325	        17.65 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouter/1/dispatch-10         	 7064779	        17.50 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouter/1/unchanged-sync-10   	20518958	         5.883 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouter/1/unchanged-sync-10   	21081757	         5.932 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouter/1/unchanged-sync-10   	21456510	         5.894 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouter/256/dispatch-10       	 4755362	        25.12 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouter/256/dispatch-10       	 4762573	        25.37 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouter/256/dispatch-10       	 4732436	        25.32 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouter/256/unchanged-sync-10 	16808389	         7.442 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouter/256/unchanged-sync-10 	16679502	         7.482 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouter/256/unchanged-sync-10 	16080760	         7.461 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouter/4096/dispatch-10      	 4556218	        26.58 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouter/4096/dispatch-10      	 4447113	        26.68 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouter/4096/dispatch-10      	 4429582	        26.71 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouter/4096/unchanged-sync-10         	16195059	         7.705 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouter/4096/unchanged-sync-10         	15811753	         7.793 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouter/4096/unchanged-sync-10         	16227728	         7.696 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/getlantern/photon/internal/transport	2.468s

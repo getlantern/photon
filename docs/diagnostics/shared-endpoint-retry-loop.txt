@@ -1,0 +1,211 @@
+=== RUN   TestSharedServerEndpoint/1
+2026/09/28 15:54:09 Increased receive buffer size to 7168 kiB
+2026/09/28 15:54:09 Increased send buffer size to 7168 kiB
+2026/09/28 15:54:09 Increased receive buffer size to 7168 kiB
+2026/09/28 15:54:09 Increased send buffer size to 7168 kiB
+2026/09/28 15:54:09 Activating reading of ECN bits for IPv6.
+2026/09/28 15:54:09 Activating reading of packet info bits for IPv6.
+2026/09/28 15:54:09 Activating reading of ECN bits for IPv6.
+2026/09/28 15:54:09 Activating reading of packet info bits for IPv6.
+2026/09/28 15:54:09 client Starting new connection to localhost ([::]:60381 -> 127.0.0.1:62749), source connection ID (empty), destination connection ID 65716663cedb4e68b1, version v1
+2026/09/28 15:54:09 client Starting new connection to localhost ([::]:62908 -> 127.0.0.1:62749), source connection ID (empty), destination connection ID c4dca4da39a3787e3d104bd799, version v1
+2026/09/28 15:54:09 client Not doing 0-RTT. Has sealer: false, has params: false
+2026/09/28 15:54:09 client Not doing 0-RTT. Has sealer: false, has params: false
+2026/09/28 15:54:09 client -> Sending packet 0 (1280 bytes) for connection 65716663cedb4e68b1, Initial
+2026/09/28 15:54:09 client -> Sending packet 0 (1280 bytes) for connection c4dca4da39a3787e3d104bd799, Initial
+2026/09/28 15:54:09 client 	Long Header{Type: Initial, DestConnectionID: 65716663cedb4e68b1, SrcConnectionID: (empty), Token: (empty), PacketNumber: 0, PacketNumberLen: 2, Length: 1261, Version: v1}
+2026/09/28 15:54:09 client 	Long Header{Type: Initial, DestConnectionID: c4dca4da39a3787e3d104bd799, SrcConnectionID: (empty), Token: (empty), PacketNumber: 0, PacketNumberLen: 2, Length: 1257, Version: v1}
+2026/09/28 15:54:09 client 	-> &wire.CryptoFrame{Offset: 69, Data length: 1170, Offset + Data length: 1239}
+2026/09/28 15:54:09 client 	-> &wire.CryptoFrame{Offset: 0, Data length: 64, Offset + Data length: 64}
+2026/09/28 15:54:09 client 	-> &wire.CryptoFrame{Offset: 0, Data length: 64, Offset + Data length: 64}
+2026/09/28 15:54:09 client 	-> &wire.CryptoFrame{Offset: 69, Data length: 1166, Offset + Data length: 1235}
+2026/09/28 15:54:09 client -> Sending packet 1 (1280 bytes) for connection 65716663cedb4e68b1, Initial
+2026/09/28 15:54:09 client 	Long Header{Type: Initial, DestConnectionID: 65716663cedb4e68b1, SrcConnectionID: (empty), Token: (empty), PacketNumber: 1, PacketNumberLen: 2, Length: 1261, Version: v1}
+2026/09/28 15:54:09 client 	-> &wire.CryptoFrame{Offset: 64, Data length: 5, Offset + Data length: 69}
+2026/09/28 15:54:09 client 	-> &wire.CryptoFrame{Offset: 1239, Data length: 287, Offset + Data length: 1526}
+2026/09/28 15:54:09 client -> Sending packet 1 (1280 bytes) for connection c4dca4da39a3787e3d104bd799, Initial
+2026/09/28 15:54:09 client 	Long Header{Type: Initial, DestConnectionID: c4dca4da39a3787e3d104bd799, SrcConnectionID: (empty), Token: (empty), PacketNumber: 1, PacketNumberLen: 2, Length: 1257, Version: v1}
+2026/09/28 15:54:09 client 	-> &wire.CryptoFrame{Offset: 64, Data length: 5, Offset + Data length: 69}
+2026/09/28 15:54:09 client 	-> &wire.CryptoFrame{Offset: 1235, Data length: 297, Offset + Data length: 1532}
+2026/09/28 15:54:09 client 	updated RTT: 5ms (σ: 2.5ms)
+2026/09/28 15:54:09 client <- Received Retry:
+2026/09/28 15:54:09 client 	Long Header{Type: Retry, DestConnectionID: (empty), SrcConnectionID: 14aa8aa96666b70e, Token: 0x199fc75a1af02d67b083f8c7aaaa2135a0533cb4f006c4cef96ee95ab002036fb63916cfe926b4d2a74188db047dc0fe3b0cdbec736bce0abfe95a353e9c6b, Version: v1}
+2026/09/28 15:54:09 client Switching destination connection ID to: 14aa8aa96666b70e
+2026/09/28 15:54:09 client Ignoring Retry, since a Retry was already received.
+2026/09/28 15:54:09 client -> Sending packet 2 (1280 bytes) for connection c4dca4da39a3787e3d104bd799, Initial
+2026/09/28 15:54:09 client 	Long Header{Type: Initial, DestConnectionID: 14aa8aa96666b70e, SrcConnectionID: (empty), Token: 0x199fc75a1af02d67b083f8c7aaaa2135a0533cb4f006c4cef96ee95ab002036fb63916cfe926b4d2a74188db047dc0fe3b0cdbec736bce0abfe95a353e9c6b, PacketNumber: 2, PacketNumberLen: 2, Length: 1199, Version: v1}
+2026/09/28 15:54:09 client 	-> &wire.CryptoFrame{Offset: 0, Data length: 64, Offset + Data length: 64}
+2026/09/28 15:54:09 client 	-> &wire.CryptoFrame{Offset: 69, Data length: 1108, Offset + Data length: 1177}
+2026/09/28 15:54:09 client -> Sending packet 3 (1280 bytes) for connection c4dca4da39a3787e3d104bd799, Initial
+2026/09/28 15:54:09 client 	Long Header{Type: Initial, DestConnectionID: 14aa8aa96666b70e, SrcConnectionID: (empty), Token: 0x199fc75a1af02d67b083f8c7aaaa2135a0533cb4f006c4cef96ee95ab002036fb63916cfe926b4d2a74188db047dc0fe3b0cdbec736bce0abfe95a353e9c6b, PacketNumber: 3, PacketNumberLen: 2, Length: 1199, Version: v1}
+2026/09/28 15:54:09 client 	-> &wire.CryptoFrame{Offset: 1235, Data length: 297, Offset + Data length: 1532}
+2026/09/28 15:54:09 client 	-> &wire.CryptoFrame{Offset: 64, Data length: 5, Offset + Data length: 69}
+2026/09/28 15:54:09 client 	-> &wire.CryptoFrame{Offset: 1177, Data length: 58, Offset + Data length: 1235}
+2026/09/28 15:54:09 client <- Reading packet 0 (1200 bytes) for connection (empty), Initial
+2026/09/28 15:54:09 client 	Long Header{Type: Initial, DestConnectionID: (empty), SrcConnectionID: 9fb20187c762ddec, Token: (empty), PacketNumber: 0, PacketNumberLen: 4, Length: 1182, Version: v1}
+2026/09/28 15:54:09 client Received first packet. Switching destination connection ID to: 9fb20187c762ddec
+2026/09/28 15:54:09 client 	<- &wire.AckFrame{LargestAcked: 2, LowestAcked: 2, DelayTime: 0s}
+2026/09/28 15:54:09 client 	newly acked packets (1): [2]
+2026/09/28 15:54:09 client 	updated RTT: 4.422ms (σ: 3.029ms)
+2026/09/28 15:54:09 client <- Reading packet 1 (1200 bytes) for connection (empty), Initial
+2026/09/28 15:54:09 client 	Long Header{Type: Initial, DestConnectionID: (empty), SrcConnectionID: 9fb20187c762ddec, Token: (empty), PacketNumber: 1, PacketNumberLen: 4, Length: 1182, Version: v1}
+2026/09/28 15:54:09 client 	<- &wire.AckFrame{LargestAcked: 3, LowestAcked: 2, DelayTime: 0s}
+2026/09/28 15:54:09 client 	newly acked packets (1): [3]
+2026/09/28 15:54:09 client 	updated RTT: 4.135ms (σ: 2.845ms)
+2026/09/28 15:54:09 client <- Reading packet 2 (1200 bytes) for connection (empty), Initial
+2026/09/28 15:54:09 client 	Long Header{Type: Initial, DestConnectionID: (empty), SrcConnectionID: 9fb20187c762ddec, Token: (empty), PacketNumber: 2, PacketNumberLen: 4, Length: 1182, Version: v1}
+2026/09/28 15:54:09 client 	<- &wire.CryptoFrame{Offset: 0, Data length: 900, Offset + Data length: 900}
+2026/09/28 15:54:09 client <- Reading packet 3 (1200 bytes) for connection (empty), Initial
+2026/09/28 15:54:09 client 	Long Header{Type: Initial, DestConnectionID: (empty), SrcConnectionID: 9fb20187c762ddec, Token: (empty), PacketNumber: 3, PacketNumberLen: 4, Length: 1182, Version: v1}
+2026/09/28 15:54:09 client 	<- &wire.CryptoFrame{Offset: 900, Data length: 278, Offset + Data length: 1178}
+2026/09/28 15:54:09 client Installed Handshake Write keys (using TLS_AES_128_GCM_SHA256)
+2026/09/28 15:54:09 client Installed Handshake Read keys (using TLS_AES_128_GCM_SHA256)
+2026/09/28 15:54:09 client <- Reading packet 0 (564 bytes) for connection (empty), Handshake
+2026/09/28 15:54:09 client 	Long Header{Type: Handshake, DestConnectionID: (empty), SrcConnectionID: 9fb20187c762ddec, PacketNumber: 0, PacketNumberLen: 4, Length: 547, Version: v1}
+2026/09/28 15:54:09 client 	<- &wire.CryptoFrame{Offset: 0, Data length: 523, Offset + Data length: 523}
+2026/09/28 15:54:09 client Installed 1-RTT Write keys (using TLS_AES_128_GCM_SHA256)
+2026/09/28 15:54:09 client Installed 1-RTT Read keys (using TLS_AES_128_GCM_SHA256)
+2026/09/28 15:54:09 client Processed Transport Parameters: &wire.TransportParameters{OriginalDestinationConnectionID: c4dca4da39a3787e3d104bd799, InitialSourceConnectionID: 9fb20187c762ddec, RetrySourceConnectionID: 14aa8aa96666b70e, InitialMaxStreamDataBidiLocal: 0, InitialMaxStreamDataBidiRemote: 0, InitialMaxStreamDataUni: 0, InitialMaxData: 0, MaxBidiStreamNum: 0, MaxUniStreamNum: 0, MaxIdleTimeout: 0s, AckDelayExponent: 3, MaxAckDelay: 25ms, ActiveConnectionIDLimit: 2, EnableResetStreamAt: false}
+2026/09/28 15:54:09 client <- Reading packet 0 (49 bytes) for connection (empty), 1-RTT
+2026/09/28 15:54:09 client 	Short Header{DestConnectionID: (empty), PacketNumber: 0, PacketNumberLen: 4, KeyPhase: 0}
+2026/09/28 15:54:09 client 	<- &wire.NewConnectionIDFrame{SequenceNumber: 1, RetirePriorTo: 0, ConnectionID: cb4557911c048da8, StatelessResetToken: 0x1860839fe0ded450f8a6f440d16e1ae2}
+2026/09/28 15:54:09 client 	Setting ACK timer to max ack delay: 25ms
+2026/09/28 15:54:09 client <- Reading packet 1 (49 bytes) for connection (empty), 1-RTT
+2026/09/28 15:54:09 client 	Short Header{DestConnectionID: (empty), PacketNumber: 1, PacketNumberLen: 4, KeyPhase: 0}
+2026/09/28 15:54:09 client 	<- &wire.NewConnectionIDFrame{SequenceNumber: 2, RetirePriorTo: 0, ConnectionID: 974e2a5fbbab0621, StatelessResetToken: 0xb72fc8028d837f74b77b84ea96f934ff}
+2026/09/28 15:54:09 client 	Queueing ACK because packet 2 packets were received after the last ACK (using initial threshold: 2).
+2026/09/28 15:54:09 client <- Reading packet 2 (49 bytes) for connection (empty), 1-RTT
+2026/09/28 15:54:09 client 	Short Header{DestConnectionID: (empty), PacketNumber: 2, PacketNumberLen: 4, KeyPhase: 0}
+2026/09/28 15:54:09 client 	<- &wire.NewConnectionIDFrame{SequenceNumber: 3, RetirePriorTo: 0, ConnectionID: 4c6d96decc96f814, StatelessResetToken: 0xa5caec7f570bef8b25ba579459641076}
+2026/09/28 15:54:09 client -> Sending coalesced packet (2 parts, 1280 bytes) for connection c4dca4da39a3787e3d104bd799
+2026/09/28 15:54:09 client 	Long Header{Type: Initial, DestConnectionID: cb4557911c048da8, SrcConnectionID: (empty), Token: 0x199fc75a1af02d67b083f8c7aaaa2135a0533cb4f006c4cef96ee95ab002036fb63916cfe926b4d2a74188db047dc0fe3b0cdbec736bce0abfe95a353e9c6b, PacketNumber: 4, PacketNumberLen: 2, Length: 1085, Version: v1}
+2026/09/28 15:54:09 client 	-> &wire.AckFrame{LargestAcked: 3, LowestAcked: 0, DelayTime: 0s}
+2026/09/28 15:54:09 client 	Long Header{Type: Handshake, DestConnectionID: cb4557911c048da8, SrcConnectionID: (empty), PacketNumber: 0, PacketNumberLen: 2, Length: 62, Version: v1}
+2026/09/28 15:54:09 client 	-> &wire.AckFrame{LargestAcked: 0, LowestAcked: 0, DelayTime: 0s}
+2026/09/28 15:54:09 client 	-> &wire.CryptoFrame{Offset: 0, Data length: 36, Offset + Data length: 36}
+2026/09/28 15:54:09 client 	Short Header{DestConnectionID: cb4557911c048da8, PacketNumber: 0, PacketNumberLen: 2, KeyPhase: 0}
+2026/09/28 15:54:09 client 	-> &wire.AckFrame{LargestAcked: 2, LowestAcked: 0, DelayTime: 1.644083ms}
+2026/09/28 15:54:09 client 	-> &wire.RetireConnectionIDFrame{SequenceNumber: 0}
+2026/09/28 15:54:09 client Dropping Initial keys.
+2026/09/28 15:54:09 client <- Reading packet 3 (26 bytes) for connection (empty), 1-RTT
+2026/09/28 15:54:09 client 	Short Header{DestConnectionID: (empty), PacketNumber: 3, PacketNumberLen: 4, KeyPhase: 0}
+2026/09/28 15:54:09 client 	<- &wire.AckFrame{LargestAcked: 0, LowestAcked: 0, DelayTime: 296µs}
+2026/09/28 15:54:09 client Peer doesn't await address validation any longer.
+2026/09/28 15:54:09 client 	newly acked packets (1): [0]
+2026/09/28 15:54:09 client 	Ignoring all packets below 3.
+2026/09/28 15:54:09 client 	updated RTT: 3.69ms (σ: 3.023ms)
+2026/09/28 15:54:09 client Canceling loss detection timer.
+2026/09/28 15:54:09 client Dropping Handshake keys.
+2026/09/28 15:54:09 client <- Reading packet 4 (203 bytes) for connection (empty), 1-RTT
+2026/09/28 15:54:09 client 	Short Header{DestConnectionID: (empty), PacketNumber: 4, PacketNumberLen: 4, KeyPhase: 0}
+2026/09/28 15:54:09 client 	<- &wire.CryptoFrame{Offset: 0, Data length: 178, Offset + Data length: 178}
+2026/09/28 15:54:09 client 	Setting ACK timer to max ack delay: 25ms
+2026/09/28 15:54:09 client <- Reading packet 5 (22 bytes) for connection (empty), 1-RTT
+2026/09/28 15:54:09 client 	Short Header{DestConnectionID: (empty), PacketNumber: 5, PacketNumberLen: 4, KeyPhase: 0}
+2026/09/28 15:54:09 client 	<- &wire.HandshakeDoneFrame{}
+2026/09/28 15:54:09 client 	Queueing ACK because packet 2 packets were received after the last ACK (using initial threshold: 2).
+2026/09/28 15:54:09 client <- Reading packet 6 (49 bytes) for connection (empty), 1-RTT
+2026/09/28 15:54:09 client 	Short Header{DestConnectionID: (empty), PacketNumber: 6, PacketNumberLen: 4, KeyPhase: 0}
+2026/09/28 15:54:09 client 	<- &wire.NewConnectionIDFrame{SequenceNumber: 4, RetirePriorTo: 0, ConnectionID: 11c0a1f47f63f4bc, StatelessResetToken: 0x274ae9080c601116b01c3555422fbdbb}
+2026/09/28 15:54:09 client -> Sending packet 1 (32 bytes) for connection c4dca4da39a3787e3d104bd799, 1-RTT (ECN: ECT(0))
+2026/09/28 15:54:09 client 	Short Header{DestConnectionID: cb4557911c048da8, PacketNumber: 1, PacketNumberLen: 2, KeyPhase: 0}
+2026/09/28 15:54:09 client 	-> &wire.AckFrame{LargestAcked: 6, LowestAcked: 3, DelayTime: 95.334µs}
+2026/09/28 15:54:09 Removing connection IDs [(empty)] for a closed connection after it has been retired.
+2026/09/28 15:54:09 Removing connection IDs [(empty)] for a closed connection after it has been retired.
+2026/09/28 15:54:09 Removing connection IDs [(empty)] for a closed connection after it has been retired.
+2026/09/28 15:54:09 Removing connection IDs [(empty)] for a closed connection after it has been retired.
+2026/09/28 15:54:10 client Loss detection alarm for Initial fired in PTO mode. PTO count: 1
+2026/09/28 15:54:10 client -> Sending packet 2 (1280 bytes) for connection 65716663cedb4e68b1, Initial
+2026/09/28 15:54:10 client 	Long Header{Type: Initial, DestConnectionID: 65716663cedb4e68b1, SrcConnectionID: (empty), Token: (empty), PacketNumber: 2, PacketNumberLen: 2, Length: 1261, Version: v1}
+2026/09/28 15:54:10 client 	-> &wire.CryptoFrame{Offset: 0, Data length: 64, Offset + Data length: 64}
+2026/09/28 15:54:10 client 	-> &wire.CryptoFrame{Offset: 69, Data length: 1170, Offset + Data length: 1239}
+2026/09/28 15:54:10 client -> Sending packet 3 (1280 bytes) for connection 65716663cedb4e68b1, Initial
+2026/09/28 15:54:10 client 	Long Header{Type: Initial, DestConnectionID: 65716663cedb4e68b1, SrcConnectionID: (empty), Token: (empty), PacketNumber: 3, PacketNumberLen: 2, Length: 1261, Version: v1}
+2026/09/28 15:54:10 client 	-> &wire.CryptoFrame{Offset: 64, Data length: 5, Offset + Data length: 69}
+2026/09/28 15:54:10 client 	-> &wire.CryptoFrame{Offset: 1239, Data length: 287, Offset + Data length: 1526}
+2026/09/28 15:54:10 Removing connection IDs [65843380 a74fd469 b20ae403 a7d5853d cbae11e4f8387613] for a closed connection after it has been retired.
+2026/09/28 15:54:10 Removing connection IDs [994e6fa4 af2d7eae 6d47c0b3 75e41b4d cb8b897b057e6b54] for a closed connection after it has been retired.
+2026/09/28 15:54:10 client Loss detection alarm for Initial fired in PTO mode. PTO count: 2
+2026/09/28 15:54:10 client -> Sending packet 4 (1280 bytes) for connection 65716663cedb4e68b1, Initial
+2026/09/28 15:54:10 client 	Long Header{Type: Initial, DestConnectionID: 65716663cedb4e68b1, SrcConnectionID: (empty), Token: (empty), PacketNumber: 4, PacketNumberLen: 2, Length: 1261, Version: v1}
+2026/09/28 15:54:10 client 	-> &wire.CryptoFrame{Offset: 69, Data length: 1170, Offset + Data length: 1239}
+2026/09/28 15:54:10 client 	-> &wire.CryptoFrame{Offset: 0, Data length: 64, Offset + Data length: 64}
+2026/09/28 15:54:10 client -> Sending packet 5 (1280 bytes) for connection 65716663cedb4e68b1, Initial
+2026/09/28 15:54:10 client 	Long Header{Type: Initial, DestConnectionID: 65716663cedb4e68b1, SrcConnectionID: (empty), Token: (empty), PacketNumber: 5, PacketNumberLen: 2, Length: 1261, Version: v1}
+2026/09/28 15:54:10 client 	-> &wire.CryptoFrame{Offset: 1239, Data length: 287, Offset + Data length: 1526}
+2026/09/28 15:54:10 client 	-> &wire.CryptoFrame{Offset: 64, Data length: 5, Offset + Data length: 69}
+2026/09/28 15:54:10 Removing connection IDs [3339e0b3 8fd9264b 1cd8b96b 1c1ce574 18932aff957fab57] for a closed connection after it has been retired.
+2026/09/28 15:54:11 Removing connection IDs [67903483 c23b3afe d0fbbe88 be2c7370 483e13e60d30bb3c] for a closed connection after it has been retired.
+2026/09/28 15:54:11 client Loss detection alarm for Initial fired in PTO mode. PTO count: 3
+2026/09/28 15:54:11 client -> Sending packet 6 (1280 bytes) for connection 65716663cedb4e68b1, Initial
+2026/09/28 15:54:11 client 	Long Header{Type: Initial, DestConnectionID: 65716663cedb4e68b1, SrcConnectionID: (empty), Token: (empty), PacketNumber: 6, PacketNumberLen: 2, Length: 1261, Version: v1}
+2026/09/28 15:54:11 client 	-> &wire.CryptoFrame{Offset: 0, Data length: 64, Offset + Data length: 64}
+2026/09/28 15:54:11 client 	-> &wire.CryptoFrame{Offset: 69, Data length: 1170, Offset + Data length: 1239}
+2026/09/28 15:54:11 client -> Sending packet 7 (1280 bytes) for connection 65716663cedb4e68b1, Initial
+2026/09/28 15:54:11 client 	Long Header{Type: Initial, DestConnectionID: 65716663cedb4e68b1, SrcConnectionID: (empty), Token: (empty), PacketNumber: 7, PacketNumberLen: 2, Length: 1261, Version: v1}
+2026/09/28 15:54:11 client 	-> &wire.CryptoFrame{Offset: 1239, Data length: 287, Offset + Data length: 1526}
+2026/09/28 15:54:11 client 	-> &wire.CryptoFrame{Offset: 64, Data length: 5, Offset + Data length: 69}
+2026/09/28 15:54:11 Removing connection IDs [2f5058d6 7df1506a 8de03ea3 5ccfef30 51ebb4f244bad325] for a closed connection after it has been retired.
+2026/09/28 15:54:11 Removing connection IDs [22b621d2 d5b60859 e74658c6 83ebdfb2 ba0c78e44ad96f29] for a closed connection after it has been retired.
+2026/09/28 15:54:12 client Loss detection alarm for Initial fired in PTO mode. PTO count: 4
+2026/09/28 15:54:12 client -> Sending packet 8 (1280 bytes) for connection 65716663cedb4e68b1, Initial
+2026/09/28 15:54:12 client 	Long Header{Type: Initial, DestConnectionID: 65716663cedb4e68b1, SrcConnectionID: (empty), Token: (empty), PacketNumber: 8, PacketNumberLen: 2, Length: 1261, Version: v1}
+2026/09/28 15:54:12 client 	-> &wire.CryptoFrame{Offset: 0, Data length: 64, Offset + Data length: 64}
+2026/09/28 15:54:12 client 	-> &wire.CryptoFrame{Offset: 69, Data length: 1170, Offset + Data length: 1239}
+2026/09/28 15:54:12 client -> Sending packet 9 (1280 bytes) for connection 65716663cedb4e68b1, Initial
+2026/09/28 15:54:12 client 	Long Header{Type: Initial, DestConnectionID: 65716663cedb4e68b1, SrcConnectionID: (empty), Token: (empty), PacketNumber: 9, PacketNumberLen: 2, Length: 1261, Version: v1}
+2026/09/28 15:54:12 client 	-> &wire.CryptoFrame{Offset: 64, Data length: 5, Offset + Data length: 69}
+2026/09/28 15:54:12 client 	-> &wire.CryptoFrame{Offset: 1239, Data length: 287, Offset + Data length: 1526}
+    endpoint_test.go:118: read udp4 127.0.0.1:62749: i/o timeout
+2026/09/28 15:54:14 client Destroying connection with error: %!s(<nil>)
+2026/09/28 15:54:14 Removing connection ID (empty).
+    endpoint_test.go:66: endpoint peers=1 accepted=1 deadline=2026-09-28 15:54:39.939817 -0600 MDT m=+42.509705501
+2026/09/28 15:54:14 client Connection 65716663cedb4e68b1 closed.
+    endpoint_test.go:68: peer=0xc0003a3008 complete=true confirmed=true recovery=2026-09-28 15:54:39.939817 -0600 MDT m=+42.509705501
+2026/09/28 15:54:14 client Closing connection with error: Application error 0x0 (local)
+2026/09/28 15:54:14 client -> Sending packet 2 (30 bytes) for connection c4dca4da39a3787e3d104bd799, 1-RTT (ECN: ECT(0))
+2026/09/28 15:54:14 client 	Short Header{DestConnectionID: cb4557911c048da8, PacketNumber: 2, PacketNumberLen: 2, KeyPhase: 0}
+2026/09/28 15:54:14 client 	-> &wire.ConnectionCloseFrame{IsApplicationError:true, ErrorCode:0x0, FrameType:0x0, ReasonPhrase:""}
+2026/09/28 15:54:14 Replacing connection for connection IDs [(empty)] with a closed connection.
+2026/09/28 15:54:14 client Connection c4dca4da39a3787e3d104bd799 closed.
+    handshake_trace_test.go:38: handshake trace: 40 total events (last 40 retained)
+    handshake_trace_test.go:41: 1.641625ms receive peer=127.0.0.1:60381 size=1280 header=c30000000109
+    handshake_trace_test.go:41: 1.719583ms admission-send peer=127.0.0.1:60381 size=90 header=f00000000100
+    handshake_trace_test.go:41: 1.735417ms receive peer=127.0.0.1:62908 size=1280 header=c4000000010d
+    handshake_trace_test.go:41: 1.805708ms admission-send peer=127.0.0.1:62908 size=94 header=f00000000100
+    handshake_trace_test.go:41: 1.817208ms receive peer=127.0.0.1:60381 size=1280 header=c50000000109
+    handshake_trace_test.go:41: 1.883667ms admission-send peer=127.0.0.1:60381 size=90 header=f00000000100
+    handshake_trace_test.go:41: 1.893083ms receive peer=127.0.0.1:62908 size=1280 header=cf000000010d
+    handshake_trace_test.go:41: 1.961ms admission-send peer=127.0.0.1:62908 size=94 header=f00000000100
+    handshake_trace_test.go:41: 2.196208ms receive peer=127.0.0.1:62908 size=1280 header=c70000000108
+    handshake_trace_test.go:41: 2.456ms send peer=127.0.0.1:62908 size=1200 header=c80000000100
+    handshake_trace_test.go:41: 2.470042ms receive peer=127.0.0.1:62908 size=1280 header=c40000000108
+    handshake_trace_test.go:41: 4.217417ms send peer=127.0.0.1:62908 size=1200 header=ca0000000100
+    handshake_trace_test.go:41: 4.2375ms send peer=127.0.0.1:62908 size=1200 header=c80000000100
+    handshake_trace_test.go:41: 4.252542ms send peer=127.0.0.1:62908 size=1200 header=c10000000100
+    handshake_trace_test.go:41: 4.267042ms send peer=127.0.0.1:62908 size=564 header=e10000000100
+    handshake_trace_test.go:41: 4.280833ms send peer=127.0.0.1:62908 size=49 header=56df3ecd2033
+    handshake_trace_test.go:41: 4.293125ms send peer=127.0.0.1:62908 size=49 header=40bc90fe4b81
+    handshake_trace_test.go:41: 4.306042ms send peer=127.0.0.1:62908 size=49 header=4af571106b12
+    handshake_trace_test.go:41: 6.18275ms receive peer=127.0.0.1:62908 size=1280 header=c40000000108
+    handshake_trace_test.go:41: 6.497208ms send peer=127.0.0.1:62908 size=26 header=5eb0dd60594d
+    handshake_trace_test.go:41: 6.657125ms send peer=127.0.0.1:62908 size=203 header=4bc306a372d2
+    handshake_trace_test.go:41: 6.874708ms send peer=127.0.0.1:62908 size=22 header=5100173bd29a
+    handshake_trace_test.go:41: 6.891875ms send peer=127.0.0.1:62908 size=49 header=436eba030812
+    handshake_trace_test.go:41: 7.081958ms receive peer=127.0.0.1:62908 size=32 header=54cb4557911c
+    handshake_trace_test.go:41: 204.387375ms receive peer=127.0.0.1:60381 size=1280 header=cb0000000109
+    handshake_trace_test.go:41: 204.766542ms admission-send peer=127.0.0.1:60381 size=90 header=f00000000100
+    handshake_trace_test.go:41: 204.870375ms receive peer=127.0.0.1:60381 size=1280 header=cd0000000109
+    handshake_trace_test.go:41: 205.148958ms admission-send peer=127.0.0.1:60381 size=90 header=f00000000100
+    handshake_trace_test.go:41: 606.197833ms receive peer=127.0.0.1:60381 size=1280 header=ce0000000109
+    handshake_trace_test.go:41: 606.549542ms admission-send peer=127.0.0.1:60381 size=90 header=f00000000100
+    handshake_trace_test.go:41: 606.682542ms receive peer=127.0.0.1:60381 size=1280 header=c40000000109
+    handshake_trace_test.go:41: 606.961083ms admission-send peer=127.0.0.1:60381 size=90 header=f00000000100
+    handshake_trace_test.go:41: 1.407410167s receive peer=127.0.0.1:60381 size=1280 header=c00000000109
+    handshake_trace_test.go:41: 1.40757475s admission-send peer=127.0.0.1:60381 size=90 header=f00000000100
+    handshake_trace_test.go:41: 1.407624708s receive peer=127.0.0.1:60381 size=1280 header=c60000000109
+    handshake_trace_test.go:41: 1.40775375s admission-send peer=127.0.0.1:60381 size=90 header=f00000000100
+    handshake_trace_test.go:41: 3.009620292s receive peer=127.0.0.1:60381 size=1280 header=c30000000109
+    handshake_trace_test.go:41: 3.009907208s admission-send peer=127.0.0.1:60381 size=90 header=f00000000100
+    handshake_trace_test.go:41: 3.0099595s receive peer=127.0.0.1:60381 size=1280 header=c80000000109
+    handshake_trace_test.go:41: 3.010073417s admission-send peer=127.0.0.1:60381 size=90 header=f00000000100

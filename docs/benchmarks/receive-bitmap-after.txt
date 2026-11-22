@@ -1,0 +1,27 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/getlantern/photon/internal/stream
+cpu: Apple M4
+BenchmarkReceiveAllocation/idle-10         	47010483	        25.39 ns/op	     152 B/op	       2 allocs/op
+BenchmarkReceiveAllocation/idle-10         	48103340	        24.87 ns/op	     152 B/op	       2 allocs/op
+BenchmarkReceiveAllocation/idle-10         	48371817	        25.19 ns/op	     152 B/op	       2 allocs/op
+BenchmarkReceiveAllocation/first-byte-10   	  361683	      3424 ns/op	   73880 B/op	       4 allocs/op
+BenchmarkReceiveAllocation/first-byte-10   	  349346	      3421 ns/op	   73880 B/op	       4 allocs/op
+BenchmarkReceiveAllocation/first-byte-10   	  352243	      3437 ns/op	   73880 B/op	       4 allocs/op
+BenchmarkReceiveAllocation/empty-fin-10    	43642513	        27.21 ns/op	     152 B/op	       2 allocs/op
+BenchmarkReceiveAllocation/empty-fin-10    	43843623	        27.38 ns/op	     152 B/op	       2 allocs/op
+BenchmarkReceiveAllocation/empty-fin-10    	44638152	        27.13 ns/op	     152 B/op	       2 allocs/op
+BenchmarkReceiveAllocation/reset-10        	37049424	        32.31 ns/op	     160 B/op	       3 allocs/op
+BenchmarkReceiveAllocation/reset-10        	37042896	        32.20 ns/op	     160 B/op	       3 allocs/op
+BenchmarkReceiveAllocation/reset-10        	37417466	        32.24 ns/op	     160 B/op	       3 allocs/op
+BenchmarkReceiveCycle/64-10                	92616710	        12.87 ns/op	4974.20 MB/s	       0 B/op	       0 allocs/op
+BenchmarkReceiveCycle/64-10                	93870704	        12.85 ns/op	4982.25 MB/s	       0 B/op	       0 allocs/op
+BenchmarkReceiveCycle/64-10                	95336775	        12.85 ns/op	4980.88 MB/s	       0 B/op	       0 allocs/op
+BenchmarkReceiveCycle/1200-10              	 5596045	       214.2 ns/op	5601.61 MB/s	       0 B/op	       0 allocs/op
+BenchmarkReceiveCycle/1200-10              	 5601150	       214.6 ns/op	5592.24 MB/s	       0 B/op	       0 allocs/op
+BenchmarkReceiveCycle/1200-10              	 5596875	       214.8 ns/op	5585.57 MB/s	       0 B/op	       0 allocs/op
+BenchmarkReceiveCycle/16384-10             	  438322	      2726 ns/op	6010.89 MB/s	       0 B/op	       0 allocs/op
+BenchmarkReceiveCycle/16384-10             	  443169	      2736 ns/op	5988.65 MB/s	       0 B/op	       0 allocs/op
+BenchmarkReceiveCycle/16384-10             	  440457	      2729 ns/op	6003.53 MB/s	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/getlantern/photon/internal/stream	25.464s

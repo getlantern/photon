@@ -1,0 +1,12 @@
+ok  	github.com/getlantern/photon	6.968s
+ok  	github.com/getlantern/photon/http3	1.599s
+ok  	github.com/getlantern/photon/internal/handshake	2.117s
+ok  	github.com/getlantern/photon/internal/http3conn	1.635s
+ok  	github.com/getlantern/photon/internal/http3wire	(cached)
+ok  	github.com/getlantern/photon/internal/packet	(cached)
+ok  	github.com/getlantern/photon/internal/qpack	(cached)
+ok  	github.com/getlantern/photon/internal/recovery	(cached)
+ok  	github.com/getlantern/photon/internal/stream	(cached)
+ok  	github.com/getlantern/photon/internal/token	(cached)
+ok  	github.com/getlantern/photon/internal/transport	39.395s
+ok  	github.com/getlantern/photon/internal/wire	(cached)

@@ -1,0 +1,62 @@
+=== RUN   TestIndependentClientMigrationUpstreamServer
+=== RUN   TestIndependentClientMigrationUpstreamServer/1/response
+=== RUN   TestIndependentClientMigrationUpstreamServer/1/both
+--- PASS: TestIndependentClientMigrationUpstreamServer (6.05s)
+    --- PASS: TestIndependentClientMigrationUpstreamServer/1/response (2.03s)
+    --- PASS: TestIndependentClientMigrationUpstreamServer/1/both (4.02s)
+=== RUN   TestIndependentClientMigrationUpstreamServer
+=== RUN   TestIndependentClientMigrationUpstreamServer/1/response
+=== RUN   TestIndependentClientMigrationUpstreamServer/1/both
+--- PASS: TestIndependentClientMigrationUpstreamServer (6.05s)
+    --- PASS: TestIndependentClientMigrationUpstreamServer/1/response (2.02s)
+    --- PASS: TestIndependentClientMigrationUpstreamServer/1/both (4.02s)
+=== RUN   TestIndependentClientMigrationUpstreamServer
+=== RUN   TestIndependentClientMigrationUpstreamServer/1/response
+=== RUN   TestIndependentClientMigrationUpstreamServer/1/both
+--- PASS: TestIndependentClientMigrationUpstreamServer (6.04s)
+    --- PASS: TestIndependentClientMigrationUpstreamServer/1/response (2.02s)
+    --- PASS: TestIndependentClientMigrationUpstreamServer/1/both (4.02s)
+=== RUN   TestIndependentClientMigrationUpstreamServer
+=== RUN   TestIndependentClientMigrationUpstreamServer/1/response
+=== RUN   TestIndependentClientMigrationUpstreamServer/1/both
+--- PASS: TestIndependentClientMigrationUpstreamServer (6.05s)
+    --- PASS: TestIndependentClientMigrationUpstreamServer/1/response (2.02s)
+    --- PASS: TestIndependentClientMigrationUpstreamServer/1/both (4.03s)
+=== RUN   TestIndependentClientMigrationUpstreamServer
+=== RUN   TestIndependentClientMigrationUpstreamServer/1/response
+=== RUN   TestIndependentClientMigrationUpstreamServer/1/both
+--- PASS: TestIndependentClientMigrationUpstreamServer (6.05s)
+    --- PASS: TestIndependentClientMigrationUpstreamServer/1/response (2.02s)
+    --- PASS: TestIndependentClientMigrationUpstreamServer/1/both (4.02s)
+=== RUN   TestIndependentClientMigrationUpstreamServer
+=== RUN   TestIndependentClientMigrationUpstreamServer/1/response
+=== RUN   TestIndependentClientMigrationUpstreamServer/1/both
+--- PASS: TestIndependentClientMigrationUpstreamServer (6.05s)
+    --- PASS: TestIndependentClientMigrationUpstreamServer/1/response (2.02s)
+    --- PASS: TestIndependentClientMigrationUpstreamServer/1/both (4.02s)
+=== RUN   TestIndependentClientMigrationUpstreamServer
+=== RUN   TestIndependentClientMigrationUpstreamServer/1/response
+=== RUN   TestIndependentClientMigrationUpstreamServer/1/both
+--- PASS: TestIndependentClientMigrationUpstreamServer (6.04s)
+    --- PASS: TestIndependentClientMigrationUpstreamServer/1/response (2.02s)
+    --- PASS: TestIndependentClientMigrationUpstreamServer/1/both (4.02s)
+=== RUN   TestIndependentClientMigrationUpstreamServer
+=== RUN   TestIndependentClientMigrationUpstreamServer/1/response
+=== RUN   TestIndependentClientMigrationUpstreamServer/1/both
+--- PASS: TestIndependentClientMigrationUpstreamServer (6.05s)
+    --- PASS: TestIndependentClientMigrationUpstreamServer/1/response (2.02s)
+    --- PASS: TestIndependentClientMigrationUpstreamServer/1/both (4.02s)
+=== RUN   TestIndependentClientMigrationUpstreamServer
+=== RUN   TestIndependentClientMigrationUpstreamServer/1/response
+=== RUN   TestIndependentClientMigrationUpstreamServer/1/both
+--- PASS: TestIndependentClientMigrationUpstreamServer (6.05s)
+    --- PASS: TestIndependentClientMigrationUpstreamServer/1/response (2.02s)
+    --- PASS: TestIndependentClientMigrationUpstreamServer/1/both (4.02s)
+=== RUN   TestIndependentClientMigrationUpstreamServer
+=== RUN   TestIndependentClientMigrationUpstreamServer/1/response
+=== RUN   TestIndependentClientMigrationUpstreamServer/1/both
+--- PASS: TestIndependentClientMigrationUpstreamServer (6.05s)
+    --- PASS: TestIndependentClientMigrationUpstreamServer/1/response (2.02s)
+    --- PASS: TestIndependentClientMigrationUpstreamServer/1/both (4.02s)
+PASS
+ok  	github.com/getlantern/photon/interop	61.911s

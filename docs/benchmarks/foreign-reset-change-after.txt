@@ -1,0 +1,21 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/getlantern/photon/internal/transport
+cpu: Apple M4
+BenchmarkForeignResetPublicationChange/1-10  	  564877	       412.5 ns/op	    1624 B/op	       9 allocs/op
+BenchmarkForeignResetPublicationChange/1-10  	  667477	       361.5 ns/op	    1624 B/op	       9 allocs/op
+BenchmarkForeignResetPublicationChange/1-10  	  674227	       360.0 ns/op	    1624 B/op	       9 allocs/op
+BenchmarkForeignResetPublicationChange/1-10  	  677893	       365.2 ns/op	    1624 B/op	       9 allocs/op
+BenchmarkForeignResetPublicationChange/1-10  	  614203	       362.1 ns/op	    1624 B/op	       9 allocs/op
+BenchmarkForeignResetPublicationChange/2-10  	  513139	       499.4 ns/op	    1880 B/op	      11 allocs/op
+BenchmarkForeignResetPublicationChange/2-10  	  458356	       488.1 ns/op	    1880 B/op	      11 allocs/op
+BenchmarkForeignResetPublicationChange/2-10  	  488466	       477.3 ns/op	    1880 B/op	      11 allocs/op
+BenchmarkForeignResetPublicationChange/2-10  	  494178	       473.3 ns/op	    1880 B/op	      11 allocs/op
+BenchmarkForeignResetPublicationChange/2-10  	  505560	       475.0 ns/op	    1880 B/op	      11 allocs/op
+BenchmarkForeignResetPublicationChange/8-10  	  200378	      1201 ns/op	    3416 B/op	      23 allocs/op
+BenchmarkForeignResetPublicationChange/8-10  	  202237	      1206 ns/op	    3416 B/op	      23 allocs/op
+BenchmarkForeignResetPublicationChange/8-10  	  202398	      1201 ns/op	    3416 B/op	      23 allocs/op
+BenchmarkForeignResetPublicationChange/8-10  	  203046	      1201 ns/op	    3416 B/op	      23 allocs/op
+BenchmarkForeignResetPublicationChange/8-10  	  202370	      1204 ns/op	    3416 B/op	      23 allocs/op
+PASS
+ok  	github.com/getlantern/photon/internal/transport	3.943s

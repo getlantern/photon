@@ -1,0 +1,24 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/getlantern/photon
+cpu: Apple M4
+BenchmarkPublicPathTransfer/v1/paths=0-10         	      25	   3547412 ns/op	  73.90 MB/s	 2051282 B/op	   21345 allocs/op
+BenchmarkPublicPathTransfer/v1/paths=0-10         	      25	   3213528 ns/op	  81.58 MB/s	 2145051 B/op	   21340 allocs/op
+BenchmarkPublicPathTransfer/v1/paths=0-10         	      25	   3303613 ns/op	  79.35 MB/s	 2134116 B/op	   21386 allocs/op
+BenchmarkPublicPathTransfer/v1/paths=1-10         	      25	   5332088 ns/op	  49.16 MB/s	 5008201 B/op	   78743 allocs/op
+BenchmarkPublicPathTransfer/v1/paths=1-10         	      25	   5326535 ns/op	  49.21 MB/s	 4977521 B/op	   78705 allocs/op
+BenchmarkPublicPathTransfer/v1/paths=1-10         	      25	   5294250 ns/op	  49.51 MB/s	 4868927 B/op	   78702 allocs/op
+BenchmarkPublicPathTransfer/v1/paths=2-10         	      25	   8499917 ns/op	  30.84 MB/s	 4909669 B/op	   84806 allocs/op
+BenchmarkPublicPathTransfer/v1/paths=2-10         	      25	   8487767 ns/op	  30.88 MB/s	 4843533 B/op	   84763 allocs/op
+BenchmarkPublicPathTransfer/v1/paths=2-10         	      25	   8463843 ns/op	  30.97 MB/s	 4834277 B/op	   84757 allocs/op
+BenchmarkPublicPathTransfer/v6b3343cf/paths=0-10  	      25	   3228515 ns/op	  81.20 MB/s	 2181608 B/op	   21346 allocs/op
+BenchmarkPublicPathTransfer/v6b3343cf/paths=0-10  	      25	   3202220 ns/op	  81.86 MB/s	 2194049 B/op	   21337 allocs/op
+BenchmarkPublicPathTransfer/v6b3343cf/paths=0-10  	      25	   3174015 ns/op	  82.59 MB/s	 2132798 B/op	   21318 allocs/op
+BenchmarkPublicPathTransfer/v6b3343cf/paths=1-10  	      25	   5326663 ns/op	  49.21 MB/s	 4904011 B/op	   78735 allocs/op
+BenchmarkPublicPathTransfer/v6b3343cf/paths=1-10  	      25	   5350297 ns/op	  49.00 MB/s	 5002958 B/op	   78763 allocs/op
+BenchmarkPublicPathTransfer/v6b3343cf/paths=1-10  	      25	   5361690 ns/op	  48.89 MB/s	 4926733 B/op	   78766 allocs/op
+BenchmarkPublicPathTransfer/v6b3343cf/paths=2-10  	      25	   8352168 ns/op	  31.39 MB/s	 4833640 B/op	   84813 allocs/op
+BenchmarkPublicPathTransfer/v6b3343cf/paths=2-10  	      25	   8516873 ns/op	  30.78 MB/s	 4918718 B/op	   84907 allocs/op
+BenchmarkPublicPathTransfer/v6b3343cf/paths=2-10  	      25	   8706100 ns/op	  30.11 MB/s	 4863941 B/op	   84846 allocs/op
+PASS
+ok  	github.com/getlantern/photon	3.020s

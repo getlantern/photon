@@ -1,0 +1,18 @@
+File: quic-path-transfer-cached.test
+Type: alloc_space
+Time: 2026-09-20 11:27:16 MDT
+Showing nodes accounting for 57.86MB, 76.45% of 75.69MB total
+Showing top 12 nodes out of 105
+      flat  flat%   sum%        cum   cum%
+   12.51MB 16.53% 16.53%    12.51MB 16.53%  github.com/getlantern/photon/internal/packet.(*Keys).seal
+   10.51MB 13.89% 30.42%    10.51MB 13.89%  crypto/internal/fips140/aes/gcm.sliceForAppend (inline)
+    8.01MB 10.58% 41.00%     8.01MB 10.58%  github.com/getlantern/photon/internal/stream.(*Send).Write
+    7.45MB  9.84% 50.84%     7.45MB  9.84%  github.com/getlantern/photon/internal/transport.init.func1
+    4.26MB  5.62% 56.46%     4.26MB  5.62%  github.com/getlantern/photon/internal/stream.NewReceive (inline)
+    3.50MB  4.62% 61.08%     3.50MB  4.62%  github.com/getlantern/photon/internal/transport.(*UDPServer).run.func2
+    2.50MB  3.30% 64.39%    20.06MB 26.50%  github.com/getlantern/photon/internal/transport.(*ServerEndpoint).NextDatagram
+    2.13MB  2.81% 67.20%     2.13MB  2.81%  github.com/getlantern/photon/internal/handshake.newReassembler
+       2MB  2.64% 69.84%        2MB  2.64%  context.(*cancelCtx).Done
+       2MB  2.64% 72.48%     3.50MB  4.62%  context.WithDeadlineCause
+    1.50MB  1.98% 74.47%     1.50MB  1.98%  time.newTimer
+    1.50MB  1.98% 76.45%    20.27MB 26.78%  github.com/getlantern/photon/internal/transport.(*Conn).handleBoundMultipathData

@@ -1,0 +1,12 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/getlantern/photon/internal/packet
+cpu: Apple M4
+BenchmarkSealPacketStorage/false-10         	 3647797	       323.2 ns/op	4331.17 MB/s	    1568 B/op	       2 allocs/op
+BenchmarkSealPacketStorage/false-10         	 3752246	       321.0 ns/op	4361.87 MB/s	    1568 B/op	       2 allocs/op
+BenchmarkSealPacketStorage/false-10         	 3720170	       322.0 ns/op	4348.33 MB/s	    1568 B/op	       2 allocs/op
+BenchmarkSealPacketStorage/true-10          	 5262798	       228.4 ns/op	6130.80 MB/s	      32 B/op	       1 allocs/op
+BenchmarkSealPacketStorage/true-10          	 5262067	       228.2 ns/op	6135.28 MB/s	      32 B/op	       1 allocs/op
+BenchmarkSealPacketStorage/true-10          	 5244588	       229.0 ns/op	6112.47 MB/s	      32 B/op	       1 allocs/op
+PASS
+ok  	github.com/getlantern/photon/internal/packet	7.330s

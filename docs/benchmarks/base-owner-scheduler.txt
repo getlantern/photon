@@ -1,0 +1,42 @@
+Before base-only scheduler fast path:
+goos: darwin
+goarch: arm64
+pkg: github.com/getlantern/photon
+cpu: Apple M4
+BenchmarkPublicPathTransfer/v1/paths=0-10         	      25	   3663615 ns/op	  71.55 MB/s	 2081706 B/op	   20989 allocs/op
+BenchmarkPublicPathTransfer/v1/paths=0-10         	      25	   3374248 ns/op	  77.69 MB/s	 2189570 B/op	   20960 allocs/op
+BenchmarkPublicPathTransfer/v1/paths=0-10         	      25	   3343800 ns/op	  78.40 MB/s	 2253231 B/op	   20974 allocs/op
+BenchmarkPublicPathTransfer/v6b3343cf/paths=0-10  	      25	   3351397 ns/op	  78.22 MB/s	 2270168 B/op	   20951 allocs/op
+BenchmarkPublicPathTransfer/v6b3343cf/paths=0-10  	      25	   3318318 ns/op	  79.00 MB/s	 2192723 B/op	   20932 allocs/op
+BenchmarkPublicPathTransfer/v6b3343cf/paths=0-10  	      25	   3382680 ns/op	  77.50 MB/s	 2153144 B/op	   20970 allocs/op
+PASS
+ok  	github.com/getlantern/photon	0.885s
+
+After (isolated run):
+goos: darwin
+goarch: arm64
+pkg: github.com/getlantern/photon
+cpu: Apple M4
+BenchmarkPublicPathTransfer/v1/paths=0-10         	      25	   3614563 ns/op	  72.52 MB/s	 2227700 B/op	   20975 allocs/op
+BenchmarkPublicPathTransfer/v1/paths=0-10         	      25	   3381600 ns/op	  77.52 MB/s	 2274493 B/op	   20968 allocs/op
+BenchmarkPublicPathTransfer/v1/paths=0-10         	      25	   3301110 ns/op	  79.41 MB/s	 2264949 B/op	   20954 allocs/op
+BenchmarkPublicPathTransfer/v6b3343cf/paths=0-10  	      25	   3286560 ns/op	  79.76 MB/s	 2201488 B/op	   20988 allocs/op
+BenchmarkPublicPathTransfer/v6b3343cf/paths=0-10  	      25	   3317193 ns/op	  79.03 MB/s	 2215241 B/op	   20995 allocs/op
+BenchmarkPublicPathTransfer/v6b3343cf/paths=0-10  	      25	   3326255 ns/op	  78.81 MB/s	 2196360 B/op	   20991 allocs/op
+PASS
+ok  	github.com/getlantern/photon	0.839s
+
+Idle scheduler comparison (isolated run):
+goos: darwin
+goarch: arm64
+pkg: github.com/getlantern/photon/internal/transport
+cpu: Apple M4
+BenchmarkBasePathIdleScheduler/generic-10         	19659846	        60.39 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBasePathIdleScheduler/generic-10         	20445542	        58.97 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBasePathIdleScheduler/generic-10         	20356435	        59.04 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBasePathIdleScheduler/base-10            	92777524	        13.32 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBasePathIdleScheduler/base-10            	91740783	        13.34 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBasePathIdleScheduler/base-10            	90247330	        13.34 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/getlantern/photon/internal/transport	7.543s
+

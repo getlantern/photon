@@ -1,0 +1,112 @@
+File: interop.test
+Type: alloc_objects
+Time: 2026-09-25 16:11:32 MDT
+Showing nodes accounting for 9915019, 98.08% of 10109476 total
+Dropped 97 nodes (cum <= 50547)
+      flat  flat%   sum%        cum   cum%
+   1409067 13.94% 13.94%    2323881 22.99%  golang.org/x/net/internal/socket.(*Conn).recvMsg
+    687547  6.80% 20.74%     687547  6.80%  github.com/getlantern/photon/internal/packet.(*Keys).seal
+    546152  5.40% 26.14%     546152  5.40%  golang.org/x/net/internal/socket.sockaddrToAddr
+    524311  5.19% 31.33%     524311  5.19%  container/list.(*List).insertValue (inline)
+    478999  4.74% 36.07%     478999  4.74%  github.com/getlantern/photon/internal/transport.(*Received).Ack
+    447839  4.43% 40.50%     447839  4.43%  github.com/getlantern/photon/internal/transport.(*Conn).enqueue
+    425990  4.21% 44.71%     753674  7.46%  github.com/getlantern/photon/internal/transport.(*Conn).makeHeader
+    393234  3.89% 48.60%     710005  7.02%  github.com/getlantern/photon/internal/recovery.(*congestionHistory).sent
+    368662  3.65% 52.25%     368662  3.65%  golang.org/x/sys/unix.anyToSockaddr
+    360453  3.57% 55.81%     360453  3.57%  github.com/getlantern/photon/internal/wire.PingFrame.Append
+    338623  3.35% 59.16%     357348  3.53%  github.com/getlantern/photon/internal/transport.(*UDPServer).invoke
+    333160  3.30% 62.46%     333160  3.30%  github.com/getlantern/photon/internal/packet.(*Keys).open
+    327685  3.24% 65.70%     699068  6.91%  github.com/getlantern/photon/internal/transport.parsePacketFrames
+    327684  3.24% 68.94%     327684  3.24%  encoding/binary.bigEndian.AppendUint32 (inline)
+    305848  3.03% 71.96%     305848  3.03%  github.com/getlantern/photon/internal/recovery.(*congestionHistory).ack.func1 (inline)
+    273078  2.70% 74.67%     371383  3.67%  github.com/getlantern/photon/internal/wire.ConsumeFrame
+    257036  2.54% 77.21%     257036  2.54%  github.com/getlantern/photon/internal/recovery.(*Sent).OnACK.func1 (inline)
+    245772  2.43% 79.64%     818455  8.10%  github.com/getlantern/photon.(*SendStream).Write.func1
+    229379  2.27% 81.91%     586727  5.80%  github.com/getlantern/photon/internal/transport.(*UDPServer).Wait
+    218463  2.16% 84.07%     839053  8.30%  github.com/getlantern/photon/internal/transport.(*Conn).WriteStream
+    196617  1.94% 86.01%    3296530 32.61%  github.com/getlantern/photon/internal/transport.(*Conn).NextDatagram
+    183674  1.82% 87.83%     183674  1.82%  github.com/getlantern/photon/internal/stream.(*Send).Write
+    155657  1.54% 89.37%     155657  1.54%  net.ipToSockaddr
+    131085  1.30% 90.67%     131085  1.30%  time.newTimer
+    131074  1.30% 91.96%    1048619 10.37%  github.com/getlantern/photon/internal/recovery.(*Sent).OnSent
+    127960  1.27% 93.23%     249682  2.47%  time.NewTimer
+    109229  1.08% 94.31%     126638  1.25%  github.com/quic-go/quic-go.(*framer).Append
+     98305  0.97% 95.28%      98305  0.97%  github.com/getlantern/photon/internal/wire.consumeAckBody
+     98305  0.97% 96.26%      98305  0.97%  github.com/quic-go/quic-go.(*ReceiveStream).handleStreamFrameImpl
+     65537  0.65% 96.90%     158384  1.57%  github.com/getlantern/photon/internal/recovery.order (inline)
+     43692  0.43% 97.34%      92847  0.92%  internal/reflectlite.Swapper
+     42132  0.42% 97.75%      51495  0.51%  context.WithDeadlineCause
+     32768  0.32% 98.08%     298494  2.95%  github.com/quic-go/quic-go.(*ReceiveStream).readImpl
+         2 2e-05% 98.08%     300682  2.97%  github.com/getlantern/photon/interop.BenchmarkServerStreamEcho.func1
+         0     0% 98.08%     524311  5.19%  container/list.(*List).PushBack (inline)
+         0     0% 98.08%      51495  0.51%  context.WithDeadline (inline)
+         0     0% 98.08%     837181  8.28%  github.com/getlantern/photon.(*SendStream).Write
+         0     0% 98.08%     839053  8.30%  github.com/getlantern/photon.(*SendStream).Write.func1.1
+         0     0% 98.08%     883994  8.74%  github.com/getlantern/photon.(*streamDeadline).run
+         0     0% 98.08%     333160  3.30%  github.com/getlantern/photon/internal/packet.(*Keys).Open
+         0     0% 98.08%     687547  6.80%  github.com/getlantern/photon/internal/packet.(*Keys).Seal (inline)
+         0     0% 98.08%     721268  7.13%  github.com/getlantern/photon/internal/recovery.(*Sent).OnACK
+         0     0% 98.08%     305848  3.03%  github.com/getlantern/photon/internal/recovery.(*congestionHistory).ack
+         0     0% 98.08%    1984246 19.63%  github.com/getlantern/photon/internal/transport.(*Conn).HandleDatagramECN
+         0     0% 98.08%     786443  7.78%  github.com/getlantern/photon/internal/transport.(*Conn).armTimer
+         0     0% 98.08%     721268  7.13%  github.com/getlantern/photon/internal/transport.(*Conn).handleAck
+         0     0% 98.08%     333160  3.30%  github.com/getlantern/photon/internal/transport.(*Conn).openApplication
+         0     0% 98.08%     333160  3.30%  github.com/getlantern/photon/internal/transport.(*Conn).openApplicationPath
+         0     0% 98.08%     333160  3.30%  github.com/getlantern/photon/internal/transport.(*Conn).openApplicationPath.func1
+         0     0% 98.08%     786443  7.78%  github.com/getlantern/photon/internal/transport.(*Conn).probeSize
+         0     0% 98.08%    1754867 17.36%  github.com/getlantern/photon/internal/transport.(*Conn).receiveECN
+         0     0% 98.08%    1984246 19.63%  github.com/getlantern/photon/internal/transport.(*ServerEndpoint).handleNetworkDatagramECN
+         0     0% 98.08%    3296530 32.61%  github.com/getlantern/photon/internal/transport.(*ServerEndpoint).nextDatagramInto
+         0     0% 98.08%     849976  8.41%  github.com/getlantern/photon/internal/transport.(*UDPServer).Wait.func1
+         0     0% 98.08%    6151348 60.85%  github.com/getlantern/photon/internal/transport.(*UDPServer).run
+         0     0% 98.08%    3296530 32.61%  github.com/getlantern/photon/internal/transport.(*networkOwner).next
+         0     0% 98.08%    3296530 32.61%  github.com/getlantern/photon/internal/transport.(*networkOwner).nextRouted
+         0     0% 98.08%    1984238 19.63%  github.com/getlantern/photon/internal/transport.(*networkOwner).receiveECN
+         0     0% 98.08%      98305  0.97%  github.com/getlantern/photon/internal/wire.ConsumeAckFrame
+         0     0% 98.08%     883994  8.74%  github.com/getlantern/photon/interop.BenchmarkServerStreamEcho.func1.5
+         0     0% 98.08%     143651  1.42%  github.com/quic-go/quic-go.(*Conn).appendOneShortHeaderPacket
+         0     0% 98.08%      99732  0.99%  github.com/quic-go/quic-go.(*Conn).handleFrames
+         0     0% 98.08%     107925  1.07%  github.com/quic-go/quic-go.(*Conn).handleOnePacket
+         0     0% 98.08%     107925  1.07%  github.com/quic-go/quic-go.(*Conn).handlePackets
+         0     0% 98.08%      99732  0.99%  github.com/quic-go/quic-go.(*Conn).handleShortHeaderPacket
+         0     0% 98.08%      99732  0.99%  github.com/quic-go/quic-go.(*Conn).handleUnpackedShortHeaderPacket
+         0     0% 98.08%     251917  2.49%  github.com/quic-go/quic-go.(*Conn).run
+         0     0% 98.08%     160778  1.59%  github.com/quic-go/quic-go.(*Conn).run.func3
+         0     0% 98.08%     143992  1.42%  github.com/quic-go/quic-go.(*Conn).sendPackets
+         0     0% 98.08%     143992  1.42%  github.com/quic-go/quic-go.(*Conn).sendPacketsWithoutGSO
+         0     0% 98.08%     143992  1.42%  github.com/quic-go/quic-go.(*Conn).triggerSending
+         0     0% 98.08%     298494  2.95%  github.com/quic-go/quic-go.(*ReceiveStream).Read
+         0     0% 98.08%      98305  0.97%  github.com/quic-go/quic-go.(*ReceiveStream).handleStreamFrame
+         0     0% 98.08%     298494  2.95%  github.com/quic-go/quic-go.(*Stream).Read
+         0     0% 98.08%      98305  0.97%  github.com/quic-go/quic-go.(*Stream).handleStreamFrame
+         0     0% 98.08%     251917  2.49%  github.com/quic-go/quic-go.(*Transport).doDial.func1
+         0     0% 98.08%    2358046 23.33%  github.com/quic-go/quic-go.(*Transport).init.func1.1
+         0     0% 98.08%    2358046 23.33%  github.com/quic-go/quic-go.(*Transport).listen
+         0     0% 98.08%    2358046 23.33%  github.com/quic-go/quic-go.(*oobConn).ReadPacket
+         0     0% 98.08%     155657  1.54%  github.com/quic-go/quic-go.(*oobConn).WritePacket
+         0     0% 98.08%     126638  1.25%  github.com/quic-go/quic-go.(*packetPacker).AppendPacket
+         0     0% 98.08%     126638  1.25%  github.com/quic-go/quic-go.(*packetPacker).appendPacket
+         0     0% 98.08%     126638  1.25%  github.com/quic-go/quic-go.(*packetPacker).composeNextPacket
+         0     0% 98.08%     126638  1.25%  github.com/quic-go/quic-go.(*packetPacker).maybeGetAppDataPacket
+         0     0% 98.08%     126638  1.25%  github.com/quic-go/quic-go.(*packetPacker).maybeGetShortHeaderPacket
+         0     0% 98.08%     155657  1.54%  github.com/quic-go/quic-go.(*sconn).Write
+         0     0% 98.08%     155657  1.54%  github.com/quic-go/quic-go.(*sconn).writePacket
+         0     0% 98.08%     160778  1.59%  github.com/quic-go/quic-go.(*sendQueue).Run
+         0     0% 98.08%      98305  0.97%  github.com/quic-go/quic-go.(*streamsMap).HandleStreamFrame
+         0     0% 98.08%    2323881 22.99%  golang.org/x/net/internal/socket.(*Conn).RecvMsg (inline)
+         0     0% 98.08%     914814  9.05%  golang.org/x/net/internal/socket.(*Conn).recvMsg.func1
+         0     0% 98.08%     914814  9.05%  golang.org/x/net/internal/socket.recvmsg
+         0     0% 98.08%    2323881 22.99%  golang.org/x/net/ipv4.(*payloadHandler).ReadBatch
+         0     0% 98.08%     368662  3.65%  golang.org/x/sys/unix.RecvmsgBuffers
+         0     0% 98.08%     914814  9.05%  internal/poll.(*FD).RawRead
+         0     0% 98.08%     883994  8.74%  io.CopyBuffer
+         0     0% 98.08%     298494  2.95%  io.ReadAtLeast
+         0     0% 98.08%     298494  2.95%  io.ReadFull (inline)
+         0     0% 98.08%     883994  8.74%  io.copyBuffer
+         0     0% 98.08%     155657  1.54%  net.(*UDPAddr).sockaddr
+         0     0% 98.08%     155657  1.54%  net.(*UDPConn).WriteMsgUDP
+         0     0% 98.08%     155657  1.54%  net.(*UDPConn).writeMsg
+         0     0% 98.08%     914814  9.05%  net.(*rawConn).Read
+         0     0% 98.08%      92847  0.92%  sort.Slice
+         0     0% 98.08%     289757  2.87%  testing.(*B).launch
+         0     0% 98.08%     301054  2.98%  testing.(*B).runN

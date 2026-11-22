@@ -1,0 +1,182 @@
+--- a/internal/stream/receive.go
++++ b/internal/stream/receive.go
+@@ -44,9 +44,7 @@
+ 	return nil
+ }
+ 
+-// Receive grows a circular buffer to cover the span of retained bytes.
+-// Advertised capacity and allocated storage are independent; an initial small
+-// contiguous span needs at most 4 KiB of payload storage with a large window.
++// Receive lazily allocates a bounded circular buffer on the first retained byte.
+ // Idle streams and empty terminal streams need no payload storage.
+ // Advertised stream credit cannot extend
+ // beyond the consumed offset plus its capacity, so any flow-control-compliant
+@@ -89,8 +87,7 @@
+ 	return nil
+ }
+ 
+-// Grow raises the receive window capacity without granting additional credit
+-// or allocating payload storage.
++// Grow reserves a larger receive window without granting additional credit.
+ // The owner must separately advertise and install a new limit. Unread bytes,
+ // gaps, final size and shared flow accounting are preserved. Storage stays lazy
+ // when there are no retained bytes. Shrinking is not supported.
+@@ -101,41 +98,26 @@
+ 	if capacity == r.capacity {
+ 		return nil
+ 	}
+-	r.capacity = capacity
+ 	if r.buffered == 0 {
++		r.capacity = capacity
+ 		r.data, r.present = nil, nil
+-	}
+-	return nil
+-}
+-
+-// ensureStorage covers the incoming span measured from the consumed offset.
+-// Existing bytes already fit the old ring; expansion remaps only occupied bits.
+-// A sparse far-ahead fragment can still require the entire advertised window.
+-func (r *Receive) ensureStorage(span int) {
+-	oldSize := len(r.data)
+-	if span <= oldSize {
+-		return
+-	}
+-	size := min(r.capacity, max(4096, oldSize))
+-	for size < span {
+-		size = min(r.capacity, size*2)
+-	}
+-	data := make([]byte, size)
+-	present := make([]uint64, (size+63)/64)
+-	if r.buffered != 0 {
+-		start := int(r.next % uint64(oldSize))
+-		for word, occupied := range r.present {
+-			for occupied != 0 {
+-				index := word*64 + bits.TrailingZeros64(occupied)
+-				distance := (index - start + oldSize) % oldSize
+-				next := int((r.next + uint64(distance)) % uint64(size))
+-				data[next] = r.data[index]
+-				present[next/64] |= uint64(1) << uint(next%64)
+-				occupied &= occupied - 1
+-			}
+-		}
+-	}
+-	r.data, r.present = data, present
++		return nil
++	}
++	data := make([]byte, capacity)
++	present := make([]uint64, (capacity+63)/64)
++	start := int(r.next % uint64(r.capacity))
++	for word, occupied := range r.present {
++		for occupied != 0 {
++			index := word*64 + bits.TrailingZeros64(occupied)
++			distance := (index - start + r.capacity) % r.capacity
++			next := int((r.next + uint64(distance)) % uint64(capacity))
++			data[next] = r.data[index]
++			present[next/64] |= uint64(1) << uint(next%64)
++			occupied &= occupied - 1
++		}
++	}
++	r.capacity, r.data, r.present = capacity, data, present
++	return nil
+ }
+ 
+ func (r *Receive) validate(end uint64, final bool) error {
+@@ -194,20 +176,18 @@
+ 			data = data[:r.reliable-offset]
+ 		}
+ 	}
+-	// Empty frames can advance accounting without storage. Trimming for a
+-	// partial reset above ensures discarded suffix bytes do not drive allocation.
+-	if len(data) == 0 {
+-		r.commit(end, fin)
+-		return nil
+-	}
+-	r.ensureStorage(int(offset + uint64(len(data)) - r.next))
+-	ringSize := len(r.data)
++	// Allocation follows flow-control and final-size validation. Empty frames
++	// may advance accounting without providing any bytes to retain.
++	if len(data) > 0 && r.data == nil {
++		r.data = make([]byte, r.capacity)
++		r.present = make([]uint64, (r.capacity+63)/64)
++	}
+ 	// Inspect only occupied positions, but validate every overlap before
+ 	// committing either flow accounting or new bytes.
+-	index := int(offset % uint64(ringSize))
++	index := int(offset % uint64(r.capacity))
+ 	for pos := 0; pos < len(data); {
+ 		shift := index % 64
+-		n := min(len(data)-pos, ringSize-index, 64-shift)
++		n := min(len(data)-pos, r.capacity-index, 64-shift)
+ 		mask := receiveMask(shift, n)
+ 		occupied := r.present[index/64] & mask
+ 		for occupied != 0 {
+@@ -218,20 +198,20 @@
+ 			occupied &= occupied - 1
+ 		}
+ 		pos, index = pos+n, index+n
+-		if index == ringSize {
++		if index == r.capacity {
+ 			index = 0
+ 		}
+ 	}
+ 	r.commit(end, fin)
+-	index = int(offset % uint64(ringSize))
++	index = int(offset % uint64(r.capacity))
+ 	for pos := 0; pos < len(data); {
+-		n := min(len(data)-pos, ringSize-index, 64-index%64)
++		n := min(len(data)-pos, r.capacity-index, 64-index%64)
+ 		mask := receiveMask(index%64, n)
+ 		r.buffered += uint64(bits.OnesCount64(mask &^ r.present[index/64]))
+ 		copy(r.data[index:index+n], data[pos:pos+n])
+ 		r.present[index/64] |= mask
+ 		pos, index = pos+n, index+n
+-		if index == ringSize {
++		if index == r.capacity {
+ 			index = 0
+ 		}
+ 	}
+@@ -279,16 +259,12 @@
+ 	}
+ 	// Drop bytes beyond the current obligation. Iterate occupied bitmap bits,
+ 	// bounded by the receive window, never the peer's absolute stream offset.
+-	if r.buffered == 0 {
+-		return nil
+-	}
+-	ringSize := len(r.data)
+-	start := int(r.next % uint64(ringSize))
++	start := int(r.next % uint64(r.capacity))
+ 	for word, occupied := range r.present {
+ 		for occupied != 0 {
+ 			bit := bits.TrailingZeros64(occupied)
+ 			index := word*64 + bit
+-			distance := (index - start + ringSize) % ringSize
++			distance := (index - start + r.capacity) % r.capacity
+ 			if r.next+uint64(distance) >= r.reliable {
+ 				r.present[word] &^= uint64(1) << uint(bit)
+ 				r.buffered--
+@@ -316,22 +292,18 @@
+ 		return 0, nil
+ 	}
+ 	n := 0
+-	ringSize := len(r.data)
+-	index := 0
+-	if r.buffered != 0 {
+-		index = int(r.next % uint64(ringSize))
+-	}
++	index := int(r.next % uint64(r.capacity))
+ 	for n < len(dst) && r.buffered > 0 {
+ 		shift := index % 64
+ 		contiguous := bits.TrailingZeros64(^(r.present[index/64] >> uint(shift)))
+-		count := min(contiguous, 64-shift, ringSize-index, len(dst)-n)
++		count := min(contiguous, 64-shift, r.capacity-index, len(dst)-n)
+ 		if count == 0 {
+ 			break
+ 		}
+ 		copy(dst[n:n+count], r.data[index:index+count])
+ 		r.present[index/64] &^= receiveMask(shift, count)
+ 		index += count
+-		if index == ringSize {
++		if index == r.capacity {
+ 			index = 0
+ 		}
+ 		r.buffered -= uint64(count)

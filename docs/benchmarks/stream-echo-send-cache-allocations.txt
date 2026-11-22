@@ -1,0 +1,129 @@
+File: interop.test
+Type: alloc_space
+Time: 2026-09-28 13:04:10 MDT
+Showing nodes accounting for 822.34MB, 97.20% of 846.07MB total
+Dropped 108 nodes (cum <= 4.23MB)
+      flat  flat%   sum%        cum   cum%
+  134.51MB 15.90% 15.90%   240.51MB 28.43%  golang.org/x/net/internal/socket.(*Conn).recvMsg
+   53.50MB  6.32% 22.22%    53.50MB  6.32%  golang.org/x/net/internal/socket.sockaddrToAddr
+   52.50MB  6.21% 28.43%    52.50MB  6.21%  golang.org/x/sys/unix.anyToSockaddr
+   44.68MB  5.28% 33.71%    44.68MB  5.28%  github.com/getlantern/photon/internal/transport.init.func1
+   42.50MB  5.02% 38.73%    42.50MB  5.02%  net.ipToSockaddr
+      41MB  4.85% 43.58%       43MB  5.08%  github.com/getlantern/photon/internal/transport.(*UDPServer).invoke
+   35.50MB  4.20% 47.77%    63.01MB  7.45%  time.NewTimer
+   29.50MB  3.49% 51.26%    29.50MB  3.49%  time.newTimer
+   28.51MB  3.37% 54.63%    64.01MB  7.57%  github.com/getlantern/photon/internal/recovery.(*Sent).OnACK
+      28MB  3.31% 57.94%       28MB  3.31%  container/list.(*List).insertValue (inline)
+   25.50MB  3.01% 60.95%    25.50MB  3.01%  github.com/getlantern/photon/internal/transport.(*Received).Ack
+      25MB  2.95% 63.91%       25MB  2.95%  github.com/getlantern/photon/internal/recovery.(*congestionHistory).ack.func1 (inline)
+      25MB  2.95% 66.86%       48MB  5.67%  github.com/getlantern/photon/internal/recovery.(*congestionHistory).sent
+      24MB  2.84% 69.70%    69.50MB  8.22%  github.com/getlantern/photon.(*SendStream).Write.func1
+   23.32MB  2.76% 72.46%    23.32MB  2.76%  github.com/getlantern/photon/internal/stream.(*Receive).Push
+   19.50MB  2.30% 74.76%       22MB  2.60%  github.com/quic-go/quic-go.(*framer).Append
+      17MB  2.01% 76.77%       25MB  2.95%  github.com/getlantern/photon/internal/wire.ConsumeFrame
+      17MB  2.01% 78.78%       17MB  2.01%  github.com/getlantern/photon/internal/transport.(*Conn).enqueue
+   14.50MB  1.71% 80.50%       31MB  3.66%  github.com/getlantern/photon/internal/transport.(*Conn).WriteStream
+   13.50MB  1.60% 82.09%    13.50MB  1.60%  github.com/getlantern/photon/internal/packet.(*Keys).seal
+      13MB  1.54% 83.63%       13MB  1.54%  github.com/getlantern/photon/internal/packet.(*Keys).open
+      13MB  1.54% 85.16%    14.50MB  1.71%  github.com/quic-go/quic-go.(*ReceiveStream).handleStreamFrameImpl
+   12.72MB  1.50% 86.67%    12.72MB  1.50%  internal/bytealg.MakeNoZero
+   11.57MB  1.37% 88.03%    77.34MB  9.14%  github.com/getlantern/photon/interop.BenchmarkServerStreamEcho.func1
+   10.50MB  1.24% 89.28%   113.01MB 13.36%  github.com/getlantern/photon/internal/transport.(*Conn).NextDatagram
+    9.50MB  1.12% 90.40%     9.50MB  1.12%  sync.(*poolChain).pushHead
+       9MB  1.06% 91.46%        9MB  1.06%  github.com/quic-go/quic-go/internal/ackhandler.(*sentPacketHistory).SentPacket (inline)
+       8MB  0.95% 92.41%        8MB  0.95%  github.com/getlantern/photon/internal/wire.consumeAckBody
+    6.50MB  0.77% 93.18%    49.50MB  5.85%  github.com/getlantern/photon/internal/transport.(*UDPServer).Wait
+    5.50MB  0.65% 93.83%     5.50MB  0.65%  encoding/binary.bigEndian.AppendUint32 (inline)
+       5MB  0.59% 94.42%        5MB  0.59%  internal/reflectlite.unsafe_New
+       4MB  0.47% 94.89%       29MB  3.43%  github.com/getlantern/photon/internal/transport.parsePacketFrames
+       4MB  0.47% 95.36%     9.50MB  1.12%  github.com/getlantern/photon/internal/transport.(*Conn).makeHeader
+    3.50MB  0.41% 95.78%     5.50MB  0.65%  context.WithDeadlineCause
+    3.50MB  0.41% 96.19%    60.01MB  7.09%  github.com/quic-go/quic-go.(*ReceiveStream).readImpl
+       3MB  0.35% 96.55%        8MB  0.95%  internal/reflectlite.Swapper
+    2.50MB   0.3% 96.84%    10.50MB  1.24%  github.com/getlantern/photon/internal/recovery.order (inline)
+       1MB  0.12% 96.96%       54MB  6.38%  github.com/getlantern/photon/internal/recovery.(*Sent).OnSent
+    0.50MB 0.059% 97.02%   132.50MB 15.66%  github.com/getlantern/photon/internal/transport.(*Conn).receiveECN
+    0.50MB 0.059% 97.08%   279.50MB 33.04%  github.com/getlantern/photon/internal/transport.(*UDPServer).run
+    0.50MB 0.059% 97.14%    57.02MB  6.74%  github.com/quic-go/quic-go.(*Conn).run
+    0.50MB 0.059% 97.20%     7.50MB  0.89%  github.com/quic-go/quic-go.(*SendStream).write
+         0     0% 97.20%    12.72MB  1.50%  bytes.Repeat
+         0     0% 97.20%       28MB  3.31%  container/list.(*List).PushBack (inline)
+         0     0% 97.20%     5.50MB  0.65%  context.WithDeadline (inline)
+         0     0% 97.20%        6MB  0.71%  github.com/getlantern/photon.(*ReceiveStream).Read
+         0     0% 97.20%    73.01MB  8.63%  github.com/getlantern/photon.(*SendStream).Write
+         0     0% 97.20%       31MB  3.66%  github.com/getlantern/photon.(*SendStream).Write.func1.1
+         0     0% 97.20%    79.01MB  9.34%  github.com/getlantern/photon.(*streamDeadline).run
+         0     0% 97.20%       13MB  1.54%  github.com/getlantern/photon/internal/packet.(*Keys).OpenInto
+         0     0% 97.20%    13.50MB  1.60%  github.com/getlantern/photon/internal/packet.(*Keys).SealInto (inline)
+         0     0% 97.20%       25MB  2.95%  github.com/getlantern/photon/internal/recovery.(*congestionHistory).ack
+         0     0% 97.20%   132.50MB 15.66%  github.com/getlantern/photon/internal/transport.(*Conn).HandleDatagramECN
+         0     0% 97.20%    64.01MB  7.57%  github.com/getlantern/photon/internal/transport.(*Conn).handleAck
+         0     0% 97.20%    23.32MB  2.76%  github.com/getlantern/photon/internal/transport.(*Conn).handleStreamFrame
+         0     0% 97.20%       13MB  1.54%  github.com/getlantern/photon/internal/transport.(*Conn).openApplicationPathInto
+         0     0% 97.20%       13MB  1.54%  github.com/getlantern/photon/internal/transport.(*Conn).openApplicationPathInto.func1
+         0     0% 97.20%   133.50MB 15.78%  github.com/getlantern/photon/internal/transport.(*ServerEndpoint).handleNetworkDatagramECN
+         0     0% 97.20%   113.01MB 13.36%  github.com/getlantern/photon/internal/transport.(*ServerEndpoint).nextConnectionPacket
+         0     0% 97.20%   113.01MB 13.36%  github.com/getlantern/photon/internal/transport.(*ServerEndpoint).nextDatagramInto
+         0     0% 97.20%    31.50MB  3.72%  github.com/getlantern/photon/internal/transport.(*UDPServer).Wait.func1
+         0     0% 97.20%    45.18MB  5.34%  github.com/getlantern/photon/internal/transport.(*UDPServer).readSocket
+         0     0% 97.20%   113.01MB 13.36%  github.com/getlantern/photon/internal/transport.(*networkOwner).next
+         0     0% 97.20%   113.01MB 13.36%  github.com/getlantern/photon/internal/transport.(*networkOwner).nextRouted
+         0     0% 97.20%   131.43MB 15.53%  github.com/getlantern/photon/internal/transport.(*networkOwner).receiveECN
+         0     0% 97.20%        8MB  0.95%  github.com/getlantern/photon/internal/wire.ConsumeAckFrame
+         0     0% 97.20%    95.51MB 11.29%  github.com/getlantern/photon/interop.BenchmarkServerStreamEcho.func1.5
+         0     0% 97.20%    31.01MB  3.66%  github.com/quic-go/quic-go.(*Conn).appendOneShortHeaderPacket
+         0     0% 97.20%     6.50MB  0.77%  github.com/quic-go/quic-go.(*Conn).handleAckFrame
+         0     0% 97.20%    24.51MB  2.90%  github.com/quic-go/quic-go.(*Conn).handleFrames
+         0     0% 97.20%    24.51MB  2.90%  github.com/quic-go/quic-go.(*Conn).handleOnePacket
+         0     0% 97.20%    24.51MB  2.90%  github.com/quic-go/quic-go.(*Conn).handlePackets
+         0     0% 97.20%    24.01MB  2.84%  github.com/quic-go/quic-go.(*Conn).handleShortHeaderPacket
+         0     0% 97.20%    24.01MB  2.84%  github.com/quic-go/quic-go.(*Conn).handleUnpackedShortHeaderPacket
+         0     0% 97.20%        9MB  1.06%  github.com/quic-go/quic-go.(*Conn).registerPackedShortHeaderPacket
+         0     0% 97.20%       44MB  5.20%  github.com/quic-go/quic-go.(*Conn).run.func3
+         0     0% 97.20%    32.01MB  3.78%  github.com/quic-go/quic-go.(*Conn).sendPackets
+         0     0% 97.20%    32.01MB  3.78%  github.com/quic-go/quic-go.(*Conn).sendPacketsWithoutGSO
+         0     0% 97.20%    32.01MB  3.78%  github.com/quic-go/quic-go.(*Conn).triggerSending
+         0     0% 97.20%    60.01MB  7.09%  github.com/quic-go/quic-go.(*ReceiveStream).Read
+         0     0% 97.20%    14.50MB  1.71%  github.com/quic-go/quic-go.(*ReceiveStream).handleStreamFrame
+         0     0% 97.20%     7.50MB  0.89%  github.com/quic-go/quic-go.(*SendStream).Write (inline)
+         0     0% 97.20%     7.50MB  0.89%  github.com/quic-go/quic-go.(*SendStream).WriteWithLimit
+         0     0% 97.20%    60.01MB  7.09%  github.com/quic-go/quic-go.(*Stream).Read
+         0     0% 97.20%     7.50MB  0.89%  github.com/quic-go/quic-go.(*Stream).Write
+         0     0% 97.20%    14.50MB  1.71%  github.com/quic-go/quic-go.(*Stream).handleStreamFrame
+         0     0% 97.20%    38.01MB  4.49%  github.com/quic-go/quic-go.(*Transport).doDial.func1
+         0     0% 97.20%   243.02MB 28.72%  github.com/quic-go/quic-go.(*Transport).init.func1.1
+         0     0% 97.20%   243.02MB 28.72%  github.com/quic-go/quic-go.(*Transport).listen
+         0     0% 97.20%   242.51MB 28.66%  github.com/quic-go/quic-go.(*oobConn).ReadPacket
+         0     0% 97.20%    42.50MB  5.02%  github.com/quic-go/quic-go.(*oobConn).WritePacket
+         0     0% 97.20%       22MB  2.60%  github.com/quic-go/quic-go.(*packetPacker).AppendPacket
+         0     0% 97.20%       22MB  2.60%  github.com/quic-go/quic-go.(*packetPacker).appendPacket
+         0     0% 97.20%       22MB  2.60%  github.com/quic-go/quic-go.(*packetPacker).composeNextPacket
+         0     0% 97.20%       22MB  2.60%  github.com/quic-go/quic-go.(*packetPacker).maybeGetAppDataPacket
+         0     0% 97.20%       22MB  2.60%  github.com/quic-go/quic-go.(*packetPacker).maybeGetShortHeaderPacket
+         0     0% 97.20%    42.50MB  5.02%  github.com/quic-go/quic-go.(*sconn).Write
+         0     0% 97.20%    42.50MB  5.02%  github.com/quic-go/quic-go.(*sconn).writePacket
+         0     0% 97.20%       44MB  5.20%  github.com/quic-go/quic-go.(*sendQueue).Run
+         0     0% 97.20%    14.50MB  1.71%  github.com/quic-go/quic-go.(*streamsMap).HandleStreamFrame
+         0     0% 97.20%     6.50MB  0.77%  github.com/quic-go/quic-go/internal/ackhandler.(*sentPacketHandler).ReceivedAck
+         0     0% 97.20%        9MB  1.06%  github.com/quic-go/quic-go/internal/ackhandler.(*sentPacketHandler).SentPacket
+         0     0% 97.20%     4.50MB  0.53%  github.com/quic-go/quic-go/internal/ackhandler.putPacket (inline)
+         0     0% 97.20%   240.51MB 28.43%  golang.org/x/net/internal/socket.(*Conn).RecvMsg (inline)
+         0     0% 97.20%      106MB 12.53%  golang.org/x/net/internal/socket.(*Conn).recvMsg.func1
+         0     0% 97.20%      106MB 12.53%  golang.org/x/net/internal/socket.recvmsg
+         0     0% 97.20%   240.51MB 28.43%  golang.org/x/net/ipv4.(*payloadHandler).ReadBatch
+         0     0% 97.20%    52.50MB  6.21%  golang.org/x/sys/unix.RecvmsgBuffers
+         0     0% 97.20%      106MB 12.53%  internal/poll.(*FD).RawRead
+         0     0% 97.20%    94.51MB 11.17%  io.CopyBuffer
+         0     0% 97.20%       52MB  6.15%  io.ReadAtLeast
+         0     0% 97.20%       52MB  6.15%  io.ReadFull (inline)
+         0     0% 97.20%    94.51MB 11.17%  io.copyBuffer
+         0     0% 97.20%    42.50MB  5.02%  net.(*UDPAddr).sockaddr
+         0     0% 97.20%    42.50MB  5.02%  net.(*UDPConn).WriteMsgUDP
+         0     0% 97.20%    42.50MB  5.02%  net.(*UDPConn).writeMsg
+         0     0% 97.20%      106MB 12.53%  net.(*rawConn).Read
+         0     0% 97.20%        8MB  0.95%  sort.Slice
+         0     0% 97.20%    51.69MB  6.11%  sync.(*Pool).Get
+         0     0% 97.20%     9.50MB  1.12%  sync.(*Pool).Put
+         0     0% 97.20%    66.38MB  7.85%  testing.(*B).launch
+         0     0% 97.20%    10.96MB  1.30%  testing.(*B).run1.func1
+         0     0% 97.20%    77.34MB  9.14%  testing.(*B).runN

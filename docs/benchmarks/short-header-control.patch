@@ -1,0 +1,18 @@
+--- a/internal/transport/connection.go
++++ b/internal/transport/connection.go
+@@ -1362,13 +1362,8 @@
+ 		if c.applicationKeys.phase {
+ 			first |= 4
+ 		}
+-		// The short header has a fixed-size packet number. Allocate its full
+-		// size once; incremental appends can grow twice for common CID sizes.
+-		b := make([]byte, 1+len(c.peerCID)+4)
+-		b[0] = first
+-		copy(b[1:], c.peerCID)
+-		binary.BigEndian.PutUint32(b[1+len(c.peerCID):], uint32(pn))
+-		return b, nil
++		b := append([]byte{first}, c.peerCID...)
++		return binary.BigEndian.AppendUint32(b, uint32(pn)), nil
+ 	}
+ 	var token []byte
+ 	if space == initialSpace {

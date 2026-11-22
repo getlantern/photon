@@ -1,0 +1,24 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/getlantern/photon/interop
+cpu: Apple M4
+BenchmarkCapsuleCodec/parse/independent/0-10         	  354201	      1669 ns/op	  76.68 MB/s	     112 B/op	       2 allocs/op
+BenchmarkCapsuleCodec/parse/independent/0-10         	  368870	      1622 ns/op	  78.90 MB/s	     112 B/op	       2 allocs/op
+BenchmarkCapsuleCodec/parse/independent/0-10         	  380806	      1629 ns/op	  78.58 MB/s	     112 B/op	       2 allocs/op
+BenchmarkCapsuleCodec/parse/upstream/0-10            	  240680	      2504 ns/op	  51.13 MB/s	    2645 B/op	     130 allocs/op
+BenchmarkCapsuleCodec/parse/upstream/0-10            	  239437	      2506 ns/op	  51.07 MB/s	    2645 B/op	     130 allocs/op
+BenchmarkCapsuleCodec/parse/upstream/0-10            	  238058	      2509 ns/op	  51.01 MB/s	    2645 B/op	     130 allocs/op
+BenchmarkCapsuleCodec/parse/independent/64-10        	  264050	      2231 ns/op	1922.08 MB/s	     112 B/op	       2 allocs/op
+BenchmarkCapsuleCodec/parse/independent/64-10        	  268447	      2230 ns/op	1922.66 MB/s	     112 B/op	       2 allocs/op
+BenchmarkCapsuleCodec/parse/independent/64-10        	  278142	      2233 ns/op	1920.52 MB/s	     112 B/op	       2 allocs/op
+BenchmarkCapsuleCodec/parse/upstream/64-10           	  165445	      3243 ns/op	1322.21 MB/s	    2645 B/op	     130 allocs/op
+BenchmarkCapsuleCodec/parse/upstream/64-10           	  191005	      3165 ns/op	1354.91 MB/s	    2645 B/op	     130 allocs/op
+BenchmarkCapsuleCodec/parse/upstream/64-10           	  192544	      3130 ns/op	1369.84 MB/s	    2644 B/op	     130 allocs/op
+BenchmarkCapsuleCodec/parse/independent/1200-10      	  201864	      2992 ns/op	25735.91 MB/s	     112 B/op	       2 allocs/op
+BenchmarkCapsuleCodec/parse/independent/1200-10      	  203119	      2949 ns/op	26105.95 MB/s	     112 B/op	       2 allocs/op
+BenchmarkCapsuleCodec/parse/independent/1200-10      	  207414	      2948 ns/op	26119.90 MB/s	     112 B/op	       2 allocs/op
+BenchmarkCapsuleCodec/parse/upstream/1200-10         	  153732	      3883 ns/op	19830.29 MB/s	    2645 B/op	     130 allocs/op
+BenchmarkCapsuleCodec/parse/upstream/1200-10         	  157036	      3893 ns/op	19776.18 MB/s	    2645 B/op	     130 allocs/op
+BenchmarkCapsuleCodec/parse/upstream/1200-10         	  136192	      3932 ns/op	19580.43 MB/s	    2645 B/op	     130 allocs/op
+PASS
+ok  	github.com/getlantern/photon/interop	10.960s

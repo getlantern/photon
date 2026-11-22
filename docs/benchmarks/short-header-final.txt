@@ -1,0 +1,21 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/getlantern/photon/internal/transport
+cpu: Apple M4
+BenchmarkShortHeaderConstruction/0-10  	  100000	        17.50 ns/op	       5 B/op	       1 allocs/op
+BenchmarkShortHeaderConstruction/0-10  	  100000	        17.24 ns/op	       5 B/op	       1 allocs/op
+BenchmarkShortHeaderConstruction/0-10  	  100000	        14.97 ns/op	       5 B/op	       1 allocs/op
+BenchmarkShortHeaderConstruction/4-10  	  100000	        17.43 ns/op	      16 B/op	       1 allocs/op
+BenchmarkShortHeaderConstruction/4-10  	  100000	        16.02 ns/op	      16 B/op	       1 allocs/op
+BenchmarkShortHeaderConstruction/4-10  	  100000	        15.06 ns/op	      16 B/op	       1 allocs/op
+BenchmarkShortHeaderConstruction/8-10  	  100000	        14.22 ns/op	      16 B/op	       1 allocs/op
+BenchmarkShortHeaderConstruction/8-10  	  100000	        14.32 ns/op	      16 B/op	       1 allocs/op
+BenchmarkShortHeaderConstruction/8-10  	  100000	        13.04 ns/op	      16 B/op	       1 allocs/op
+BenchmarkShortHeaderConstruction/16-10 	  100000	        17.33 ns/op	      24 B/op	       1 allocs/op
+BenchmarkShortHeaderConstruction/16-10 	  100000	        17.33 ns/op	      24 B/op	       1 allocs/op
+BenchmarkShortHeaderConstruction/16-10 	  100000	        16.41 ns/op	      24 B/op	       1 allocs/op
+BenchmarkShortHeaderConstruction/20-10 	  100000	        16.07 ns/op	      32 B/op	       1 allocs/op
+BenchmarkShortHeaderConstruction/20-10 	  100000	        15.13 ns/op	      32 B/op	       1 allocs/op
+BenchmarkShortHeaderConstruction/20-10 	  100000	        14.98 ns/op	      32 B/op	       1 allocs/op
+PASS
+ok  	github.com/getlantern/photon/internal/transport	0.348s

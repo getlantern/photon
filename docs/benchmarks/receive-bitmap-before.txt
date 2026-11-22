@@ -1,0 +1,15 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/getlantern/photon/internal/stream
+cpu: Apple M4
+BenchmarkReceiveCycle/64-10 	 7834431	       140.2 ns/op	 456.60 MB/s	       0 B/op	       0 allocs/op
+BenchmarkReceiveCycle/64-10 	 8658888	       137.8 ns/op	 464.43 MB/s	       0 B/op	       0 allocs/op
+BenchmarkReceiveCycle/64-10 	 8705734	       137.8 ns/op	 464.47 MB/s	       0 B/op	       0 allocs/op
+BenchmarkReceiveCycle/1200-10         	  447470	      2671 ns/op	 449.25 MB/s	       0 B/op	       0 allocs/op
+BenchmarkReceiveCycle/1200-10         	  451506	      2673 ns/op	 448.91 MB/s	       0 B/op	       0 allocs/op
+BenchmarkReceiveCycle/1200-10         	  456890	      2675 ns/op	 448.58 MB/s	       0 B/op	       0 allocs/op
+BenchmarkReceiveCycle/16384-10        	   33000	     36604 ns/op	 447.60 MB/s	       3 B/op	       0 allocs/op
+BenchmarkReceiveCycle/16384-10        	   32809	     36531 ns/op	 448.50 MB/s	       3 B/op	       0 allocs/op
+BenchmarkReceiveCycle/16384-10        	   32631	     36634 ns/op	 447.23 MB/s	       4 B/op	       0 allocs/op
+PASS
+ok  	github.com/getlantern/photon/internal/stream	11.158s
