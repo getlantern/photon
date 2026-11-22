@@ -183,7 +183,10 @@ func (c *Conn) dispatchMultipathPacketFrames(decoded *pathPacket, now time.Time,
 				app := state.application
 				// Retain lost data in its path queue for the outgoing scheduler. Shared
 				// items already delivered or queued elsewhere are not queued again.
-				queueLostItems(app.space, app.space, events.Lost)
+				// Loss on an evacuated path says nothing about the surviving copies.
+				if !app.evacuated {
+					queueLostItems(app.space, app.space, events.Lost)
+				}
 				c.armPathRecovery(acknowledgedPath, now)
 			}
 		case wire.NewTokenFrame:

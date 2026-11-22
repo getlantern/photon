@@ -83,20 +83,79 @@ func (t *streamArrivalTrace) RecordEvent(event qlogwriter.Event) {
 	}
 }
 
-// arrivedDuring reports how many new bytes of stream other the peer received
-// between the first and the last new byte of stream id.
-func arrivedDuring(frames []streamArrival, id, other, size uint64) (n uint64) {
-	high := map[uint64]uint64{}
-	for _, f := range frames {
-		fresh := f.end > high[f.id]
-		if fresh && f.id == other && high[id] > 0 && high[id] < size {
-			n += f.end - high[f.id]
+type streamPrioritySpec struct {
+	urgency     int8
+	incremental bool
+}
+
+// RFC 9002 initial congestion window: what the first-written stream can send,
+// whatever its urgency, before the streams that precede it are queued.
+const priorityInitialFlight = 14720
+
+// arrivalOrderViolations replays what the peer received against the priorities
+// of streams ids. A stream is preceded by every stream of lower urgency value
+// and, when both are non-incremental at one urgency, by the lower ID. Counting
+// only what arrives after a preceding stream starts would accept a fully
+// reversed order, so everything before its completion is bounded too.
+func arrivalOrderViolations(frames []streamArrival, ids []uint64, priorities []streamPrioritySpec, size, slack uint64) (violations []string) {
+	index := map[uint64]int{}
+	for i, id := range ids {
+		index[id] = i
+	}
+	precedes := func(a, b int) bool {
+		if priorities[a].urgency != priorities[b].urgency {
+			return priorities[a].urgency < priorities[b].urgency
 		}
-		if fresh {
-			high[f.id] = f.end
+		return !priorities[a].incremental && !priorities[b].incremental && ids[a] < ids[b]
+	}
+	shares := func(a, b int) bool {
+		return a != b && priorities[a] == priorities[b] && priorities[a].incremental
+	}
+	high := make([]uint64, len(ids))
+	started := make([]bool, len(ids))
+	before := make([]uint64, len(ids))   // bytes of streams i precedes that arrived before i completed
+	during := make([][]uint64, len(ids)) // of those, per stream, the bytes that arrived after i started
+	lead := make([][]uint64, len(ids))   // the furthest i got ahead of a stream it shares turns with
+	for i := range ids {
+		during[i], lead[i] = make([]uint64, len(ids)), make([]uint64, len(ids))
+	}
+	for _, f := range frames {
+		i, ok := index[f.id]
+		if !ok || f.end <= high[i] {
+			continue
+		}
+		fresh := f.end - high[i]
+		high[i], started[i] = f.end, true
+		for j := range ids {
+			if precedes(j, i) && high[j] < size {
+				before[j] += fresh
+				if started[j] {
+					during[j][i] += fresh
+				}
+			}
+			if shares(i, j) && high[i] > high[j] {
+				lead[i][j] = max(lead[i][j], high[i]-high[j])
+			}
 		}
 	}
-	return n
+	for i := range ids {
+		// An empty or partial trace would satisfy every bound below.
+		if high[i] != size {
+			violations = append(violations, fmt.Sprintf("trace has %d of %d bytes for stream %d (%+v)", high[i], size, i, priorities[i]))
+		}
+		if before[i] > priorityInitialFlight+slack {
+			violations = append(violations, fmt.Sprintf("stream %d (%+v) completed after %d bytes of lower-priority streams", i, priorities[i], before[i]))
+		}
+		for j := range ids {
+			if during[i][j] > slack {
+				violations = append(violations, fmt.Sprintf("stream %d (%+v) yielded %d bytes to stream %d (%+v)", i, priorities[i], during[i][j], j, priorities[j]))
+			}
+			if lead[i][j] > priorityInitialFlight+slack {
+				violations = append(violations, fmt.Sprintf("incremental stream %d led stream %d by %d bytes instead of sharing turns", i, j, lead[i][j]))
+			}
+		}
+	}
+	return violations
 }
 
 func TestStreamPriorityIndependent(t *testing.T) {
@@ -131,10 +190,7 @@ func TestStreamPriorityIndependent(t *testing.T) {
 			// urgency, a non-incremental pair above it, and one urgent stream.
 			// Lower priorities are queued first, so the default order would
 			// serve them first.
-			priorities := []struct {
-				urgency     int8
-				incremental bool
-			}{{7, true}, {7, true}, {4, false}, {4, false}, {1, true}}
+			priorities := []streamPrioritySpec{{7, true}, {7, true}, {4, false}, {4, false}, {1, true}}
 			const size = 64 << 10
 			streams := make([]*quic.SendStream, len(priorities))
 			payloads := map[uint64][]byte{}
@@ -172,20 +228,68 @@ func TestStreamPriorityIndependent(t *testing.T) {
 			trace.mu.Lock()
 			frames := append([]streamArrival(nil), trace.frames...)
 			trace.mu.Unlock()
-			id := func(i int) uint64 { return uint64(streams[i].StreamID()) }
+			ids := make([]uint64, len(streams))
+			for i, s := range streams {
+				ids[i] = uint64(s.StreamID())
+			}
 			// Retransmissions legitimately precede fresh data of any priority,
 			// so allow a few packets rather than requiring exactly zero.
-			const slack = size / 8
-			for _, order := range [][2]int{{4, 0}, {4, 1}, {4, 2}, {4, 3}, {2, 0}, {2, 1}, {3, 0}, {3, 1}, {2, 3}} {
-				if n := arrivedDuring(frames, id(order[0]), id(order[1]), size); n > slack {
-					t.Errorf("stream %d (%+v) yielded %d bytes to stream %d (%+v)", order[0], priorities[order[0]], n, order[1], priorities[order[1]])
-				}
-			}
-			// The first stream's head start is at most the initial congestion
-			// window, after which the incremental pair must alternate.
-			if n := arrivedDuring(frames, id(1), id(0), size); n < size/4 {
-				t.Errorf("incremental streams did not share turns: %d bytes interleaved", n)
+			for _, violation := range arrivalOrderViolations(frames, ids, priorities, size, size/8) {
+				t.Error(violation)
 			}
 		})
+	}
+}
+
+// The order assertion must reject each way the scheduler could ignore part of
+// a priority, not only pass the order it implements.
+func TestStreamPriorityArrivalOrderControls(t *testing.T) {
+	priorities := []streamPrioritySpec{{7, true}, {7, true}, {4, false}, {4, false}, {1, true}}
+	ids := []uint64{2, 6, 10, 14, 18}
+	const size, packet = 64 << 10, 1140
+	type step struct {
+		streams []int // served one packet each in turn
+		bytes   uint64
+	}
+	all := func(streams ...int) step { return step{streams, size} }
+	flight := step{[]int{0}, 10 * packet}
+	for _, tc := range []struct {
+		name  string
+		steps []step
+		ok    bool
+	}{
+		{"scheduled", []step{flight, all(4), all(2), all(3), all(0, 1)}, true},
+		{"retransmission slack", []step{flight, {[]int{4}, size / 2}, {[]int{2, 3, 1}, 2 * packet}, all(4), all(2), all(3), all(0, 1)}, true},
+		{"reversed", []step{all(0, 1), all(2), all(3), all(4)}, false},
+		{"unprioritized", []step{all(0), all(1), all(2), all(3), all(4)}, false},
+		{"urgent last", []step{flight, all(2), all(3), all(0, 1), all(4)}, false},
+		{"urgent after one class", []step{flight, all(2), all(3), all(4), all(0, 1)}, false},
+		{"background before middle class", []step{flight, all(4), all(0, 1), all(2), all(3)}, false},
+		{"urgent shares turns", []step{flight, all(4, 2), all(3), all(0, 1)}, false},
+		{"non-incremental pair shares turns", []step{flight, all(4), all(2, 3), all(0, 1)}, false},
+		{"non-incremental pair by descending ID", []step{flight, all(4), all(3), all(2), all(0, 1)}, false},
+		{"incremental pair in sequence", []step{flight, all(4), all(2), all(3), all(0), all(1)}, false},
+		{"incremental pair in reverse sequence", []step{flight, all(4), all(2), all(3), all(1), all(0)}, false},
+		{"incremental pair in large turns", []step{flight, all(4), all(2), all(3), {[]int{1}, size / 2}, {[]int{0}, size / 2}, all(1), all(0)}, false},
+		{"empty", nil, false},
+		{"truncated", []step{flight, all(4), all(2), all(3), {[]int{0, 1}, size / 2}}, false},
+	} {
+		var frames []streamArrival
+		high := make([]uint64, len(ids))
+		for _, step := range tc.steps {
+			for active := true; active; {
+				active = false
+				for _, i := range step.streams {
+					if high[i] < step.bytes {
+						high[i] = min(high[i]+packet, step.bytes)
+						frames = append(frames, streamArrival{ids[i], high[i]})
+						active = true
+					}
+				}
+			}
+		}
+		if violations := arrivalOrderViolations(frames, ids, priorities, size, size/8); (len(violations) == 0) != tc.ok {
+			t.Errorf("%s: want accepted=%v, violations %q", tc.name, tc.ok, violations)
+		}
 	}
 }

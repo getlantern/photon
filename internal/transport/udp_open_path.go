@@ -17,10 +17,14 @@ func (s *UDPServer) OpenPath(ctx context.Context, c *Conn, id uint64, local, rem
 	if !local.IsValid() || local.Addr().IsUnspecified() || local.Addr().IsMulticast() {
 		return netip.AddrPort{}, errPathBinding
 	}
-	if _, err := canonicalPathTuple(netip.AddrPortFrom(local.Addr(), 1), remote); err != nil {
+	tuple, err := canonicalPathTuple(netip.AddrPortFrom(local.Addr(), 1), remote)
+	if err != nil {
 		return netip.AddrPort{}, err
 	}
-	err := s.Wait(ctx, func(e *ServerEndpoint) (bool, error) {
+	if tuple.local.Addr().Is4() != tuple.remote.Addr().Is4() {
+		return netip.AddrPort{}, errPathBinding
+	}
+	err = s.Wait(ctx, func(e *ServerEndpoint) (bool, error) {
 		if _, ok := e.router.entries[c]; !ok || e.networks[c] == nil {
 			return true, errConnectionOwner
 		}

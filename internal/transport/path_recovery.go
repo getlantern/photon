@@ -32,6 +32,7 @@ type pathApplication struct {
 	localMigration    *migrationCandidate
 	network           *pathTuple
 	probePending      bool
+	evacuated         bool // sent items have surviving owners; the map only serves late ACKs
 	pacingAt          time.Time
 	validation        *pathValidation
 	budget            *Amplification

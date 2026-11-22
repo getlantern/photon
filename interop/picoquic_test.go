@@ -155,8 +155,9 @@ func testPicoquicMultipathHost(t *testing.T, grease, compatible bool, host strin
 						if !bytes.Equal(prefix, want[:len(prefix)]) {
 							t.Fatal("wrong prefix before migration")
 						}
-						// The 64 KiB receive window prevents completion of the 1 MiB
-						// response while this application pauses consumption to migrate.
+						// The default 512 KiB stream receive window advances only with
+						// consumption, which this application pauses to migrate, so the
+						// 1 MiB response cannot complete first.
 						during()
 					}
 					// Bound a malformed peer's response while still requiring stream EOF.

@@ -1580,7 +1580,9 @@ func (c *Conn) RotatePeerID() error {
 	return nil
 }
 
-// HasOutstanding reports reliable frame data awaiting transmission or an ACK.
+// HasOutstanding reports queued frames awaiting transmission, plus reliable
+// frames awaiting an ACK. DATAGRAM, PATH_CHALLENGE and PATH_RESPONSE frames
+// count only until emitted, so this is not a reliable-delivery predicate.
 // It does not include an ACK-only packet waiting to be emitted.
 func (c *Conn) HasOutstanding() bool { return c.queuedBytes != 0 }
 

@@ -79,6 +79,12 @@ func (c *Conn) evacuatePathTo(id, dest uint64) {
 	}
 	clear(app.space.queue)
 	app.space.queue = nil
+	if app.evacuated {
+		// A copy already sent on a survivor is unqueued but still outstanding
+		// there; only that path's loss detection or PTO may queue it again.
+		return
+	}
+	app.evacuated = true
 	for _, item := range app.space.sent {
 		visitSendLeaves(item, func(part *sendItem) bool { move(part); return false })
 	}
@@ -136,8 +142,9 @@ func (c *Conn) expireMultipathPaths(now time.Time) error {
 			}
 		}
 	}
-	// All undelivered items now have surviving queue ownership; late ACKs could
-	// already have completed them. Disposal only removes the old references.
+	// All undelivered items are now queued or outstanding on a surviving path;
+	// late ACKs could already have completed them. Disposal only removes the
+	// old references.
 	c.multipath.collectAbandoned(now)
 	return nil
 }

@@ -48,8 +48,9 @@ var errUploadStopped = errors.New("http3: response body closed; stop upload")
 // lifetime. It owns request.Body after argument validation. The returned response
 // owns the remaining exchange; its Body MUST be closed, including after EOF.
 // Close cancels unfinished upload, interrupts reads, joins upload and releases
-// QPACK/endpoint ownership. A peer H3_NO_ERROR STOP_SENDING ends only the upload:
-// a complete early response remains readable. There are no retries or pooling.
+// QPACK/endpoint ownership. A peer H3_NO_ERROR STOP_SENDING or connection close
+// ends only the upload: a complete early response remains readable while parent
+// is not canceled. There are no retries or pooling.
 // AllowConnect permits an endpoint-owned duplex upload without trailers; the
 // endpoint owns tunnel half-close. Expect/continue scheduling remains endpoint work.
 func ExchangeRequest(parent context.Context, request *http.Request, stream ClientExchangeStream, config ClientExchangeConfig) (response *http.Response, err error) {
@@ -137,7 +138,8 @@ func ExchangeRequest(parent context.Context, request *http.Request, stream Clien
 	go func() {
 		defer close(uploadDone)
 		err := WriteHTTPRequest(uploadCtx, &effective, writer, func() { stream.CancelWrite(0x10c) })
-		if err != nil && ctx.Err() == nil && !errors.Is(err, errUploadStopped) && !normalUploadStop(err) {
+		// A failed write can precede stopSend's report of why the peer ended it.
+		if err != nil && ctx.Err() == nil && !errors.Is(err, errUploadStopped) && !normalUploadStop(err) && !normalUploadStop(context.Cause(stream.Context())) {
 			task.fail(err, 0x10c)
 		}
 	}()
@@ -196,7 +198,15 @@ func ExchangeRequest(parent context.Context, request *http.Request, stream Clien
 	response.Body = &exchangeResponseBody{ReadCloser: response.Body, task: task}
 	return response, nil
 }
+
+// An H3_NO_ERROR connection close ends an unfinished upload like the same code
+// in STOP_SENDING. Whether the response outlives the connection is the parent
+// context's decision (Session keeps accepted responses after GOAWAY).
 func normalUploadStop(err error) bool {
+	var closed *quic.PeerCloseError
+	if errors.As(err, &closed) {
+		return closed.Application && closed.Code == 0x100
+	}
 	var reset *quic.StreamError
 	return errors.As(err, &reset) && reset.Remote && reset.ErrorCode == 0x100
 }

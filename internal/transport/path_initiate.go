@@ -26,6 +26,11 @@ func (c *Conn) initiateMultipathPath(id uint64, local, remote netip.AddrPort) er
 	if err != nil {
 		return err
 	}
+	// A socket cannot reach the other family; the resulting write error would
+	// remove the whole connection rather than fail only this request.
+	if tuple.local.Addr().Is4() != tuple.remote.Addr().Is4() {
+		return errPathBinding
+	}
 	// draft-ietf-quic-multipath-21 section 2.2 retains the handshake-address
 	// restriction. Other server addresses may still be used for new paths.
 	if c.peerParams.DisableActiveMigration && (!c.handshakeRemote.IsValid() || tuple.remote == c.handshakeRemote) {

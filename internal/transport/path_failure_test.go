@@ -144,3 +144,148 @@ func TestFailedPathStreamDeliveredOnSurvivor(t *testing.T) {
 		}
 	}
 }
+
+// drainSurvivor sends everything path zero will emit and reports how many
+// packets left. Any output on another path is a test failure.
+func drainSurvivor(t *testing.T, c *Conn, now time.Time) int {
+	t.Helper()
+	for sent := 0; sent < 16; sent++ {
+		id, b, err := c.nextMultipathPacket(now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if b == nil {
+			return sent
+		}
+		if id != 0 {
+			t.Fatal("used abandoned path")
+		}
+	}
+	t.Fatal("survivor did not quiesce")
+	return 0
+}
+
+func queuedCopies(c *Conn, item *sendItem) int {
+	count := 0
+	for _, state := range c.multipath.paths {
+		if state.application == nil {
+			continue
+		}
+		for _, queued := range state.application.space.queue {
+			if queued == item {
+				count++
+			}
+		}
+	}
+	return count
+}
+
+func TestEvacuatedItemNotRequeuedByUnrelatedTimer(t *testing.T) {
+	client, server := sendingPathPair(t, wire.Version1)
+	now := time.Unix(101, 0)
+	app := client.multipath.paths[1].application
+	app.budget.Validate()
+	if err := client.queueFrameOnPath(1, wire.PingFrame{}); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := client.nextPacketOnPath(1, now); err != nil || b == nil {
+		t.Fatal(err)
+	}
+	original := app.space.sent[0]
+	if err := client.abandonFailedPath(1); err != nil {
+		t.Fatal(err)
+	}
+	if drainSurvivor(t, client, now) == 0 || original.queued {
+		t.Fatal("evacuated copy not retransmitted")
+	}
+	survivor := client.multipath.paths[0].application.space
+	copyPN, found := uint64(0), false
+	for pn, item := range survivor.sent {
+		if item == original {
+			copyPN, found = pn, true
+		}
+	}
+	if !found || app.space.sent[0] != original {
+		t.Fatal("missing survivor or late-ACK mapping")
+	}
+	// A timer with no loss or PTO decision must not retransmit the copy again,
+	// and neither may a repeated PATH_ABANDON from the peer.
+	if err := client.HandleTimeout(now.Add(time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	if original.queued || queuedCopies(client, original) != 0 {
+		t.Fatal("timer requeued an outstanding evacuated copy")
+	}
+	if err := client.evacuatePath(1); err != nil {
+		t.Fatal(err)
+	}
+	if original.queued || queuedCopies(client, original) != 0 || drainSurvivor(t, client, now.Add(time.Millisecond)) != 0 {
+		t.Fatal("repeated evacuation requeued an outstanding copy")
+	}
+	// Genuine loss of the copy on the survivor still retransmits it, once.
+	for i := 0; i < 3; i++ {
+		if err := client.queueFrameOnPath(0, wire.PingFrame{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if drainSurvivor(t, client, now.Add(2*time.Millisecond)) != 3 {
+		t.Fatal("survivor did not send followers")
+	}
+	keys := server.writeKeys(applicationSpace)
+	payload, _ := (wire.AckFrame{Ranges: []wire.AckRange{{Smallest: copyPN + 1, Largest: survivor.largestSent}}}).Append(nil)
+	if err := client.handleMultipathPacket(sealPathPayload(t, keys, client.config.LocalCID, 0, 100, payload), now.Add(3*time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	if !original.queued || original.acked || queuedCopies(client, original) != 1 {
+		t.Fatal("lost survivor copy not queued exactly once")
+	}
+	if err := client.HandleTimeout(now.Add(4 * time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	if queuedCopies(client, original) != 1 {
+		t.Fatal("timer duplicated a queued item")
+	}
+	// A late ACK for the abandoned path's transmission still completes it.
+	before := client.queuedBytes
+	payload, _ = (wire.PathAckFrame{PathID: 1, AckFrame: wire.AckFrame{Ranges: []wire.AckRange{{Smallest: 0, Largest: 0}}}}).Append(nil)
+	if err := client.handleMultipathPacket(sealPathPayload(t, keys, client.config.LocalCID, 0, 101, payload), now.Add(5*time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	if !original.acked || client.queuedBytes != before-original.bytes || len(app.space.sent) != 0 {
+		t.Fatal("late ACK on abandoned path did not complete the item")
+	}
+}
+
+func TestLateLossOnAbandonedPathDoesNotRequeueEvacuatedItem(t *testing.T) {
+	client, server := sendingPathPair(t, wire.Version1)
+	now := time.Unix(101, 0)
+	app := client.multipath.paths[1].application
+	app.budget.Validate()
+	for i := 0; i < 4; i++ {
+		if err := client.queueFrameOnPath(1, wire.PingFrame{}); err != nil {
+			t.Fatal(err)
+		}
+		if b, err := client.nextPacketOnPath(1, now); err != nil || b == nil {
+			t.Fatal(err)
+		}
+	}
+	original := app.space.sent[0]
+	if err := client.abandonFailedPath(1); err != nil {
+		t.Fatal(err)
+	}
+	if drainSurvivor(t, client, now) == 0 || original.queued {
+		t.Fatal("evacuated copy not retransmitted")
+	}
+	// The peer acknowledges only the newest old-path packet. Packet-threshold
+	// loss of the older ones says nothing about their copies on the survivor.
+	payload, _ := (wire.PathAckFrame{PathID: 1, AckFrame: wire.AckFrame{Ranges: []wire.AckRange{{Smallest: 3, Largest: 3}}}}).Append(nil)
+	if err := client.handleMultipathPacket(sealPathPayload(t, server.writeKeys(applicationSpace), client.config.LocalCID, 0, 100, payload), now.Add(time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.HandleTimeout(now.Add(2 * time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	if original.acked || original.queued || queuedCopies(client, original) != 0 {
+		t.Fatal("old-path loss requeued an outstanding evacuated copy")
+	}
+}

@@ -85,6 +85,7 @@ type streamHandle struct {
 	receiveContext context.Context // immutable after construction
 	sendContext    context.Context // immutable after construction
 	sendTerminal   error           // owner goroutine only
+	sendAbandoned  error           // owner goroutine only
 	finalSize      uint64          // owner / stoppedReadsMu only
 	finalKnown     bool
 	finalCallback  func(int64)
@@ -104,7 +105,19 @@ func (h *streamHandle) markReleased(terminal error) {
 
 func (h *streamHandle) markReleasedWithSendError(readErr, sendErr error) {
 	h.markReleased(readErr)
-	if sendErr != nil && !h.rejected.Load() {
+	if h.rejected.Load() {
+		return
+	}
+	// The engine releases a live stream only once its send side completes. After
+	// connection failure it releases retained receive storage alone, which says
+	// nothing about delivery: the send side ended with the connection.
+	if h.sendContext != nil {
+		h.sendAbandoned = context.Cause(h.conn.ctx)
+		if sendErr == nil {
+			sendErr = h.sendAbandoned
+		}
+	}
+	if sendErr != nil {
 		h.sendTerminal = sendErr
 	}
 }
@@ -124,7 +137,7 @@ func (h *streamHandle) Release(ctx context.Context) error {
 			if h.rejected.Load() {
 				return true, Err0RTTRejected
 			}
-			return true, nil
+			return true, h.sendAbandoned
 		}
 		err := h.conn.raw.ReleaseStream(h.id)
 		return !errors.Is(err, engineStream.ErrWouldBlock), errUnlessBlocked(err)

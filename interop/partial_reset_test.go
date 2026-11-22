@@ -17,9 +17,11 @@ import (
 	upstream "github.com/quic-go/quic-go"
 )
 
-// The reference client advertises reception; the independent engine advertises
-// no reception capability. This validates asymmetric, real TLS negotiation for
-// engine-level sending without enabling the unfinished public receive API.
+// The reference client advertises reception; the independent engine deliberately
+// advertises none. This validates asymmetric, real TLS negotiation for
+// engine-level sending. Public reception, enabled by
+// Config.EnableStreamResetPartialDelivery, is covered by
+// TestPublicPartialResetReceiverUpstream.
 func TestPartialResetEngineSenderUpstream(t *testing.T) {
 	for _, version := range []wire.Version{wire.Version1, wire.Version2} {
 		for _, reliable := range []int{0, 256, 1500} {

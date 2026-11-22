@@ -123,10 +123,31 @@ func newClientConn(ctx context.Context, conn *quic.Conn, origin string, config *
 	ownership := client.ownership
 	go func() {
 		defer close(monitorDone)
+		// No supported extension lets a server open bidirectional streams
+		// (RFC 9114 section 6.1); unread, they would pin connection credit.
+		accepted := make(chan error, 1)
+		go func() { _, err := conn.AcceptStream(ctx); accepted <- err }()
+		defer func() { <-accepted }()
 		select {
 		case <-conn.Context().Done():
 			cancel(context.Cause(conn.Context()))
 		case <-ctx.Done():
+		case err := <-accepted:
+			accepted <- err
+			if err == nil {
+				// Abort first: a failing initialization closes with H3_NO_ERROR
+				// as soon as it observes cancellation.
+				_ = ownership.abort(h3.StreamCreationError, "server-initiated bidirectional stream")
+				cancel(&h3.Error{Code: h3.StreamCreationError, Reason: "server-initiated bidirectional stream"})
+				return
+			}
+			// Connection loss or early-data rejection: the cases below and the
+			// session report those.
+			select {
+			case <-conn.Context().Done():
+				cancel(context.Cause(conn.Context()))
+			case <-ctx.Done():
+			}
 		}
 		ownership.close("HTTP3 client stopped")
 	}()
