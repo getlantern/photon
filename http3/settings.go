@@ -25,13 +25,27 @@ var _ Settingser = (*ClientConn)(nil)
 // ReceivedSettings closes when valid live server SETTINGS arrive. Remembered
 // 0-RTT settings do not close it. Also select on the connection or caller context
 // when waiting: shutdown before SETTINGS leaves this channel open.
-func (c *ClientConn) ReceivedSettings() <-chan struct{} { return c.session.ReceivedSettings() }
+func (c *ClientConn) ReceivedSettings() <-chan struct{} {
+	if c.ready != nil {
+		return c.settings
+	}
+	return c.session.ReceivedSettings()
+}
 
 // Settings returns a snapshot after ReceivedSettings closes, or nil before it.
 // The returned map belongs to the caller; modifying it cannot change negotiation
 // or later snapshots. Rejected early sessions retain their own receipt state;
 // use the client returned by NextConnection for the replacement session.
-func (c *ClientConn) Settings() *Settings { return sessionSettings{c.session}.Settings() }
+func (c *ClientConn) Settings() *Settings {
+	if c.ready != nil {
+		select {
+		case <-c.settings:
+		default:
+			return nil
+		}
+	}
+	return sessionSettings{c.session}.Settings()
+}
 
 type sessionSettings struct{ session *http3conn.Session }
 

@@ -44,6 +44,7 @@ func serverConfigSelector(listener Config) func(transport.Config, netip.AddrPort
 		base.MaxConnectionReceiveWindow = cfg.MaxConnectionReceiveWindow
 		base.EnableEarlyData = cfg.Allow0RTT
 		base.EnableMultipath = cfg.EnableMultipath
+		base.RequireStreamCreditRelease = cfg.RequireStreamCreditRelease
 		base.DisablePathMTUDiscovery = cfg.DisablePathMTUDiscovery
 		base.InitialPacketSize = cfg.InitialPacketSize
 		base.HandshakeTimeout = cfg.HandshakeTimeout

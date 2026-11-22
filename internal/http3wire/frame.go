@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/getlantern/photon/internal/wire"
 )
@@ -42,8 +43,13 @@ type Header struct{ Type, Length uint64 }
 // Next selects a payload, exposed through Read; consume it fully before Next.
 // It is not safe for concurrent use. Stream deadlines/cancellation are supplied
 // by the underlying reader. Unknown types are exposed for the caller to skip.
+// An expired deadline is not sticky: the call that hit it can be repeated, and
+// a partially read header is kept.
 type Reader struct {
 	integerScratch [8]byte
+	have           int // bytes of the header integer being read
+	typ            uint64
+	typed          bool // typ is read; the length is not
 	capsule        bool
 	source         io.Reader
 	remaining      uint64
@@ -52,6 +58,10 @@ type Reader struct {
 
 func NewReader(source io.Reader) *Reader { return &Reader{source: source} }
 
+// IsDeadline reports an expired stream deadline, which leaves the stream usable.
+// A context deadline is a different error and is not one.
+func IsDeadline(err error) bool { return errors.Is(err, os.ErrDeadlineExceeded) }
+
 func (r *Reader) Next() (Header, error) {
 	if r.err != nil {
 		return Header{}, r.err
@@ -59,14 +69,19 @@ func (r *Reader) Next() (Header, error) {
 	if r.remaining != 0 {
 		return Header{}, ErrPayloadPending
 	}
-	typ, err := readIntegerScratch(r.source, &r.integerScratch)
-	if err != nil {
-		return Header{}, r.headerError(err, true)
+	if !r.typed {
+		typ, err := r.integer()
+		if err != nil {
+			return Header{}, r.headerError(err, true)
+		}
+		r.typ, r.typed = typ, true
 	}
-	length, err := readIntegerScratch(r.source, &r.integerScratch)
+	length, err := r.integer()
 	if err != nil {
 		return Header{}, r.headerError(err, false)
 	}
+	typ := r.typ
+	r.typed = false
 	// RFC 9114 section 7.2.8 reserves HTTP/2-only frame types as errors.
 	switch typ {
 	case 2, 6, 8, 9:
@@ -79,11 +94,38 @@ func (r *Reader) Next() (Header, error) {
 	return Header{typ, length}, nil
 }
 func (r *Reader) headerError(err error, between bool) error {
+	if IsDeadline(err) {
+		return err
+	}
 	if (!between && errors.Is(err, io.EOF)) || errors.Is(err, io.ErrUnexpectedEOF) {
 		err = r.truncated("header")
 	}
 	r.err = err
 	return err
+}
+
+// integer reads one varint, keeping what it has across a failed read.
+func (r *Reader) integer() (uint64, error) {
+	size := 1
+	for {
+		if r.have > 0 {
+			size = 1 << (r.integerScratch[0] >> 6)
+			if r.have == size {
+				break
+			}
+		}
+		n, err := r.source.Read(r.integerScratch[r.have:size])
+		r.have += n
+		if n == 0 && err != nil {
+			if r.have > 0 && errors.Is(err, io.EOF) {
+				err = io.ErrUnexpectedEOF
+			}
+			return 0, err
+		}
+	}
+	r.have = 0
+	value, _, err := wire.ConsumeVarint(r.integerScratch[:size])
+	return value, err
 }
 func (r *Reader) Read(p []byte) (int, error) {
 	if r.err != nil {
@@ -110,7 +152,7 @@ func (r *Reader) Read(p []byte) (int, error) {
 	if errors.Is(err, io.ErrUnexpectedEOF) {
 		err = r.truncated("payload")
 	}
-	if err != nil {
+	if err != nil && !IsDeadline(err) {
 		r.err = err
 	}
 	return n, err

@@ -82,6 +82,9 @@ type Config struct {
 	EnableMultipath bool
 	// EnableMigration installs a base-protocol path owner on concrete sockets.
 	EnableMigration bool
+	// RequireStreamCreditRelease withholds the MAX_STREAMS credit of a released
+	// peer-initiated stream until ReleaseStreamCredit names it.
+	RequireStreamCreditRelease bool
 	// PreferredAddresses is a server-only list (at most one address per family).
 	// The socket owner must register every address before admitting connections.
 	PreferredAddresses    []netip.AddrPort

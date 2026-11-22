@@ -122,3 +122,12 @@ func (s *DatagramStream) SetPriority(urgency int8, incremental bool) {
 		scheduler.SetPriority(urgency, incremental)
 	}
 }
+
+// TryWriteAll forwards non-blocking writes through the datagram lifetime wrapper.
+func (s *DatagramStream) TryWriteAll(p []byte) error {
+	stream, ok := s.DatagramTransportStream.(interface{ TryWriteAll([]byte) error })
+	if !ok {
+		return errors.New("http3: stream cannot queue without blocking")
+	}
+	return stream.TryWriteAll(p)
+}

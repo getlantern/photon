@@ -219,6 +219,9 @@ type exchangeResponseBody struct {
 
 func (b *exchangeResponseBody) Read(p []byte) (int, error) {
 	n, err := b.ReadCloser.Read(p)
+	if h3.IsDeadline(err) {
+		return n, err
+	}
 	if err != nil && err != io.EOF && !b.closed.Load() {
 		err = exchangeFailure(b.task, err)
 	}

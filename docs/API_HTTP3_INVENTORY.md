@@ -11,12 +11,12 @@ Generated from Go export data with `go run ./scripts/api-inventory -package=http
 | `CapsuleReader.Remaining (method)` | same declaration | `func() int64 [value]` | `func() int64 [value]` |
 | `ClientConn.CloseWithError (method)` | same declaration | `func(code quic.ApplicationErrorCode, msg string) error [pointer]` | `func(code quic.ApplicationErrorCode, msg string) error [pointer]` |
 | `ClientConn.Context (method)` | same declaration | `func() context.Context [pointer]` | `func() context.Context [pointer]` |
-| `ClientConn.HandleBidirectionalStream (method)` | missing | `func(str *quic.Stream) [pointer]` | `` |
+| `ClientConn.HandleBidirectionalStream (method)` | same declaration | `func(str *quic.Stream) [pointer]` | `func(str *quic.Stream) [pointer]` |
 | `ClientConn.LocalAddr (method)` | same declaration | `func() net.Addr [pointer]` | `func() net.Addr [pointer]` |
-| `ClientConn.OpenRequestStream (method)` | missing | `func(ctx context.Context) (*http3.RequestStream, error) [pointer]` | `` |
+| `ClientConn.OpenRequestStream (method)` | same declaration | `func(ctx context.Context) (*http3.RequestStream, error) [pointer]` | `func(ctx context.Context) (*http3.RequestStream, error) [pointer]` |
 | `ClientConn.ReceivedSettings (method)` | same declaration | `func() <-chan struct{} [pointer]` | `func() <-chan struct{} [pointer]` |
 | `ClientConn.RemoteAddr (method)` | same declaration | `func() net.Addr [pointer]` | `func() net.Addr [pointer]` |
-| `ClientConn.RoundTrip (method)` | review difference | `func(req *net/http.Request) (*net/http.Response, error) [pointer]` | `func(request *net/http.Request) (*net/http.Response, error) [pointer]` |
+| `ClientConn.RoundTrip (method)` | same declaration | `func(req *net/http.Request) (*net/http.Response, error) [pointer]` | `func(req *net/http.Request) (*net/http.Response, error) [pointer]` |
 | `ClientConn.Settings (method)` | same declaration | `func() *http3.Settings [pointer]` | `func() *http3.Settings [pointer]` |
 | `ErrCode.String (method)` | same declaration | `func() string [value]` | `func() string [value]` |
 | `Error.Error (method)` | same declaration | `func() string [pointer]` | `func() string [pointer]` |
@@ -25,40 +25,40 @@ Generated from Go export data with `go run ./scripts/api-inventory -package=http
 | `Error.Is (method)` | same declaration | `func(target error) bool [pointer]` | `func(target error) bool [pointer]` |
 | `Error.Remote (field)` | same declaration | `bool` | `bool` |
 | `Error.Unwrap (method)` | same declaration | `func() error [pointer]` | `func() error [pointer]` |
-| `HTTPStreamer.HTTPStream (method)` | missing | `func() (*http3.Stream, error) [value]` | `` |
+| `HTTPStreamer.HTTPStream (method)` | same declaration | `func() (*http3.Stream, error) [value]` | `func() (*http3.Stream, error) [value]` |
 | `QUICListener.Accept (method)` | same declaration | `func(context.Context) (*quic.Conn, error) [value]` | `func(context.Context) (*quic.Conn, error) [value]` |
 | `QUICListener.Addr (method)` | same declaration | `func() net.Addr [value]` | `func() net.Addr [value]` |
 | `QUICListener.Close (method)` | same declaration | `func() error [value]` | `func() error [value]` |
-| `RawClientConn.ClientConn (field)` | missing | `*http3.ClientConn` | `` |
-| `RawClientConn.CloseWithError (method)` | missing | `func(code quic.ApplicationErrorCode, msg string) error [value]` | `` |
-| `RawClientConn.Context (method)` | missing | `func() context.Context [value]` | `` |
-| `RawClientConn.HandleBidirectionalStream (method)` | missing | `func(str *quic.Stream) [value]` | `` |
-| `RawClientConn.HandleUnidirectionalStream (method)` | missing | `func(str *quic.ReceiveStream) [pointer]` | `` |
-| `RawClientConn.LocalAddr (method)` | missing | `func() net.Addr [value]` | `` |
-| `RawClientConn.OpenRequestStream (method)` | missing | `func(ctx context.Context) (*http3.RequestStream, error) [value]` | `` |
-| `RawClientConn.ReceivedSettings (method)` | missing | `func() <-chan struct{} [value]` | `` |
-| `RawClientConn.RemoteAddr (method)` | missing | `func() net.Addr [value]` | `` |
-| `RawClientConn.RoundTrip (method)` | missing | `func(req *net/http.Request) (*net/http.Response, error) [value]` | `` |
-| `RawClientConn.Settings (method)` | missing | `func() *http3.Settings [value]` | `` |
-| `RawServerConn.CloseWithError (method)` | missing | `func(code quic.ApplicationErrorCode, msg string) error [pointer]` | `` |
-| `RawServerConn.HandleRequestStream (method)` | missing | `func(str *quic.Stream) [pointer]` | `` |
-| `RawServerConn.HandleUnidirectionalStream (method)` | missing | `func(str *quic.ReceiveStream) [pointer]` | `` |
-| `RequestStream.CancelRead (method)` | missing | `func(errorCode quic.StreamErrorCode) [pointer]` | `` |
-| `RequestStream.CancelWrite (method)` | missing | `func(errorCode quic.StreamErrorCode) [pointer]` | `` |
-| `RequestStream.Close (method)` | missing | `func() error [pointer]` | `` |
-| `RequestStream.Context (method)` | missing | `func() context.Context [pointer]` | `` |
+| `RawClientConn.ClientConn (field)` | same declaration | `*http3.ClientConn` | `*http3.ClientConn` |
+| `RawClientConn.CloseWithError (method)` | same declaration | `func(code quic.ApplicationErrorCode, msg string) error [value]` | `func(code quic.ApplicationErrorCode, msg string) error [value]` |
+| `RawClientConn.Context (method)` | same declaration | `func() context.Context [value]` | `func() context.Context [value]` |
+| `RawClientConn.HandleBidirectionalStream (method)` | same declaration | `func(str *quic.Stream) [value]` | `func(str *quic.Stream) [value]` |
+| `RawClientConn.HandleUnidirectionalStream (method)` | same declaration | `func(str *quic.ReceiveStream) [pointer]` | `func(str *quic.ReceiveStream) [pointer]` |
+| `RawClientConn.LocalAddr (method)` | same declaration | `func() net.Addr [value]` | `func() net.Addr [value]` |
+| `RawClientConn.OpenRequestStream (method)` | same declaration | `func(ctx context.Context) (*http3.RequestStream, error) [value]` | `func(ctx context.Context) (*http3.RequestStream, error) [value]` |
+| `RawClientConn.ReceivedSettings (method)` | same declaration | `func() <-chan struct{} [value]` | `func() <-chan struct{} [value]` |
+| `RawClientConn.RemoteAddr (method)` | same declaration | `func() net.Addr [value]` | `func() net.Addr [value]` |
+| `RawClientConn.RoundTrip (method)` | same declaration | `func(req *net/http.Request) (*net/http.Response, error) [value]` | `func(req *net/http.Request) (*net/http.Response, error) [value]` |
+| `RawClientConn.Settings (method)` | same declaration | `func() *http3.Settings [value]` | `func() *http3.Settings [value]` |
+| `RawServerConn.CloseWithError (method)` | same declaration | `func(code quic.ApplicationErrorCode, msg string) error [pointer]` | `func(code quic.ApplicationErrorCode, msg string) error [pointer]` |
+| `RawServerConn.HandleRequestStream (method)` | same declaration | `func(str *quic.Stream) [pointer]` | `func(str *quic.Stream) [pointer]` |
+| `RawServerConn.HandleUnidirectionalStream (method)` | same declaration | `func(str *quic.ReceiveStream) [pointer]` | `func(str *quic.ReceiveStream) [pointer]` |
+| `RequestStream.CancelRead (method)` | same declaration | `func(errorCode quic.StreamErrorCode) [pointer]` | `func(errorCode quic.StreamErrorCode) [pointer]` |
+| `RequestStream.CancelWrite (method)` | same declaration | `func(errorCode quic.StreamErrorCode) [pointer]` | `func(errorCode quic.StreamErrorCode) [pointer]` |
+| `RequestStream.Close (method)` | same declaration | `func() error [pointer]` | `func() error [pointer]` |
+| `RequestStream.Context (method)` | same declaration | `func() context.Context [pointer]` | `func() context.Context [pointer]` |
 | `RequestStream.QlogTrace (method)` | missing | `func() qlogwriter.Trace [pointer]` | `` |
-| `RequestStream.Read (method)` | missing | `func(b []byte) (int, error) [pointer]` | `` |
-| `RequestStream.ReadResponse (method)` | missing | `func() (*net/http.Response, error) [pointer]` | `` |
-| `RequestStream.ReceiveDatagram (method)` | missing | `func(ctx context.Context) ([]byte, error) [pointer]` | `` |
-| `RequestStream.SendDatagram (method)` | missing | `func(b []byte) error [pointer]` | `` |
-| `RequestStream.SendRequestHeader (method)` | missing | `func(req *net/http.Request) error [pointer]` | `` |
-| `RequestStream.SetDeadline (method)` | missing | `func(t time.Time) error [pointer]` | `` |
-| `RequestStream.SetReadDeadline (method)` | missing | `func(t time.Time) error [pointer]` | `` |
-| `RequestStream.SetWriteDeadline (method)` | missing | `func(t time.Time) error [pointer]` | `` |
-| `RequestStream.StreamID (method)` | missing | `func() quic.StreamID [pointer]` | `` |
-| `RequestStream.TryWriteAll (method)` | missing | `func(b []byte) error [pointer]` | `` |
-| `RequestStream.Write (method)` | missing | `func(b []byte) (int, error) [pointer]` | `` |
+| `RequestStream.Read (method)` | same declaration | `func(b []byte) (int, error) [pointer]` | `func(b []byte) (int, error) [pointer]` |
+| `RequestStream.ReadResponse (method)` | same declaration | `func() (*net/http.Response, error) [pointer]` | `func() (*net/http.Response, error) [pointer]` |
+| `RequestStream.ReceiveDatagram (method)` | same declaration | `func(ctx context.Context) ([]byte, error) [pointer]` | `func(ctx context.Context) ([]byte, error) [pointer]` |
+| `RequestStream.SendDatagram (method)` | same declaration | `func(b []byte) error [pointer]` | `func(b []byte) error [pointer]` |
+| `RequestStream.SendRequestHeader (method)` | same declaration | `func(req *net/http.Request) error [pointer]` | `func(req *net/http.Request) error [pointer]` |
+| `RequestStream.SetDeadline (method)` | same declaration | `func(t time.Time) error [pointer]` | `func(t time.Time) error [pointer]` |
+| `RequestStream.SetReadDeadline (method)` | same declaration | `func(t time.Time) error [pointer]` | `func(t time.Time) error [pointer]` |
+| `RequestStream.SetWriteDeadline (method)` | same declaration | `func(t time.Time) error [pointer]` | `func(t time.Time) error [pointer]` |
+| `RequestStream.StreamID (method)` | same declaration | `func() quic.StreamID [pointer]` | `func() quic.StreamID [pointer]` |
+| `RequestStream.TryWriteAll (method)` | same declaration | `func(b []byte) error [pointer]` | `func(b []byte) error [pointer]` |
+| `RequestStream.Write (method)` | same declaration | `func(b []byte) (int, error) [pointer]` | `func(b []byte) (int, error) [pointer]` |
 | `RoundTripOpt.OnlyCachedConn (field)` | same declaration | `bool` | `bool` |
 | `Server.AdditionalSettings (field)` | same declaration | `map[uint64]uint64` | `map[uint64]uint64` |
 | `Server.Addr (field)` | same declaration | `string` | `string` |
@@ -66,12 +66,12 @@ Generated from Go export data with `go run ./scripts/api-inventory -package=http
 | `Server.ConnContext (field)` | same declaration | `func(ctx context.Context, c *quic.Conn) context.Context` | `func(ctx context.Context, c *quic.Conn) context.Context` |
 | `Server.EnableDatagrams (field)` | same declaration | `bool` | `bool` |
 | `Server.Handler (field)` | same declaration | `net/http.Handler` | `net/http.Handler` |
-| `Server.IdleTimeout (field)` | missing | `time.Duration` | `` |
+| `Server.IdleTimeout (field)` | same declaration | `time.Duration` | `time.Duration` |
 | `Server.ListenAndServe (method)` | same declaration | `func() error [pointer]` | `func() error [pointer]` |
 | `Server.ListenAndServeTLS (method)` | same declaration | `func(certFile string, keyFile string) error [pointer]` | `func(certFile string, keyFile string) error [pointer]` |
-| `Server.Logger (field)` | missing | `*log/slog.Logger` | `` |
+| `Server.Logger (field)` | same declaration | `*log/slog.Logger` | `*log/slog.Logger` |
 | `Server.MaxHeaderBytes (field)` | same declaration | `int` | `int` |
-| `Server.NewRawServerConn (method)` | missing | `func(conn *quic.Conn) (*http3.RawServerConn, error) [pointer]` | `` |
+| `Server.NewRawServerConn (method)` | same declaration | `func(conn *quic.Conn) (*http3.RawServerConn, error) [pointer]` | `func(conn *quic.Conn) (*http3.RawServerConn, error) [pointer]` |
 | `Server.Port (field)` | same declaration | `int` | `int` |
 | `Server.QUICConfig (field)` | same declaration | `*quic.Config` | `*quic.Config` |
 | `Server.Serve (method)` | review difference | `func(conn net.PacketConn) error [pointer]` | `func(parent context.Context, listener *quic.Listener) error [pointer]` |
@@ -85,32 +85,32 @@ Generated from Go export data with `go run ./scripts/api-inventory -package=http
 | `Settings.Other (field)` | same declaration | `map[uint64]uint64` | `map[uint64]uint64` |
 | `Settingser.ReceivedSettings (method)` | same declaration | `func() <-chan struct{} [value]` | `func() <-chan struct{} [value]` |
 | `Settingser.Settings (method)` | same declaration | `func() *http3.Settings [value]` | `func() *http3.Settings [value]` |
-| `Stream.CancelRead (method)` | missing | `func(quic.StreamErrorCode) [value]` | `` |
-| `Stream.CancelWrite (method)` | missing | `func(quic.StreamErrorCode) [value]` | `` |
-| `Stream.Close (method)` | missing | `func() error [value]` | `` |
-| `Stream.Context (method)` | missing | `func() context.Context [value]` | `` |
-| `Stream.QUICStream (method)` | missing | `func() *quic.Stream [value]` | `` |
+| `Stream.CancelRead (method)` | same declaration | `func(quic.StreamErrorCode) [value]` | `func(quic.StreamErrorCode) [value]` |
+| `Stream.CancelWrite (method)` | same declaration | `func(quic.StreamErrorCode) [value]` | `func(quic.StreamErrorCode) [value]` |
+| `Stream.Close (method)` | same declaration | `func() error [value]` | `func() error [value]` |
+| `Stream.Context (method)` | same declaration | `func() context.Context [value]` | `func() context.Context [value]` |
+| `Stream.QUICStream (method)` | same declaration | `func() *quic.Stream [value]` | `func() *quic.Stream [value]` |
 | `Stream.QlogTrace (method)` | missing | `func() qlogwriter.Trace [pointer]` | `` |
-| `Stream.Read (method)` | missing | `func(b []byte) (int, error) [pointer]` | `` |
-| `Stream.ReceiveDatagram (method)` | missing | `func(ctx context.Context) ([]byte, error) [pointer]` | `` |
-| `Stream.SendDatagram (method)` | missing | `func(b []byte) error [pointer]` | `` |
-| `Stream.SetDeadline (method)` | missing | `func(time.Time) error [value]` | `` |
-| `Stream.SetPriority (method)` | missing | `func(urgency int8, incremental bool) [value]` | `` |
-| `Stream.SetReadDeadline (method)` | missing | `func(time.Time) error [value]` | `` |
-| `Stream.SetWriteDeadline (method)` | missing | `func(time.Time) error [value]` | `` |
-| `Stream.StreamID (method)` | missing | `func() quic.StreamID [pointer]` | `` |
-| `Stream.TryWriteAll (method)` | missing | `func(b []byte) error [pointer]` | `` |
-| `Stream.Write (method)` | missing | `func(b []byte) (int, error) [pointer]` | `` |
+| `Stream.Read (method)` | same declaration | `func(b []byte) (int, error) [pointer]` | `func(b []byte) (int, error) [pointer]` |
+| `Stream.ReceiveDatagram (method)` | same declaration | `func(ctx context.Context) ([]byte, error) [pointer]` | `func(ctx context.Context) ([]byte, error) [pointer]` |
+| `Stream.SendDatagram (method)` | same declaration | `func(b []byte) error [pointer]` | `func(b []byte) error [pointer]` |
+| `Stream.SetDeadline (method)` | same declaration | `func(time.Time) error [value]` | `func(time.Time) error [value]` |
+| `Stream.SetPriority (method)` | same declaration | `func(urgency int8, incremental bool) [value]` | `func(urgency int8, incremental bool) [value]` |
+| `Stream.SetReadDeadline (method)` | same declaration | `func(time.Time) error [value]` | `func(time.Time) error [value]` |
+| `Stream.SetWriteDeadline (method)` | same declaration | `func(time.Time) error [value]` | `func(time.Time) error [value]` |
+| `Stream.StreamID (method)` | same declaration | `func() quic.StreamID [pointer]` | `func() quic.StreamID [pointer]` |
+| `Stream.TryWriteAll (method)` | same declaration | `func(b []byte) error [pointer]` | `func(b []byte) error [pointer]` |
+| `Stream.Write (method)` | same declaration | `func(b []byte) (int, error) [pointer]` | `func(b []byte) (int, error) [pointer]` |
 | `Transport.AdditionalSettings (field)` | same declaration | `map[uint64]uint64` | `map[uint64]uint64` |
 | `Transport.Close (method)` | same declaration | `func() error [pointer]` | `func() error [pointer]` |
 | `Transport.CloseIdleConnections (method)` | same declaration | `func() [pointer]` | `func() [pointer]` |
 | `Transport.Dial (field)` | same declaration | `func(ctx context.Context, addr string, tlsCfg *crypto/tls.Config, cfg *quic.Config) (*quic.Conn, error)` | `func(ctx context.Context, addr string, tlsCfg *crypto/tls.Config, cfg *quic.Config) (*quic.Conn, error)` |
 | `Transport.DisableCompression (field)` | same declaration | `bool` | `bool` |
 | `Transport.EnableDatagrams (field)` | same declaration | `bool` | `bool` |
-| `Transport.Logger (field)` | missing | `*log/slog.Logger` | `` |
+| `Transport.Logger (field)` | same declaration | `*log/slog.Logger` | `*log/slog.Logger` |
 | `Transport.MaxResponseHeaderBytes (field)` | same declaration | `int` | `int` |
-| `Transport.NewClientConn (method)` | missing | `func(conn *quic.Conn) *http3.ClientConn [pointer]` | `` |
-| `Transport.NewRawClientConn (method)` | missing | `func(conn *quic.Conn) *http3.RawClientConn [pointer]` | `` |
+| `Transport.NewClientConn (method)` | same declaration | `func(conn *quic.Conn) *http3.ClientConn [pointer]` | `func(conn *quic.Conn) *http3.ClientConn [pointer]` |
+| `Transport.NewRawClientConn (method)` | same declaration | `func(conn *quic.Conn) *http3.RawClientConn [pointer]` | `func(conn *quic.Conn) *http3.RawClientConn [pointer]` |
 | `Transport.QUICConfig (field)` | same declaration | `*quic.Config` | `*quic.Config` |
 | `Transport.RoundTrip (method)` | review difference | `func(req *net/http.Request) (*net/http.Response, error) [pointer]` | `func(request *net/http.Request) (*net/http.Response, error) [pointer]` |
 | `Transport.RoundTripOpt (method)` | review difference | `func(req *net/http.Request, opt http3.RoundTripOpt) (*net/http.Response, error) [pointer]` | `func(request *net/http.Request, opt http3.RoundTripOpt) (response *net/http.Response, err error) [pointer]` |
@@ -149,18 +149,18 @@ Generated from Go export data with `go run ./scripts/api-inventory -package=http
 | `type ClientConn` | same declaration | `struct` | `struct` |
 | `type ErrCode` | same declaration | `uint64` | `uint64` |
 | `type Error` | same declaration | `struct` | `struct` |
-| `type FrameType` | missing | `uint64` | `` |
-| `type HTTPStreamer` | missing | `interface` | `` |
+| `type FrameType` | same declaration | `uint64` | `uint64` |
+| `type HTTPStreamer` | same declaration | `interface` | `interface` |
 | `type QUICListener` | same declaration | `interface` | `interface` |
-| `type RawClientConn` | missing | `struct` | `` |
-| `type RawServerConn` | missing | `struct` | `` |
-| `type RequestStream` | missing | `struct` | `` |
+| `type RawClientConn` | same declaration | `struct` | `struct` |
+| `type RawServerConn` | same declaration | `struct` | `struct` |
+| `type RequestStream` | same declaration | `struct` | `struct` |
 | `type RoundTripOpt` | same declaration | `struct` | `struct` |
 | `type Server` | same declaration | `struct` | `struct` |
 | `type Settings` | same declaration | `struct` | `struct` |
 | `type Settingser` | same declaration | `interface` | `interface` |
-| `type Stream` | missing | `struct` | `` |
-| `type StreamType` | missing | `uint64` | `` |
+| `type Stream` | same declaration | `struct` | `struct` |
+| `type StreamType` | same declaration | `uint64` | `uint64` |
 | `type Transport` | same declaration | `struct` | `struct` |
 | `var ErrNoAltSvcPort` | same declaration | `error` | `error` |
 | `var ErrNoCachedConn` | same declaration | `error` | `error` |
@@ -168,5 +168,5 @@ Generated from Go export data with `go run ./scripts/api-inventory -package=http
 | `var RemoteAddrContextKey` | same declaration | `*http3.contextKey` | `*http3.contextKey` |
 | `var ServerContextKey` | same declaration | `*http3.contextKey` | `*http3.contextKey` |
 
-Reference entries: 163; missing: 62; declaration differences: 8; same declarations: 93.
+Reference entries: 163; missing: 2; declaration differences: 7; same declarations: 154.
 Local-only entries are excluded; their presence does not compensate for missing reference capabilities.

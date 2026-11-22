@@ -21,6 +21,18 @@ func requestsGzip(request *http.Request) bool {
 	return true
 }
 
+// acceptGzip returns a copy of request that asks for gzip.
+func acceptGzip(request *http.Request) *http.Request {
+	copy := new(http.Request)
+	*copy = *request
+	copy.Header = request.Header.Clone()
+	if copy.Header == nil {
+		copy.Header = make(http.Header)
+	}
+	copy.Header.Set("Accept-Encoding", "gzip")
+	return copy
+}
+
 func decodeGzipResponse(response *http.Response) {
 	if response.StatusCode == 204 || response.StatusCode == 205 || response.StatusCode == 304 {
 		return

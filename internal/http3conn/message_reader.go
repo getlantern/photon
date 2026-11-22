@@ -23,7 +23,8 @@ type MessageEvent struct {
 
 // MessageReader combines bounded HEADERS decoding with streaming message
 // validation. Calls must be serialized. Errors are sticky except local payload
-// backpressure. The owner maps errors to stream/connection closure, cancels the
+// backpressure and an expired stream deadline, after which the same call resumes
+// where it stopped. The owner maps errors to stream/connection closure, cancels the
 // FieldStream on abandonment, and uses transport deadlines to interrupt reads.
 // Next's context controls QPACK blocking, not arbitrary source I/O. Successful
 // EOF from Next means a clean FIN and a valid complete message; EOF from Read
@@ -35,6 +36,8 @@ type MessageReader struct {
 	message    *Message
 	maxHeaders uint64
 	data       bool
+	headers    *h3.Header // HEADERS frame whose block is still being read
+	block      []byte
 	err        error
 }
 
@@ -56,17 +59,23 @@ func (r *MessageReader) Next(ctx context.Context) (MessageEvent, error) {
 	if err := ctx.Err(); err != nil {
 		return MessageEvent{}, r.fail(err)
 	}
-	header, err := r.frames.Next()
-	if errors.Is(err, h3.ErrPayloadPending) {
-		return MessageEvent{}, err
-	}
-	if err != nil {
-		if errors.Is(err, io.EOF) {
-			if e := r.message.Finish(); e != nil {
-				err = e
-			}
+	var header h3.Header
+	if r.headers != nil {
+		header = *r.headers
+	} else {
+		var err error
+		header, err = r.frames.Next()
+		if errors.Is(err, h3.ErrPayloadPending) || h3.IsDeadline(err) {
+			return MessageEvent{}, err
 		}
-		return MessageEvent{}, r.fail(err)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				if e := r.message.Finish(); e != nil {
+					err = e
+				}
+			}
+			return MessageEvent{}, r.fail(err)
+		}
 	}
 	event := MessageEvent{Header: header}
 	r.data = header.Type == h3.Data
@@ -75,10 +84,26 @@ func (r *MessageReader) Next(ctx context.Context) (MessageEvent, error) {
 		if header.Length > r.maxHeaders {
 			return MessageEvent{}, r.fail(&h3.Error{Code: h3.ExcessiveLoad, Reason: "encoded HEADERS exceeds local limit"})
 		}
-		block, err := io.ReadAll(r.frames)
-		if err != nil {
-			return MessageEvent{}, r.fail(err)
+		r.headers = &header
+		for {
+			if len(r.block) == cap(r.block) {
+				r.block = append(r.block, 0)[:len(r.block)]
+			}
+			n, err := r.frames.Read(r.block[len(r.block):cap(r.block)])
+			r.block = r.block[:len(r.block)+n]
+			if err == io.EOF {
+				break
+			}
+			if h3.IsDeadline(err) {
+				return MessageEvent{}, err
+			}
+			if err != nil {
+				return MessageEvent{}, r.fail(err)
+			}
 		}
+		block := r.block
+		r.headers, r.block = nil, nil
+		var err error
 		event.Fields, err = r.fields.Decode(ctx, block)
 		if err != nil {
 			return MessageEvent{}, r.fail(err)
@@ -110,7 +135,7 @@ func (r *MessageReader) Read(p []byte) (int, error) {
 			return 0, r.fail(e)
 		}
 	}
-	if err != nil && !errors.Is(err, io.EOF) {
+	if err != nil && !errors.Is(err, io.EOF) && !h3.IsDeadline(err) {
 		return n, r.fail(err)
 	}
 	return n, err

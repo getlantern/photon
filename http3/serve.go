@@ -167,7 +167,9 @@ func (s *Server) serveListenerStarted(parent context.Context, listener QUICListe
 			// Admission/ALPN failures leave conn caller-owned. This accept loop is
 			// that caller, so it closes failures as well as completed connections.
 			defer conn.CloseWithError(0x100, "HTTP3 serving completed")
-			_ = s.ServeQUICConn(ctx, conn)
+			if err := s.ServeQUICConn(ctx, conn); err != nil && s.Logger != nil {
+				s.Logger.Debug("http3: handling connection failed", "remote", conn.RemoteAddr(), "error", err)
+			}
 		}()
 	}
 }

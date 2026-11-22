@@ -10,7 +10,9 @@ import "github.com/getlantern/photon/internal/transport"
 // Loss totals decrease for late ACKs while recovery retains their history;
 // corrections outside that bounded horizon can be omitted.
 // RTT describes the lowest-numbered surviving prepared path (path zero normally),
-// and is zero until that path has an RTT sample. Totals aggregate all paths.
+// and is zero until that path has an RTT sample. CongestionWindow is that same
+// path's sender window in bytes: it limits bytes in flight and counts QUIC
+// packet overhead but not UDP or IP headers. Totals aggregate all paths.
 type ConnectionStats = transport.ConnectionStats
 
 // ConnectionStats returns the latest completed network/timer-event snapshot.

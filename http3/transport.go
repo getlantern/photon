@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -51,6 +52,9 @@ type Transport struct {
 	MaxConnections  int           // zero selects 256, including dialing and draining connections
 	DialTimeout     time.Duration // zero selects 10 seconds; negative values are invalid
 	IdleConnTimeout time.Duration // zero selects 90 seconds; negative disables idle expiry
+
+	// Logger, if set, receives connection setup failures at debug level.
+	Logger *slog.Logger
 
 	mu     sync.Mutex
 	closed bool
@@ -182,14 +186,7 @@ func (t *Transport) roundTrip(request *http.Request, rejected *bool, opt RoundTr
 	original := request
 	automaticGzip := !t.DisableCompression && requestsGzip(request)
 	if automaticGzip {
-		copy := new(http.Request)
-		*copy = *request
-		copy.Header = request.Header.Clone()
-		if copy.Header == nil {
-			copy.Header = make(http.Header)
-		}
-		copy.Header.Set("Accept-Encoding", "gzip")
-		request = copy
+		request = acceptGzip(request)
 	}
 	ownsBody = false
 	response, err := client.roundTrip(request, rejected)
@@ -357,6 +354,9 @@ func (t *Transport) run(entry *pooledClient) {
 		err = httpError(err)
 	}
 	cancel()
+	if err != nil && t.Logger != nil {
+		t.Logger.Debug("http3: setting up connection failed", "origin", entry.origin, "error", err)
+	}
 	t.mu.Lock()
 	entry.client, entry.err = client, err
 	if err != nil {

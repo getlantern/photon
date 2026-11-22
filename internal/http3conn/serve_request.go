@@ -124,7 +124,7 @@ func ServeRequest(parent context.Context, stream ServerRequestStream, config Ser
 		stop := context.AfterFunc(completion, func() {
 			defer close(ended)
 			var reset *quic.StreamError
-			if cause := context.Cause(completion); errors.As(cause, &reset) && reset.Remote {
+			if cause := context.Cause(completion); errors.As(cause, &reset) && reset.Remote && !task.detached.Load() {
 				task.fail(cause, code)
 			}
 		})
@@ -190,8 +190,9 @@ func ServeRequest(parent context.Context, stream ServerRequestStream, config Ser
 	}
 	response.mapError = config.HandlerError
 	var tunnel *ServerTunnel
+	var raw *RawStream
 	response.acceptTunnel = func() (*ServerTunnel, error) {
-		if request.Method != "CONNECT" || tunnel != nil || response.sent || response.finished || response.err != nil {
+		if request.Method != "CONNECT" || tunnel != nil || raw != nil || response.sent || response.finished || response.err != nil {
 			return nil, fmt.Errorf("http3: tunnel requires an uncommitted CONNECT response")
 		}
 		if response.status != 0 && (response.status < 200 || response.status >= 300) {
@@ -223,6 +224,53 @@ func ServeRequest(parent context.Context, stream ServerRequestStream, config Ser
 		}
 		return tunnel, nil
 	}
+	response.takeOver = func() (*RawStream, error) {
+		if raw != nil {
+			return raw, nil
+		}
+		if response.wrote {
+			return nil, fmt.Errorf("http3: invalid use of HTTPStream after writing the response body")
+		}
+		if tunnel != nil || response.finished {
+			return nil, fmt.Errorf("http3: response is already complete or a tunnel")
+		}
+		if response.err != nil {
+			return nil, response.err
+		}
+		transport, ok := stream.(ClientExchangeStream)
+		underlying := quicStreamOf(stream)
+		if !ok || underlying == nil {
+			return nil, fmt.Errorf("http3: stream takeover requires a QUIC stream")
+		}
+		if task.ctx.Err() != nil {
+			return nil, context.Cause(task.ctx)
+		}
+		taken := newRawStream(transport, underlying, task, config.HandlerError)
+		taken.body = body.ReadCloser
+		taken.noWriter = fmt.Errorf("http3: invalid use of Stream.Write before sending the response header")
+		// Without a final status no response is ever sent: WriteHeader is
+		// unavailable from here on, so the stream stays unwritable.
+		if response.status != 0 {
+			if request.Method == "CONNECT" && response.status >= 200 && response.status < 300 {
+				if err := reader.EstablishTunnel(); err != nil {
+					return nil, err
+				}
+			}
+			if err := response.commit(nil); err != nil {
+				task.fail(err, InternalError)
+				return nil, err
+			}
+			taken.writer = writer
+		}
+		if datagramHandler != nil {
+			taken.datagrams = datagrams
+		}
+		response.hijacked = true
+		task.detached.Store(true)
+		body.raw.Store(taken)
+		raw = taken
+		return raw, nil
+	}
 	if ctx.Err() != nil {
 		task.fail(context.Cause(ctx), 0x10c)
 	}
@@ -245,6 +293,15 @@ func ServeRequest(parent context.Context, stream ServerRequestStream, config Ser
 		if err := invokeHandler(handler, response, request); err != nil {
 			task.fail(err, InternalError)
 		}
+	}
+	if raw != nil {
+		// The application owns the stream beyond the handler. Its request slot
+		// and context last until it finishes both directions.
+		raw.wait(ctx)
+		if ctx.Err() != nil {
+			task.fail(context.Cause(ctx), 0x10c)
+		}
+		return task.result()
 	}
 	if tunnel != nil {
 		if task.result() == nil && !tunnel.closed.Load() {
@@ -284,6 +341,7 @@ type requestTask struct {
 	stream    ServerRequestStream
 	abort     func(uint64, string)
 	cancel    context.CancelCauseFunc
+	detached  atomic.Bool // taken over: peer resets are the application's to see
 	mu        sync.Mutex
 	err       error
 	abortOnce sync.Once
@@ -331,11 +389,15 @@ type serverRequestBody struct {
 	io.ReadCloser
 	task   *requestTask
 	closed atomic.Bool
+	raw    atomic.Pointer[RawStream] // set at takeover, which then owns reads
 }
 
 func (b *serverRequestBody) Read(p []byte) (int, error) {
+	if raw := b.raw.Load(); raw != nil {
+		return raw.Read(p)
+	}
 	n, err := b.ReadCloser.Read(p)
-	if err != nil && err != io.EOF && err != io.ErrClosedPipe {
+	if err != nil && err != io.EOF && err != io.ErrClosedPipe && !h3.IsDeadline(err) {
 		var connError *h3.Error
 		var messageError *MessageError
 		if !b.closed.Load() || errors.As(err, &connError) || errors.As(err, &messageError) {
@@ -360,5 +422,8 @@ func invokeHandler(handler http.Handler, writer http.ResponseWriter, request *ht
 
 func (b *serverRequestBody) Close() error {
 	b.closed.Store(true)
+	if raw := b.raw.Load(); raw != nil {
+		defer raw.receiveEnded()
+	}
 	return b.mapError.apply(b.ReadCloser.Close())
 }

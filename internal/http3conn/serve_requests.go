@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	h3 "github.com/getlantern/photon/internal/http3wire"
 	"github.com/getlantern/photon/internal/wire"
@@ -17,7 +18,13 @@ type RequestAcceptor interface {
 }
 
 func (t QUICTransport) AcceptRequest(ctx context.Context) (ServerRequestStream, error) {
-	return t.Conn.AcceptStream(ctx)
+	stream, err := t.Conn.AcceptStream(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// HTTP/3 handles the stream, so the peer may replace it once it completes.
+	stream.ReleaseStreamCredit()
+	return stream, nil
 }
 
 // ServeRequestsConfig bounds all accepted tasks, including header/QPACK waits and
@@ -27,10 +34,13 @@ func (t QUICTransport) AcceptRequest(ctx context.Context) (ServerRequestStream, 
 type ServeRequestsConfig struct {
 	// Closing Drain stops admission, sends GOAWAY, and waits for acknowledged
 	// responses before returning nil. Parent cancellation bounds the drain.
-	Drain     <-chan struct{}
-	MaxActive int
-	Request   ServeRequestConfig
-	Report    func(ctx context.Context, id uint64, err error)
+	Drain <-chan struct{}
+	// IdleTimeout, if positive, closes the connection with H3_NO_ERROR once no
+	// request stream has been active for that long; ServeRequests returns nil.
+	IdleTimeout time.Duration
+	MaxActive   int
+	Request     ServeRequestConfig
+	Report      func(ctx context.Context, id uint64, err error)
 }
 
 // ServeRequests runs the server session's sole request accept loop. It applies
@@ -102,10 +112,19 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 		stopAccept()
 	default:
 	}
+	var idle *idleTimer
+	if config.IdleTimeout > 0 {
+		idle = newIdleTimer(config.IdleTimeout, stopAccept)
+		defer idle.timer.Stop()
+	}
 	nextID := uint64(0)
 	drain := func() error {
 		if ctx.Err() != nil {
 			return context.Cause(ctx)
+		}
+		if idle.hasExpired() {
+			abort(0x100, "idle timeout")
+			return nil
 		}
 		if err := s.SendGoaway(nextID); err != nil {
 			return err
@@ -168,7 +187,8 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 			stopAccept()
 		default:
 		}
-		if acceptCtx.Err() != nil {
+		// A stream can also arrive just as the idle period expires.
+		if acceptCtx.Err() != nil || !idle.begin() {
 			stream.CancelRead(0x10b)
 			stream.CancelWrite(0x10b)
 			if err := s.decoder.Cancel(uint64(stream.StreamID())); err != nil {
@@ -204,6 +224,7 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 			// Priority state belongs to the admission slot. Finish removing it
 			// before another request can acquire that slot and register itself.
 			defer func() { <-slots }()
+			defer idle.end()
 			if request.Priorities != nil {
 				defer request.Priorities.finish(uint64(stream.StreamID()))
 			}
@@ -221,4 +242,66 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 			}
 		}()
 	}
+}
+
+// idleTimer expires once no request stream has been active for its period.
+// A nil timer never expires.
+type idleTimer struct {
+	mu       sync.Mutex
+	period   time.Duration
+	timer    *time.Timer
+	deadline time.Time // a callback before it lost a race with a new stream
+	active   int
+	expired  bool
+}
+
+func newIdleTimer(period time.Duration, expire func()) *idleTimer {
+	t := &idleTimer{period: period, deadline: time.Now().Add(period)}
+	t.timer = time.AfterFunc(period, func() { t.fire(expire) })
+	return t
+}
+func (t *idleTimer) fire(expire func()) {
+	t.mu.Lock()
+	if t.active == 0 && !time.Now().Before(t.deadline) {
+		t.expired = true
+	}
+	expired := t.expired
+	t.mu.Unlock()
+	if expired {
+		expire()
+	}
+}
+
+// begin counts a stream as active. It fails once the timer has expired.
+func (t *idleTimer) begin() bool {
+	if t == nil {
+		return true
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.expired {
+		return false
+	}
+	t.active++
+	t.timer.Stop()
+	return true
+}
+func (t *idleTimer) end() {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.active--; t.active == 0 && !t.expired {
+		t.deadline = time.Now().Add(t.period)
+		t.timer.Reset(t.period)
+	}
+}
+func (t *idleTimer) hasExpired() bool {
+	if t == nil {
+		return false
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.expired
 }

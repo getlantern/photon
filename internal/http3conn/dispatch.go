@@ -17,7 +17,12 @@ type IncomingTransport interface {
 }
 
 func (t QUICTransport) AcceptUni(ctx context.Context) (ReceiveStream, error) {
-	return t.Conn.AcceptUniStream(ctx)
+	stream, err := t.Conn.AcceptUniStream(ctx)
+	if err != nil {
+		return nil, err
+	}
+	stream.ReleaseStreamCredit()
+	return stream, nil
 }
 
 // StreamHandler consumes a known stream after its type prefix. Calls for

@@ -29,6 +29,7 @@ type streamState struct {
 	sendTerminal       error
 	resetError         *StreamError
 	onRelease          func(error, error) // opt-in automatic cleanup; callback runs on the owner
+	creditReleased     bool
 
 	accepted               bool
 	readCanceled           *StreamError
@@ -57,6 +58,9 @@ type streamSet struct {
 	havePeerLimits bool
 	closed         stream.Closed
 	partialClosed  *partialResetHistory
+	// Released peer streams whose credit awaits ReleaseStreamCredit. Each entry
+	// holds one unreturned credit, so the peer's stream limit bounds the set.
+	creditWithheld map[uint64]struct{}
 	ids            *stream.IDs
 	receive        *stream.Flow
 	send           *stream.SendFlow

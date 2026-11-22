@@ -9,6 +9,10 @@ current behavior and limitations. Full quic-go parity is not yet established.
 The notes below record successive internal implementation stages; their older
 statements about unavailable public APIs are superseded by the current guide.
 
+Raw request streams and connections (`Stream`, `RequestStream`, `HTTPStreamer`,
+`RawClientConn`, `RawServerConn`) sit on the same session, message and datagram
+components described below; see [HTTP3_RAW_STREAMS.md](HTTP3_RAW_STREAMS.md).
+
 The initial `internal/http3wire` layer follows
 [RFC 9114 sections 7 and 8](https://www.rfc-editor.org/rfc/rfc9114.html#section-7):
 

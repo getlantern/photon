@@ -256,7 +256,9 @@ Stream concurrency follows negotiated per-direction limits rather than fixed
 local or global object caps. `Config.MaxIncomingStreams` and
 `Config.MaxIncomingUniStreams` set each peer-initiated concurrency limit: zero
 selects 100, negative values disable that direction, and values above 2^60
-are clipped to the protocol maximum. Locally opened streams follow the peer's
+are clipped to the protocol maximum. `Config.RequireStreamCreditRelease` keeps a
+finished peer-initiated stream counted against those limits until the
+application calls `ReleaseStreamCredit` on it. Locally opened streams follow the peer's
 advertised credit. Receive windows default to 512 KiB per stream with growth
 enabled and can be configured up to 16 MiB; receive storage is allocated on the
 first retained payload byte, grows with the buffered span, and is released on

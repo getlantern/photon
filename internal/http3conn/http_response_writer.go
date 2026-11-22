@@ -21,6 +21,9 @@ import (
 type HTTPResponseWriter struct {
 	mapError       handlerErrorMap
 	acceptTunnel   func() (*ServerTunnel, error)
+	takeOver       func() (*RawStream, error)
+	hijacked       bool // taken over; the response is the application's
+	wrote          bool // the handler wrote body bytes
 	writer         *MessageWriter
 	header         http.Header
 	snapshot       http.Header
@@ -42,6 +45,9 @@ func NewHTTPResponseWriter(writer *MessageWriter) (*HTTPResponseWriter, error) {
 func (w *HTTPResponseWriter) Header() http.Header { return w.header }
 func (w *HTTPResponseWriter) Err() error          { return w.mapError.apply(w.err) }
 func (w *HTTPResponseWriter) WriteHeader(status int) {
+	if w.hijacked {
+		panic("http3: WriteHeader called after HTTPStream")
+	}
 	if w.err != nil || w.finished || w.status != 0 {
 		return
 	}
@@ -87,6 +93,9 @@ func (w *HTTPResponseWriter) commit(first []byte) error {
 }
 func (w *HTTPResponseWriter) Write(p []byte) (n int, err error) {
 	defer func() { err = w.mapError.apply(err) }()
+	if w.hijacked {
+		return 0, http.ErrHijacked
+	}
 	if w.finished {
 		return 0, io.ErrClosedPipe
 	}
@@ -96,6 +105,7 @@ func (w *HTTPResponseWriter) Write(p []byte) (n int, err error) {
 	if w.status == 204 || w.status == 205 || w.status == 304 {
 		return 0, http.ErrBodyNotAllowed
 	}
+	w.wrote = w.wrote || len(p) > 0
 	if w.writer.message.config.RequestMethod == "HEAD" {
 		return len(p), nil
 	}
@@ -111,6 +121,9 @@ func (w *HTTPResponseWriter) Write(p []byte) (n int, err error) {
 func (w *HTTPResponseWriter) Flush() { _ = w.FlushError() }
 func (w *HTTPResponseWriter) FlushError() (err error) {
 	defer func() { err = w.mapError.apply(err) }()
+	if w.hijacked {
+		return http.ErrHijacked
+	}
 	if w.finished {
 		return io.ErrClosedPipe
 	}
@@ -175,4 +188,16 @@ func (w *HTTPResponseWriter) AcceptTunnel() (tunnel *ServerTunnel, err error) {
 		return nil, fmt.Errorf("http3: tunnel handoff unavailable")
 	}
 	return w.acceptTunnel()
+}
+
+// TakeOver is installed by the request owner. It moves the response side into
+// a RawStream that outlives the handler, sending the response header first if
+// WriteHeader set a final status. It fails once body bytes were written.
+// Afterwards WriteHeader panics and Write returns http.ErrHijacked.
+func (w *HTTPResponseWriter) TakeOver() (stream *RawStream, err error) {
+	defer func() { err = w.mapError.apply(err) }()
+	if w.takeOver == nil {
+		return nil, fmt.Errorf("http3: stream takeover unavailable")
+	}
+	return w.takeOver()
 }

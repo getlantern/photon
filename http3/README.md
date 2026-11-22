@@ -640,3 +640,132 @@ before HTTP/3 setup and must return promptly. Do not call `Shutdown` synchronous
 inside it. Parent, peer, and server shutdown still terminate the connection if a
 callback returns a context detached from its input. Handler cancellation causes
 can reflect whichever shutdown or transport event takes effect first.
+
+## Raw streams and connections
+
+These APIs match quic-go's and exist for extensions such as WebTransport and
+MASQUE that need a request stream, or the connection's accept loops, to
+themselves. [docs/HTTP3_RAW_STREAMS.md](../docs/HTTP3_RAW_STREAMS.md) has the
+design and the differences from quic-go's behavior.
+
+### Taking over a request stream
+
+The `http.ResponseWriter` passed to handlers implements `HTTPStreamer`:
+
+```go
+func handler(w http.ResponseWriter, r *http.Request) {
+    w.WriteHeader(http.StatusOK)
+    stream, err := w.(http3.HTTPStreamer).HTTPStream()
+    if err != nil {
+        return
+    }
+    go serve(stream) // the stream outlives the handler
+}
+```
+
+If `WriteHeader` set a final status, `HTTPStream` sends the response header;
+otherwise no response is sent and the stream cannot be written. It fails once
+response body bytes were written. Afterwards `WriteHeader` panics and
+`ResponseWriter.Write` returns `http.ErrHijacked`.
+
+`Stream.Read` and `Write` carry DATA frame payload; request trailers still
+populate `Request.Trailer`. The caller must finish both directions: `Close` or
+`CancelWrite`, and `Read` to EOF or `CancelRead`. Until then the stream keeps
+its `MaxConcurrentRequests` slot, the request context stays live, and
+`Shutdown` waits for it. A peer reset of one direction is returned from that
+direction's calls and leaves the other open. An expired deadline
+(`os.ErrDeadlineExceeded`) leaves the stream usable. `TryWriteAll` queues a
+whole DATA frame or returns `quic.ErrWouldBlock`. `QUICStream` exposes the
+QUIC stream beneath the framing.
+
+`SendDatagram` and `ReceiveDatagram` work when the request was routed through
+`Server.DatagramHandlers`; otherwise they return
+`ErrHTTPDatagramsNotNegotiated`. Extended CONNECT still reaches a handler only
+through `ExtendedConnectHandlers` or `DatagramHandlers`. `AcceptTunnel` remains
+the handler-scoped alternative for CONNECT; a request uses one or the other.
+
+### Raw request streams
+
+```go
+stream, err := client.OpenRequestStream(ctx)
+if err != nil {
+    return err
+}
+req, _ := http.NewRequestWithContext(ctx, http.MethodConnect, "https://example.com/session", nil)
+req.Proto = "webtransport" // Extended CONNECT :protocol
+if err := stream.SendRequestHeader(req); err != nil {
+    return err
+}
+response, err := stream.ReadResponse()
+```
+
+`OpenRequestStream` waits for the handshake, a `MaxConcurrentRequests` slot and
+stream credit; raw streams never use 0-RTT. After a GOAWAY it returns
+`ErrPeerDraining`. `SendRequestHeader` takes a request without a body, waits
+for the server's SETTINGS and sends the header. A CONNECT request whose `Proto`
+is not `HTTP/1.1` is an Extended CONNECT with that `:protocol`. Content-Length
+is sent only for a positive `ContentLength`, which `Write` and `Close` then
+enforce. `ReadResponse` returns the final response, without `Request` or `TLS`;
+interim responses go to `ClientConfig.Information`. `Read` and
+`Response.Body` are the same receive direction, and closing the body cancels
+it. The stream holds its slot until both directions are finished, as above. A
+GOAWAY that rejects the stream, or closing the client, resets it.
+`SendDatagram` needs `EnableDatagrams` and the server's SETTINGS.
+
+### Raw connections
+
+`Transport.NewClientConn(conn)` runs HTTP/3 on a QUIC connection the caller
+dialed and authenticated, outside the pool and without pinning an origin.
+`Transport.NewRawClientConn(conn)` and `Server.NewRawServerConn(conn)` also
+leave the accept loops to the caller:
+
+```go
+raw, err := server.NewRawServerConn(conn)
+if err != nil {
+    return err // conn is still the caller's
+}
+go func() {
+    for {
+        stream, err := conn.AcceptUniStream(ctx)
+        if err != nil {
+            return
+        }
+        go raw.HandleUnidirectionalStream(stream) // unless the extension owns it
+    }
+}()
+for {
+    stream, err := conn.AcceptStream(ctx)
+    if err != nil {
+        return err
+    }
+    go raw.HandleRequestStream(stream)
+}
+```
+
+Hand over every unidirectional stream the extension does not consume, with its
+type unread (`Peek` leaves it in place). The control and QPACK streams are
+required: this implementation uses the QPACK dynamic table. On a raw client,
+pass server-initiated bidirectional streams the extension does not define to
+`ClientConn.HandleBidirectionalStream`, which closes the connection with
+H3_STREAM_CREATION_ERROR; clients that are not raw reject such streams
+themselves. The handlers release each stream's credit
+(`quic.Config.RequireStreamCreditRelease`).
+
+The client constructors return immediately and set up HTTP/3 in the
+background after the handshake. If that fails the connection is closed and
+later calls return the error. `NewRawServerConn` returns configuration, ALPN
+and `MaxConnections` failures and never blocks on the peer.
+`HandleRequestStream` returns when the request, including a taken-over stream,
+is finished, and blocks while `MaxConcurrentRequests` requests are running. A
+raw server connection is registered with its `Server`: `Shutdown` sends GOAWAY,
+rejects later request streams with H3_REQUEST_REJECTED, waits for the running
+ones and then closes the connection; `Close` aborts it.
+
+### Idle timeout and logging
+
+`Server.IdleTimeout` closes a connection with H3_NO_ERROR once it has had no
+request stream open for that long; QUIC-level activity does not count.
+`Server.Logger` receives handler panics at error level and request and
+connection failures at debug level, in addition to `ErrorHandler`.
+`Transport.Logger` receives connection setup failures at debug level. Nil
+loggers log nothing.

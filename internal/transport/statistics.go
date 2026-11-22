@@ -9,9 +9,11 @@ import (
 // selected path's RTT. Counters exclude UDP and other outer framing.
 type ConnectionStats struct {
 	MinRTT, LatestRTT, SmoothedRTT, MeanDeviation time.Duration
-	BytesSent, PacketsSent                        uint64
-	BytesReceived, PacketsReceived                uint64
-	BytesLost, PacketsLost                        uint64
+	// CongestionWindow is the sender's byte limit on the path RTT describes.
+	CongestionWindow               uint64
+	BytesSent, PacketsSent         uint64
+	BytesReceived, PacketsReceived uint64
+	BytesLost, PacketsLost         uint64
 }
 
 type statisticsPublication struct {
@@ -38,11 +40,14 @@ func (c *Conn) publishStatistics() {
 		BytesLost:   c.loss.declaredBytes - min(c.loss.declaredBytes, c.loss.recoveredBytes),
 		PacketsLost: c.loss.declaredPackets - min(c.loss.declaredPackets, c.loss.recoveredPackets),
 	}
-	r := c.recovery
+	r, congestion := c.recovery, c.congestion
 	if c.multipath != nil {
 		if id, ok := c.survivingPath(^uint64(0)); ok {
-			r = c.multipath.paths[id].application.sent
+			r, congestion = c.multipath.paths[id].application.sent, c.multipath.paths[id].application.congestion
 		}
+	}
+	if congestion != nil {
+		s.CongestionWindow = congestion.Window()
 	}
 	if r != nil && r.RTT.Sampled {
 		s.MinRTT, s.LatestRTT = r.RTT.Minimum, r.RTT.Latest

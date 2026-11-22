@@ -18,8 +18,17 @@ func TestStatisticsPathSelectionAndFinalSnapshot(t *testing.T) {
 		c.sentTotals = sendAccounting{packets: 7, bytes: 700}
 		c.receivedTotals = receiveAccounting{packets: 8, bytes: 800}
 		c.loss = lossAccounting{declaredPackets: 3, declaredBytes: 300, recoveredPackets: 1, recoveredBytes: 100}
+		larger, err := recovery.NewCongestion(2000)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.multipath.paths[1].application.congestion = larger
+		zeroWindow, oneWindow := c.multipath.paths[0].application.congestion.Window(), larger.Window()
+		if zeroWindow == 0 || zeroWindow == oneWindow {
+			t.Fatal("paths need distinct windows", zeroWindow, oneWindow)
+		}
 		c.publishStatistics()
-		want := ConnectionStats{MinRTT: 10 * time.Millisecond, LatestRTT: 12 * time.Millisecond, SmoothedRTT: 11 * time.Millisecond, MeanDeviation: time.Millisecond, PacketsSent: 7, BytesSent: 700, PacketsReceived: 8, BytesReceived: 800, PacketsLost: 2, BytesLost: 200}
+		want := ConnectionStats{CongestionWindow: zeroWindow, MinRTT: 10 * time.Millisecond, LatestRTT: 12 * time.Millisecond, SmoothedRTT: 11 * time.Millisecond, MeanDeviation: time.Millisecond, PacketsSent: 7, BytesSent: 700, PacketsReceived: 8, BytesReceived: 800, PacketsLost: 2, BytesLost: 200}
 		if got := c.Statistics(); got != want {
 			t.Fatal(got, want)
 		}
@@ -28,6 +37,7 @@ func TestStatisticsPathSelectionAndFinalSnapshot(t *testing.T) {
 		}
 		c.publishStatistics()
 		want.MinRTT, want.LatestRTT, want.SmoothedRTT, want.MeanDeviation = 20*time.Millisecond, 24*time.Millisecond, 22*time.Millisecond, 2*time.Millisecond
+		want.CongestionWindow = oneWindow
 		if got := c.Statistics(); got != want {
 			t.Fatal("retired path selected", got, want)
 		}
@@ -44,7 +54,7 @@ func TestStatisticsPathSelectionAndFinalSnapshot(t *testing.T) {
 func TestStatisticsUnsampledRTT(t *testing.T) {
 	c, _ := testPair(t, wire.Version1)
 	c.publishStatistics()
-	if got := c.Statistics(); got != (ConnectionStats{}) {
+	if got := c.Statistics(); got != (ConnectionStats{CongestionWindow: c.congestion.Window()}) || got.CongestionWindow == 0 {
 		t.Fatal("initial estimator exposed as observation", got)
 	}
 }

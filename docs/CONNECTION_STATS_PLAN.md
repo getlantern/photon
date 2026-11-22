@@ -253,3 +253,17 @@ and transport vet passed.
 These are authenticated own-engine packet tests on synthetically prepared paths,
 not independent multipath negotiation or network scheduling evidence. Independent
 multipath statistics, impairment combinations and WAN behavior remain open.
+
+## Congestion window
+
+Upstream v0.65.0 added an eleventh field, CongestionWindow: the sender's window
+on the active path, in bytes including QUIC packet overhead. The snapshot
+publishes the NewReno window of the same path that supplies RTT (the
+lowest-numbered surviving prepared path), so the two always describe one path.
+Unlike RTT it needs no sample and is nonzero from the first snapshot. Engine
+tests cover selection and path retirement with distinct per-path windows; a
+public v1/v2 test checks, on the owner, that the published value equals the
+engine's, that a bulk sender's window grows while the ACK-only receiver's does
+not, and that the final value survives shutdown. No independent-peer comparison
+of window values exists, and the two controllers and their initial windows are
+independent implementations, so equal numbers are not expected.
