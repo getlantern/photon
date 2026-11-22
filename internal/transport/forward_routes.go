@@ -100,8 +100,9 @@ func (r *Router) setForwardCIDs(route *handoffRoute, ids [][]byte) error {
 	return nil
 }
 
-// forwardTarget handles only short-header packets: path registration is for
-// established connections. Greased QUIC bits remain routable. Prefix-free CID
+// forwardTarget looks up short-header packets by CID prefix and also forwards
+// parsed long-header packets, which can lead a coalesced datagram. Path
+// registration is for established connections. Greased QUIC bits remain routable. Prefix-free CID
 // reservations permit different CID lengths without ambiguous packet dispatch.
 func (r *Router) forwardTarget(data []byte) *packetHandoff {
 	if route := r.forwardRoute(data); route != nil {

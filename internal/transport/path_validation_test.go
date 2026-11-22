@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -159,6 +160,33 @@ func TestChallengeACKDoesNotValidatePath(t *testing.T) {
 		}
 		if !c.budget.Validated() || c.PathValidationState() != PathValidated {
 			t.Fatal("matching response rejected")
+		}
+	}
+}
+
+func TestValidatePathSendBufferIsRecoverable(t *testing.T) {
+	for _, v := range []wire.Version{wire.Version1, wire.Version2} {
+		c, s := testPair(t, v)
+		drivePair(t, c, s, false, false)
+		// Queued application traffic leaves less than one challenge of room.
+		held := c.availableSendBytes() - 31
+		c.queuedBytes += held
+		if err := c.ValidatePath(); !errors.Is(err, ErrSendBuffer) {
+			t.Fatal("full buffer admitted validation", err)
+		}
+		if c.err != nil || c.Closing() || c.check() != nil {
+			t.Fatal("optional validation failed the connection", c.err)
+		}
+		if c.PathValidationState() != PathUnchecked || len(c.spaces[applicationSpace].queue) != 0 || !c.pathValidationDeadline().IsZero() {
+			t.Fatal("rejected validation changed state")
+		}
+		c.queuedBytes -= held
+		if err := c.ValidatePath(); err != nil {
+			t.Fatal(err)
+		}
+		drivePair(t, c, s, false, false)
+		if c.PathValidationState() != PathValidated {
+			t.Fatal("retry after freeing capacity did not validate")
 		}
 	}
 }

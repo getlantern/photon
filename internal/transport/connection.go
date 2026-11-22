@@ -1016,6 +1016,11 @@ func (c *Conn) receiveECN(raw []byte, h wire.Header, now time.Time, buffer bool,
 			c.receiveDatagram(f.Data)
 		case wire.PingFrame:
 		case wire.CryptoFrame:
+			if s.discarded {
+				// An earlier frame in this packet completed the handshake and
+				// retired this level's reassembly; the rest can only be duplicates.
+				continue
+			}
 			if !c.config.Server {
 				c.versionChosen = true
 				c.candidateInitial = candidateInitialKeys{}

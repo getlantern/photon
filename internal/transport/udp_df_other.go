@@ -3,7 +3,7 @@
 package transport
 
 // Platform-specific nonfragmentation configuration remains unimplemented here.
-// Packet construction still uses the conservative 1200-byte maximum.
+// Upward MTU discovery is disabled; the configured initial packet size still applies.
 func configureUDPSocket(socketController) error { return nil }
 
 const udpSupportsMTUDiscovery = false

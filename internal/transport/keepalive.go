@@ -90,7 +90,12 @@ func (c *Conn) keepAlivePath(maxDelay time.Duration) (selected uint64, pto time.
 		if app == nil || c.multipath.abandoned[id] != nil {
 			continue
 		}
-		if len(state.peer.active[state.peer.current].cid) == 0 || app.localMigration != nil || app.mtuNeedsValidation || (id != 0 && app.validation.state != PathValidated) {
+		if len(state.peer.active[state.peer.current].cid) == 0 || app.mtuNeedsValidation || (id != 0 && app.validation.state != PathValidated) {
+			continue
+		}
+		// Match the ordinary sender: only an automatic migration holds this
+		// path's output. Staged and preferred candidates leave it sendable.
+		if candidate := app.localMigration; candidate != nil && !candidate.preferred && !candidate.explicitSwitch && candidate.validation.state != PathValidationFailed {
 			continue
 		}
 		// Held traffic on another path must not suppress a healthy empty path.

@@ -149,5 +149,6 @@ Remaining integration:
 - Test fragmentation, loss, duplication, reordering, Retry, resumption, both roles,
   public connection state, independent peers and wire observations.
 
-0-RTT remains disabled. Internal engine switching does not establish complete
+0-RTT is opt-in (see [early data](EARLY_DATA.md)); its combinations with compatible
+switching are only partly covered. Internal engine switching does not establish complete
 RFC 9368 conformance.

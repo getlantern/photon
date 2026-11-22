@@ -75,9 +75,11 @@ func TestPublicTryWriteAllAdmission(t *testing.T) {
 }
 
 func TestTryWriteAllBusyWriter(t *testing.T) {
-	s := new(SendStream)
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s := newSendStream(nil)
+	if !s.gate.tryAcquire() {
+		t.Fatal("idle gate")
+	}
+	defer s.gate.release()
 	if err := s.TryWriteAll([]byte("busy")); !errors.Is(err, ErrWouldBlock) {
 		t.Fatal(err)
 	}

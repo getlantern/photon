@@ -153,8 +153,8 @@ func FuzzStreamDeliveryPartial(f *testing.F) {
 }
 
 // Packet-number mappings for old and trimmed transmissions share one logical
-// item. This exercises the existing ACK/ownership machinery; production queue
-// rewriting and connection-level ResetAt wiring are still separate work.
+// item. This exercises only the ACK/ownership machinery; queue rewriting and
+// ResetAt wiring live in stream_item_partial.go and partial_reset_send.go.
 func TestStreamDeliveryPartialPacketOwnership(t *testing.T) {
 	for _, originalACK := range []bool{false, true} {
 		c, s, root := splitItemFixture(t)

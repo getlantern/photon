@@ -255,7 +255,9 @@ func TestPublicStreamSmoke(t *testing.T) {
 
 func TestPublicStreamAutomaticCleanup(t *testing.T) {
 	clientTLS, serverTLS := tlsConfigs(t)
-	l, err := quic.ListenAddr("127.0.0.1:0", serverTLS, nil)
+	// Small limits: the peer regains stream credit only as our handles are
+	// reclaimed, so its opens below stall unless cleanup is automatic.
+	l, err := quic.ListenAddr("127.0.0.1:0", serverTLS, &quic.Config{MaxIncomingStreams: 4, MaxIncomingUniStreams: 4})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,11 +298,42 @@ func TestPublicStreamAutomaticCleanup(t *testing.T) {
 		if i == 0 {
 			first = rx
 		}
-		// No Release call: more than the initial 16 incoming streams must work.
+		// No Release call: more than the 4 permitted incoming streams must work.
 	}
 	first.SetReadDeadline(time.Time{})
 	if n, err := first.Read(make([]byte, 1)); n != 0 || err != io.EOF {
 		t.Fatal("EOF after automatic cleanup", n, err)
+	}
+	// A bidirectional handle is reclaimed only after its send side is
+	// acknowledged too.
+	for i := 0; i < 40; i++ {
+		remote, err := peer.OpenStreamSync(ctx)
+		if err != nil {
+			t.Fatal(i, err)
+		}
+		if _, err := remote.Write([]byte("x")); err != nil {
+			t.Fatal(err)
+		}
+		if err := remote.Close(); err != nil {
+			t.Fatal(err)
+		}
+		s, err := c.AcceptStream(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.SetDeadline(time.Now().Add(time.Second))
+		if b, err := io.ReadAll(s); err != nil || string(b) != "x" {
+			t.Fatal(i, string(b), err)
+		}
+		if _, err := s.Write([]byte("y")); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if b, err := io.ReadAll(remote); err != nil || string(b) != "y" {
+			t.Fatal(i, string(b), err)
+		}
 	}
 	for i := 0; i < 160; i++ {
 		tx, err := c.OpenUniStreamSync(ctx)

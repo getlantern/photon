@@ -21,12 +21,14 @@ type StreamError = transport.StreamError
 var Err0RTTRejected = transport.ErrEarlyDataRejected
 
 // streamDeadline permits changing the deadline of an already blocked operation.
-// Each direction serializes operations, so only one cancellation is registered.
+// One operation runs per direction, but senders waiting for their turn are
+// bound by the same deadline, so every blocked caller registers a cancellation.
 type streamDeadline struct {
 	mu         sync.Mutex
 	at         time.Time
 	generation uint64
-	cancel     context.CancelFunc
+	waiters    uint64
+	cancels    map[uint64]context.CancelFunc
 }
 
 func (d *streamDeadline) set(at time.Time) {
@@ -34,8 +36,8 @@ func (d *streamDeadline) set(at time.Time) {
 	defer d.mu.Unlock()
 	d.at = at
 	d.generation++
-	if d.cancel != nil {
-		d.cancel()
+	for _, cancel := range d.cancels {
+		cancel()
 	}
 }
 func (d *streamDeadline) run(fn func(context.Context) error) error {
@@ -49,13 +51,18 @@ func (d *streamDeadline) run(fn func(context.Context) error) error {
 		} else {
 			ctx, cancel = context.WithDeadline(context.Background(), d.at)
 		}
-		d.cancel = cancel
+		if d.cancels == nil {
+			d.cancels = make(map[uint64]context.CancelFunc)
+		}
+		d.waiters++
+		waiter := d.waiters
+		d.cancels[waiter] = cancel
 		d.mu.Unlock()
 		err := fn(ctx)
 		cancel()
 		d.mu.Lock()
 		changed := generation != d.generation
-		d.cancel = nil
+		delete(d.cancels, waiter)
 		d.mu.Unlock()
 		// Only an uncommitted operation may be retried. Runtime.Wait returns the
 		// actual callback result if cancellation races a committed operation.
@@ -191,9 +198,41 @@ func (s *ReceiveStream) CancelRead(code StreamErrorCode) {
 // Close queues FIN after previous writes; it does not close the receive side.
 type SendStream struct {
 	*streamHandle
-	mu       sync.Mutex
+	gate     streamGate
 	deadline streamDeadline
 	closed   bool
+}
+
+// streamGate is a mutex whose waiters can give up: a blocked Write holds it
+// indefinitely, and WaitAcknowledged holds it under an unrelated context.
+type streamGate chan struct{}
+
+func (g streamGate) tryAcquire() bool {
+	select {
+	case g <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+// acquire prefers an uncontended gate over a finished context, so expiry
+// alone never preempts the stream's own terminal errors.
+func (g streamGate) acquire(ctx context.Context) error {
+	if g.tryAcquire() {
+		return nil
+	}
+	select {
+	case g <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+func (g streamGate) release() { <-g }
+
+func newSendStream(h *streamHandle) *SendStream {
+	return &SendStream{streamHandle: h, gate: make(streamGate, 1)}
 }
 
 func (s *SendStream) Write(p []byte) (int, error) {
@@ -204,10 +243,10 @@ func (s *SendStream) Write(p []byte) (int, error) {
 // It does not wait for QUIC credit, queue capacity or another writer, and ignores
 // the write deadline. It can wait briefly for the connection owner to run.
 func (s *SendStream) TryWriteAll(p []byte) error {
-	if !s.mu.TryLock() {
+	if !s.gate.tryAcquire() {
 		return ErrWouldBlock
 	}
-	defer s.mu.Unlock()
+	defer s.gate.release()
 	if s.rejected.Load() {
 		return Err0RTTRejected
 	}
@@ -236,8 +275,10 @@ func (s *SendStream) TryWriteAll(p []byte) error {
 // The callback runs on the connection owner: it must be concurrency-safe,
 // must not block, and must not call QUIC methods. A nil limiter behaves as Write.
 func (s *SendStream) WriteWithLimit(p []byte, limiter func(int) int) (int, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.deadline.run(s.gate.acquire); err != nil {
+		return 0, err
+	}
+	defer s.gate.release()
 	if s.rejected.Load() {
 		return 0, Err0RTTRejected
 	}
@@ -291,8 +332,10 @@ func (s *SendStream) WriteWithLimit(p []byte, limiter func(int) int) (int, error
 	return total, s.conn.connectionError(err)
 }
 func (s *SendStream) Close() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.deadline.run(s.gate.acquire); err != nil {
+		return err
+	}
+	defer s.gate.release()
 	if s.rejected.Load() {
 		return Err0RTTRejected
 	}
@@ -322,8 +365,10 @@ func (s *SendStream) Close() error {
 // use its context to bound the wait. Write deadlines do not control this wait.
 // A reset or connection failure is returned rather than treated as delivery.
 func (s *SendStream) WaitAcknowledged(ctx context.Context) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.gate.acquire(ctx); err != nil {
+		return err
+	}
+	defer s.gate.release()
 	if s.rejected.Load() {
 		return Err0RTTRejected
 	}
@@ -391,7 +436,7 @@ func (s *Stream) SetDeadline(t time.Time) error {
 	return s.SendStream.SetWriteDeadline(t)
 }
 func newStream(h *streamHandle) *Stream {
-	return &Stream{ReceiveStream: &ReceiveStream{streamHandle: h}, SendStream: &SendStream{streamHandle: h}}
+	return &Stream{ReceiveStream: &ReceiveStream{streamHandle: h}, SendStream: newSendStream(h)}
 }
 
 func (c *Conn) stream(ctx context.Context, uni, accept, wait bool) (*streamHandle, error) {
@@ -503,14 +548,14 @@ func (c *Conn) OpenUniStream() (*SendStream, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &SendStream{streamHandle: h}, nil
+	return newSendStream(h), nil
 }
 func (c *Conn) OpenUniStreamSync(ctx context.Context) (*SendStream, error) {
 	h, err := c.stream(ctx, true, false, true)
 	if err != nil {
 		return nil, err
 	}
-	return &SendStream{streamHandle: h}, nil
+	return newSendStream(h), nil
 }
 
 // Context is canceled when Close queues FIN, CancelWrite resets the stream,

@@ -35,6 +35,7 @@ func TestSessionOwnsDatagramReceiver(t *testing.T) {
 			}
 			waiting := make(chan error, 1)
 			go func() { _, err := request.ReceiveContext(ctx); waiting <- err }()
+			awaitDatagramWaiter(ctx, t, request)
 			if malformed {
 				source.input <- nil
 			} else {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"runtime"
 	"testing"
 	"testing/iotest"
 	"time"
@@ -121,12 +122,30 @@ func TestDatagramStreamTransportReceiveCompletion(t *testing.T) {
 	}
 }
 
+// A wakeup is only exercised once the receiver has installed its waiter.
+func awaitDatagramWaiter(ctx context.Context, t *testing.T, r *DatagramRequest) {
+	t.Helper()
+	for {
+		r.owner.mu.Lock()
+		waiting := r.changed != nil
+		r.owner.mu.Unlock()
+		if waiting {
+			return
+		}
+		if ctx.Err() != nil {
+			t.Fatal("receiver never waited")
+		}
+		runtime.Gosched()
+	}
+}
+
 func TestDatagramStreamReceiveCompletionWakesWaiter(t *testing.T) {
 	bound, raw, _ := boundDatagramFixture(t, bytes.NewReader(nil))
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { _, err := bound.ReceiveDatagram(ctx); done <- err }()
+	awaitDatagramWaiter(ctx, t, bound.request)
 	raw.receiveCancel()
 	if err := <-done; err != ErrDatagramRequestClosed {
 		t.Fatal(err)

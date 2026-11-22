@@ -44,6 +44,12 @@ func (c *Conn) ValidatePath() error {
 	if c.validation.state == PathValidating {
 		return nil
 	}
+	// This request is optional: refuse it without the fatal enqueue failure so
+	// the caller can retry once queued traffic drains. Must match the challenge
+	// charge in queuePathChallenge.
+	if !c.baseMTUNeedsValidation && c.availableSendBytes() < 32 {
+		return ErrSendBuffer
+	}
 	delay := 25 * time.Millisecond
 	if c.peerParams != nil {
 		delay = time.Duration(c.peerParams.MaxAckDelay) * time.Millisecond

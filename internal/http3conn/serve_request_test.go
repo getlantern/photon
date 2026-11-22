@@ -159,12 +159,18 @@ func TestServeRequestCancellationUnblocksHeaders(t *testing.T) {
 	source, sink := io.Pipe()
 	defer source.Close()
 	defer sink.Close()
-	stream := &serveStream{source: source, interrupt: func() { source.CloseWithError(context.Canceled) }}
+	waiting := &enteredReader{Reader: source, entered: make(chan struct{})}
+	stream := &serveStream{source: waiting, interrupt: func() { source.CloseWithError(context.Canceled) }}
 	config := serveConfig(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("handler invoked") }))
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- ServeRequest(ctx, stream, config) }()
+	select {
+	case <-waiting.entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("header read not started")
+	}
 	cancel()
 	select {
 	case err := <-done:

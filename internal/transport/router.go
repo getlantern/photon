@@ -33,7 +33,9 @@ type connectionRoute struct {
 // Router demultiplexes one local UDP endpoint. It is serialized by its owner,
 // like Conn. Sync must follow connection events and precede transmission of
 // newly issued CIDs. CID collisions must prevent transmission, not be ignored.
-// This initial router enforces fixed peer addresses; migration is not enabled.
+// Route enforces fixed peer addresses. RouteNetwork instead delivers known
+// multipath CIDs from new addresses and leaves tuple validation to the Conn,
+// so a CID match is not source-address validation.
 type Router struct {
 	resetIndex           *resetTokenIndex
 	cidLength, capacity  int

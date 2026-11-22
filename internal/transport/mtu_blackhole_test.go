@@ -15,8 +15,8 @@ func TestMTUBlackholeRecoveryFeedback(t *testing.T) {
 		if err := c.startPathMTUSearch(1, 1500); err != nil {
 			t.Fatal(err)
 		}
-		// The ordinary builder remains capped at 1200. Feed real recovery metadata
-		// for larger data packets to exercise this staged integration boundary.
+		// Feed recovery metadata for larger data packets directly; this unit covers
+		// the feedback path only. mtu_blackhole_packet_test.go sends real ones.
 		a.mtu.confirmed = 1400
 		now := time.Unix(101, 0)
 		for n := uint64(0); n < 6; n++ {

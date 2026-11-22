@@ -7,6 +7,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -85,7 +87,7 @@ func TestHTTP3ClientCloseActiveAndQueuedRequests(t *testing.T) {
 			}
 			queuedBody := &countedHTTPBody{Reader: strings.NewReader("queued")}
 			queued, _ := http.NewRequestWithContext(ctx, "POST", origin+"/queued", queuedBody)
-			second, started := make(chan error, 1), make(chan struct{})
+			second := make(chan error, 1)
 			secondJoined := false
 			defer func() {
 				client.Close()
@@ -98,15 +100,8 @@ func TestHTTP3ClientCloseActiveAndQueuedRequests(t *testing.T) {
 					}
 				}
 			}()
-			go func() {
-				close(started)
-				response, err := client.RoundTrip(queued)
-				if response != nil {
-					response.Body.Close()
-				}
-				second <- err
-			}()
-			<-started
+			go queuedHTTP3RoundTrip(client, queued, second)
+			awaitHTTP3SlotWait(t, ctx)
 			if err := client.Close(); err != nil {
 				t.Fatal(err)
 			}
@@ -138,6 +133,94 @@ func TestHTTP3ClientCloseActiveAndQueuedRequests(t *testing.T) {
 			}
 			if err := client.Close(); err != nil {
 				t.Fatal("repeated Close", err)
+			}
+		})
+	}
+}
+
+// Close cancels an active upload and thereby frees its slot, so the test above
+// passes even if slot waiters are never interrupted. A response body the caller
+// has not closed keeps the slot, leaving Close itself as the only wakeup.
+func TestHTTP3ClientCloseWakesRequestBehindHeldResponse(t *testing.T) {
+	for _, version := range []quic.Version{quic.Version1, quic.Version2} {
+		t.Run(fmt.Sprintf("%x", uint32(version)), func(t *testing.T) {
+			clientTLS, serverTLS := tlsConfigs(t)
+			serverTLS.NextProtos = []string{"h3"}
+			entered := make(chan struct{}, 2)
+			server := &peerh3.Server{TLSConfig: serverTLS, QUICConfig: &upstream.Config{Versions: []upstream.Version{upstream.Version(version)}}, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				entered <- struct{}{}
+				w.(http.Flusher).Flush()
+				<-r.Context().Done()
+			})}
+			socket, err := net.ListenPacket("udp4", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			served := make(chan struct{})
+			go func() { defer close(served); server.Serve(socket) }()
+			defer func() {
+				server.Close()
+				socket.Close()
+				select {
+				case <-served:
+				case <-time.After(time.Second):
+					t.Error("peer did not join")
+				}
+			}()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			origin := "https://" + socket.LocalAddr().String()
+			client, err := ownh3.Dial(ctx, origin, clientTLS, &quic.Config{Versions: []quic.Version{version}}, &ownh3.ClientConfig{MaxConcurrentRequests: 1})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer client.Close()
+			request, _ := http.NewRequestWithContext(ctx, "GET", origin+"/held", nil)
+			held, err := client.RoundTrip(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer held.Body.Close()
+			queuedBody := &countedHTTPBody{Reader: strings.NewReader("queued")}
+			queued, _ := http.NewRequestWithContext(ctx, "POST", origin+"/queued", queuedBody)
+			result := make(chan error, 1)
+			go queuedHTTP3RoundTrip(client, queued, result)
+			joined := false
+			defer func() {
+				held.Body.Close()
+				cancel()
+				if !joined {
+					select {
+					case <-result:
+					case <-time.After(time.Second):
+						t.Error("queued request did not join")
+					}
+				}
+			}()
+			awaitHTTP3SlotWait(t, ctx)
+			if err := client.Close(); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case err := <-result:
+				joined = true
+				if !errors.Is(err, ownh3.ErrClientClosed) {
+					t.Fatal("queued close cause", err)
+				}
+			case <-ctx.Done():
+				t.Fatal("queued request stuck behind held response", ctx.Err())
+			}
+			if queuedBody.closes.Load() != 1 {
+				t.Fatal("queued body ownership", queuedBody.closes.Load())
+			}
+			if _, err := io.ReadAll(held.Body); !errors.Is(err, ownh3.ErrClientClosed) {
+				t.Fatal("held response close cause", err)
+			}
+			<-entered
+			select {
+			case <-entered:
+				t.Fatal("queued request reached peer")
+			default:
 			}
 		})
 	}
@@ -232,13 +315,7 @@ func testHTTP3ClientGoawayResponse(t *testing.T, readAfterClose, cancelRequest, 
 			queuedBody := &countedHTTPBody{Reader: strings.NewReader("queued")}
 			queued, _ := http.NewRequestWithContext(ctx, "POST", origin+"/queued", queuedBody)
 			result := make(chan error, 1)
-			go func() {
-				next, err := client.RoundTrip(queued)
-				if next != nil {
-					next.Body.Close()
-				}
-				result <- err
-			}()
+			go queuedHTTP3RoundTrip(client, queued, result)
 			joined := false
 			defer func() {
 				client.Close()
@@ -251,6 +328,7 @@ func testHTTP3ClientGoawayResponse(t *testing.T, readAfterClose, cancelRequest, 
 					}
 				}
 			}()
+			awaitHTTP3SlotWait(t, ctx)
 			shutdown := make(chan error, 1)
 			go func() { shutdown <- server.Shutdown(ctx) }()
 			shutdownJoined := false
@@ -363,5 +441,44 @@ func testHTTP3ClientGoawayResponse(t *testing.T, readAfterClose, cancelRequest, 
 			default:
 			}
 		})
+	}
+}
+
+func queuedHTTP3RoundTrip(client *ownh3.ClientConn, request *http.Request, result chan<- error) {
+	response, err := client.RoundTrip(request)
+	if response != nil {
+		response.Body.Close()
+	}
+	result <- err
+}
+
+// awaitHTTP3SlotWait returns once the queuedHTTP3RoundTrip goroutine is parked
+// in a select made directly by the client package. With the handshake complete
+// and every slot taken, that is the slot wait. No public API reports this
+// state, so it is read from the goroutine dump instead of assumed after a delay.
+func awaitHTTP3SlotWait(t *testing.T, ctx context.Context) {
+	t.Helper()
+	pkg := reflect.TypeFor[ownh3.ClientConn]().PkgPath() + "."
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	buf := make([]byte, 1<<16)
+	for {
+		n := runtime.Stack(buf, true)
+		if n == len(buf) {
+			buf = make([]byte, 2*len(buf))
+			continue
+		}
+		for _, goroutine := range strings.Split(string(buf[:n]), "\n\n") {
+			header, frames, _ := strings.Cut(goroutine, "\n")
+			_, state, _ := strings.Cut(header, "[")
+			if strings.HasPrefix(state, "select") && strings.HasPrefix(frames, pkg) && strings.Contains(frames, ".queuedHTTP3RoundTrip(") {
+				return
+			}
+		}
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+			t.Fatal("request did not reach the slot wait", ctx.Err())
+		}
 	}
 }

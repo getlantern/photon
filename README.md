@@ -257,12 +257,12 @@ local or global object caps. `Config.MaxIncomingStreams` and
 `Config.MaxIncomingUniStreams` set each peer-initiated concurrency limit: zero
 selects 100, negative values disable that direction, and values above 2^60
 are clipped to the protocol maximum. Locally opened streams follow the peer's
-advertised credit. Receive windows default to 64 KiB per stream and can be
-configured up to 16 MiB; receive storage is allocated on the first retained payload byte and released on reset
-or terminal consumption. Idle and empty streams reserve no payload arrays.
-Active streams use a one-bit-per-byte occupancy map, but still allocate the full
-window on first payload, so large
-concurrency settings can consume substantial memory even for small payloads.
+advertised credit. Receive windows default to 512 KiB per stream with growth
+enabled and can be configured up to 16 MiB; receive storage is allocated on the
+first retained payload byte, grows with the buffered span, and is released on
+reset or terminal consumption. Idle and empty streams reserve no payload arrays.
+A far-ahead fragment can still allocate the full window, so large concurrency
+settings can consume substantial memory; see the receive-credit paragraph below.
 Public streams automatically release terminal engine storage and replenish
 stream counts; released IDs retain compact
 closed ranges instead of final-size records. The public API exposes bidirectional
@@ -387,7 +387,7 @@ payload ring plus a 512-byte presence bitmap, excluding object and allocator
 overhead. A far-ahead fragment can still allocate the full window, and allocated
 storage is retained until terminal cleanup or empty-window growth. Size windows
 together with incoming stream limits. Default
-values match pinned quic-go v0.63.0, but memory efficiency, growth tuning and
+values matched quic-go v0.63.0 when checked, but memory efficiency, growth tuning and
 large-window configuration behavior do not yet have full parity.
 
 `AllowConnectionWindowIncrease(conn, delta)` can veto each proposed connection
@@ -402,8 +402,10 @@ or independent stream-buffer growth.
 `Config.HandshakeIdleTimeout` limits inactivity before TLS completion (default
 5 seconds). Authenticated receives and the first ack-eliciting send after a
 receive restart it; repeated sends cannot sustain an unresponsive peer.
-`HandshakeTimeout` separately limits total time to handshake confirmation;
-zero selects twice the idle timeout, with overflow saturation. Both limits
+`HandshakeTimeout` separately limits total time to TLS completion;
+zero selects twice the idle timeout, with overflow saturation. It does not bound
+the wait for handshake confirmation that follows, so give `DialAddr` a context
+deadline to limit the whole dial. Both limits
 are local and separate from the negotiated idle timeout. See the
 [API parity inventory](docs/API_PARITY.md) for remaining contract differences.
 

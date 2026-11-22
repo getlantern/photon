@@ -22,7 +22,9 @@ func newNetworkOwner(c *Conn, local, remote netip.AddrPort) (*networkOwner, erro
 	if c == nil || c.multipath != nil {
 		return nil, errors.New("quic: invalid network owner handoff")
 	}
-	if err := c.check(); err != nil {
+	// A closing or draining connection still needs its tuple: the prepared
+	// close must be sent and the routes must absorb retransmitted input.
+	if err := c.check(); err != nil && !c.Closing() && !c.Draining() {
 		return nil, err
 	}
 	tuple, err := canonicalPathTuple(local, remote)

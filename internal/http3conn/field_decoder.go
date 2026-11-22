@@ -32,6 +32,10 @@ type FieldDecoder struct {
 	feedback *qpack.FeedbackWriter
 	pending  map[uint64]chan DecodedSection
 	err      error
+	detached error
+	// Reports a request-side feedback write failure, which callers scope to
+	// their request, to the connection owner. Runs with the decoder locked.
+	feedbackFailed func(error)
 }
 
 func NewFieldDecoder(limits qpack.DecoderLimits, writer io.Writer) (*FieldDecoder, error) {
@@ -68,8 +72,13 @@ func (d *FieldDecoder) Submit(id uint64, section []byte) (<-chan DecodedSection,
 	if err != nil {
 		return nil, d.fail(d.protocolError(err, QPACKDecompressionFailed))
 	}
-	if _, err = d.feedback.Write(feedback); err != nil {
-		return nil, d.fail(err)
+	if d.detached != nil {
+		if blocked {
+			d.decoder.Cancel(id)
+			return nil, d.detached
+		}
+	} else if _, err = d.feedback.Write(feedback); err != nil {
+		return nil, d.failFeedback(err)
 	}
 	result := make(chan DecodedSection, 1)
 	if blocked {
@@ -88,6 +97,9 @@ func (d *FieldDecoder) EncoderInstruction(instruction []byte) error {
 	defer d.mu.Unlock()
 	if d.err != nil {
 		return d.err
+	}
+	if d.detached != nil {
+		return d.detached
 	}
 	n, ready, feedback, err := d.decoder.ConsumeEncoder(instruction)
 	if err != nil {
@@ -117,12 +129,15 @@ func (d *FieldDecoder) Cancel(id uint64) error {
 	if d.err != nil {
 		return d.err
 	}
+	if d.detached != nil {
+		return d.detached
+	}
 	feedback, err := d.decoder.Cancel(id)
 	if err != nil {
 		return d.fail(d.protocolError(err, QPACKDecompressionFailed))
 	}
 	if _, err = d.feedback.Write(feedback); err != nil {
-		return d.fail(err)
+		return d.failFeedback(err)
 	}
 	if result, ok := d.pending[id]; ok {
 		delete(d.pending, id)
@@ -130,6 +145,28 @@ func (d *FieldDecoder) Cancel(id uint64) error {
 		close(result)
 	}
 	return nil
+}
+
+// Detach ends the instruction and feedback streams after a graceful peer close
+// without discarding table state: sections already buffered on accepted streams
+// still decode, and their undeliverable feedback is dropped. Sections that
+// remain blocked fail with cause, as do Cancel and EncoderInstruction.
+func (d *FieldDecoder) Detach(cause error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.err != nil || d.detached != nil {
+		return
+	}
+	if cause == nil {
+		cause = io.ErrClosedPipe
+	}
+	d.detached = cause
+	for id, result := range d.pending {
+		d.decoder.Cancel(id)
+		result <- DecodedSection{Err: cause}
+		close(result)
+		delete(d.pending, id)
+	}
 }
 func (d *FieldDecoder) Close(cause error) {
 	d.mu.Lock()
@@ -147,6 +184,12 @@ func (d *FieldDecoder) protocolError(err error, code uint64) error {
 		code = h3.ExcessiveLoad
 	}
 	return &h3.Error{Code: code, Reason: err.Error()}
+}
+func (d *FieldDecoder) failFeedback(err error) error {
+	if d.feedbackFailed != nil {
+		d.feedbackFailed(err)
+	}
+	return d.fail(err)
 }
 func (d *FieldDecoder) fail(err error) error {
 	d.err = err

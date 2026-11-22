@@ -407,6 +407,13 @@ func (t *Transport) run(entry *pooledClient) {
 		case <-entry.ctx.Done():
 			return
 		case <-client.ctx.Done():
+			// Closing the client cancels every request lifetime. Responses the
+			// session kept readable (a graceful peer close after GOAWAY) stay
+			// alive until their reservations are released.
+			t.mu.Lock()
+			t.retireLocked(entry)
+			t.mu.Unlock()
+			<-entry.ctx.Done()
 			return
 		case <-goaway:
 			t.mu.Lock()

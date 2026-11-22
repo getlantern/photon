@@ -8,7 +8,6 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/binary"
 	"errors"
 	"math/big"
 	"testing"
@@ -536,17 +535,34 @@ func TestEngineACKRangeValidationDoesNotIteratePacketNumbers(t *testing.T) {
 }
 
 func TestEngineRejectsVersionMismatch(t *testing.T) {
-	client, server := testPair(t, wire.Version1)
+	_, server := testPair(t, wire.Version1)
+	other, control := testPair(t, wire.Version2)
 	now := time.Now()
-	flights := drain(t, client, now)
+	flights := drain(t, other, now)
+	if len(flights) == 0 {
+		t.Fatal("missing ClientHello")
+	}
 	for _, b := range flights {
-		binary.BigEndian.PutUint32(b[1:5], uint32(wire.Version2))
+		// Rewriting only the version field would turn the type bits into Retry.
+		h, err := server.parseHeader(b)
+		if err != nil || h.Type != wire.Initial || h.Version != wire.Version2 || !server.acceptCID(h) {
+			t.Fatal("fixture is not a routable Initial of the other version", h, err)
+		}
 		if err := server.HandleDatagram(b, now); err != nil {
 			t.Fatal(err)
 		}
+		if err := control.HandleDatagram(b, now); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if server.budget.credit != 0 {
-		t.Fatal("wrong version counted toward path budget")
+	if control.authenticatedPackets == 0 || control.peerParams == nil {
+		t.Fatal("fixture is not a valid Initial for its own version")
+	}
+	if server.authenticatedPackets != 0 || server.peerParams != nil || len(server.deferred) != 0 || server.deferredBytes != 0 {
+		t.Fatal("wrong version reached receive, TLS, or deferred state")
+	}
+	if out := drain(t, server, now); len(out) != 0 || server.spaces[initialSpace].ackPending {
+		t.Fatal("wrong version produced output")
 	}
 }
 

@@ -131,6 +131,18 @@ func StartSession(parent context.Context, transport IncomingTransport, local *Lo
 	ctx, cancel := context.WithCancelCause(parent)
 	s := &Session{ctx: ctx, cancel: cancel, done: make(chan struct{}), ready: make(chan struct{}), receivedSettings: make(chan struct{}), settings: settings, decoder: decoder, control: local.Control, transport: transport, server: !config.PeerIsServer, maxRequests: config.MaxRequests}
 	s.datagrams, s.datagramSender = datagrams.Dispatch, datagrams.Sender
+	// The decoder is unusable after uncertain feedback, so the session cannot
+	// continue. A write interrupted by shutdown keeps the earlier cause.
+	decoder.feedbackFailed = func(err error) {
+		if ctx.Err() != nil {
+			return
+		}
+		cancel(err)
+		var peerClose *quic.PeerCloseError
+		if !errors.As(err, &peerClose) && !errors.Is(err, quic.Err0RTTRejected) {
+			transport.Abort(InternalError, "cannot write QPACK decoder feedback")
+		}
+	}
 	interrupt := func() {
 		local.Control.SetWriteDeadline(time.Now())
 		local.Encoder.SetWriteDeadline(time.Now())
@@ -241,7 +253,15 @@ func StartSession(parent context.Context, transport IncomingTransport, local *Lo
 		}
 		s.controlMu.Lock()
 		s.controlMu.Unlock() // Join an in-flight session control write after interruption.
-		decoder.Close(context.Cause(ctx))
+		// ExchangeRequest keeps accepted responses readable after a graceful peer
+		// close following GOAWAY; their buffered field sections still need the
+		// table state received so far.
+		var closed *quic.PeerCloseError
+		if cause := context.Cause(ctx); errors.As(cause, &closed) && closed.Application && closed.Code == 0x100 && s.goaway.Load() != nil {
+			decoder.Detach(cause)
+		} else {
+			decoder.Close(cause)
+		}
 		s.requestsMu.Lock()
 		clear(s.requests) // Request contexts were canceled through their session parent.
 		s.requestsMu.Unlock()

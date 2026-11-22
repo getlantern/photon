@@ -15,6 +15,20 @@ func (c *Conn) receiveLocalMigrationCandidate(raw []byte, tuple pathTuple, now t
 	if c.config.Server {
 		return nil
 	}
+	// Authentication records idle activity, packet numbers, and key-phase
+	// observations. Replayed ciphertext from an address this candidate does not
+	// authorize must be dropped before any of that state changes.
+	h, err := c.parseHeader(raw)
+	if err != nil {
+		return nil
+	}
+	id, ok := c.multipath.lookupLocal(h.DCID)
+	if !ok {
+		return nil
+	}
+	if selected := c.multipath.paths[id].application; selected == nil || selected.localMigration == nil || selected.localMigration.tuple.remote != tuple.remote {
+		return nil
+	}
 	authenticated, err := c.authenticateMultipathPacket(raw, now)
 	if err != nil || authenticated == nil {
 		return err

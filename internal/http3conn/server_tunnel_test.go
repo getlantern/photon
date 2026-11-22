@@ -125,7 +125,8 @@ func TestServeTunnelRejectsTrailersAfterAcceptance(t *testing.T) {
 func TestServeTunnelCloseInterruptsRead(t *testing.T) {
 	input, output := io.Pipe()
 	defer output.Close()
-	stream := &serveStream{source: io.MultiReader(bytes.NewReader(connectRequestWire(t)), input), interrupt: func() { input.CloseWithError(io.ErrClosedPipe) }}
+	waiting := &enteredReader{Reader: input, entered: make(chan struct{})}
+	stream := &serveStream{source: io.MultiReader(bytes.NewReader(connectRequestWire(t)), waiting), interrupt: func() { input.CloseWithError(io.ErrClosedPipe) }}
 	config := serveConfig(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tunnel, err := w.(*HTTPResponseWriter).AcceptTunnel()
 		if err != nil {
@@ -133,8 +134,20 @@ func TestServeTunnelCloseInterruptsRead(t *testing.T) {
 		}
 		done := make(chan error, 1)
 		go func() { _, err := tunnel.Read(make([]byte, 1)); done <- err }()
-		if err := tunnel.Close(); err != nil {
-			t.Fatal(err)
+		select {
+		case <-waiting.entered:
+		case <-time.After(time.Second):
+			t.Fatal("tunnel read not started")
+		}
+		closed := make(chan error, 1)
+		go func() { closed <- tunnel.Close() }()
+		select {
+		case err := <-closed:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("blocked close")
 		}
 		select {
 		case err := <-done:

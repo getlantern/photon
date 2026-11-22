@@ -24,9 +24,8 @@ import (
 	peerh3 "github.com/quic-go/quic-go/http3"
 )
 
-// This explicitly assembled client exercises our transport/framing/QPACK against
-// a live independent HTTP/3 server. It is not a public HTTP/3 endpoint or a claim
-// of full HTTP semantics, control-stream lifecycle, or dynamic QPACK support.
+// Our public HTTP/3 client connection against a live independent HTTP/3 server.
+// Not a claim of full HTTP semantics or dynamic QPACK coverage.
 func TestHTTP3LiveIndependentServer(t *testing.T) {
 	for _, version := range []quic.Version{quic.Version1, quic.Version2} {
 		t.Run(fmt.Sprintf("%x", uint32(version)), func(t *testing.T) {
@@ -150,7 +149,7 @@ func TestHTTP3LiveIndependentServer(t *testing.T) {
 	}
 }
 
-// Reverse-role live evidence, still a test-only server protocol assembly.
+// Reverse role: our public HTTP/3 Server against the independent client.
 func TestHTTP3LiveIndependentClient(t *testing.T) {
 	for _, version := range []quic.Version{quic.Version1, quic.Version2} {
 		t.Run(fmt.Sprintf("%x", uint32(version)), func(t *testing.T) {

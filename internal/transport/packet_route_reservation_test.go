@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -96,8 +97,19 @@ func TestPacketRouteReservationBeforeMigrationCommit(t *testing.T) {
 				request.complete(1, nil)
 			}
 			actual := <-writer.writes
-			if _, err := peer.authenticateMultipathPacket(actual.data, now); err != nil {
+			// A nil result is a silent discard, not a successful authentication.
+			probe, err := peer.authenticateMultipathPacket(actual.data, now)
+			if err != nil || probe == nil {
 				t.Fatal("reserved probe not decryptable", err)
+			}
+			challenged := false
+			for _, frame := range probe.packet.frames {
+				if _, ok := frame.(wire.PathChallengeFrame); ok {
+					challenged = true
+				}
+			}
+			if !challenged || !bytes.Equal(actual.data, packet) {
+				t.Fatal("reserved write did not carry the constructed probe")
 			}
 			actual.complete(len(actual.data), nil)
 			if _, result, ok := pending.poll(); !ok || result.err != nil || c.pendingWrite != nil {

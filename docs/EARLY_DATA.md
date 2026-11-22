@@ -1,8 +1,20 @@
 # Early-data implementation status
 
-0-RTT remains disabled in both TLS roles. The implementation supports ordinary
-1-RTT resumption. This checklist describes unfinished acceptance work, not an
-assertion of 0-RTT compliance.
+0-RTT is opt-in and off by default for plain QUIC: `DialAddrEarly`/`DialEarly`
+enable early sending, and `Config.Allow0RTT` enables server acceptance. The
+HTTP/3 conveniences differ: `Server.ListenAndServe` with a nil `QUICConfig`,
+and the package-level `ListenAndServeQUIC` and `ListenAndServeTLS`, build a
+QUIC configuration with `Allow0RTT` set; `Server.AllowEarlyData` then decides which requests may run before the handshake
+completes. Early data can be replayed; an application that enables either side
+owns that replay policy. Rejection invalidates early stream handles, and
+`NextConnection` returns the usable connection. See
+[remaining requirements](REMAINING.md#accepted-0-rtt-implemented-foundation-and-remaining-combinations)
+for current coverage and open combinations.
+
+The table below is the original pre-implementation checklist, kept as a
+historical record of remembered-state decisions. Its "Current handling" entries
+that say early acceptance or early packets are not enabled are superseded by the
+paragraph above. It is not an assertion of 0-RTT compliance.
 
 | State | Current handling | Remaining work |
 | --- | --- | --- |

@@ -153,8 +153,8 @@ io.ErrUnexpectedEOF also triggers capsule truncation handling. A public parser
 fuzzer compares normal, byte-at-a-time and data-plus-EOF reads for identical
 capsule sequences, errors and abort counts.
 
-Remaining work includes resolving the sequential v2 key-update interoperability
-gate, extension-specific
+Remaining work includes extension-specific
 capsule semantics, impaired-network datagram tests, broader API parity and load/
-performance evidence. Remembered settings and 0-RTT validation are not implemented.
+performance evidence. Remembered SETTINGS and early-data dispatch exist (see
+[early data](EARLY_DATA.md)); direct early extension dispatch is not covered.
 No universal performance or complete RFC/extension coverage claim is made here.

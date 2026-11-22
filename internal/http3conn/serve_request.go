@@ -116,6 +116,30 @@ func ServeRequest(parent context.Context, stream ServerRequestStream, config Ser
 			result = task.result()
 		}
 	}()
+	// A handler waiting only on its context performs no I/O that would surface
+	// a peer RESET_STREAM or STOP_SENDING. Request FIN and local completion are
+	// not StreamErrors from the peer and leave the task running.
+	observe := func(completion context.Context, code uint64) func() {
+		ended := make(chan struct{})
+		stop := context.AfterFunc(completion, func() {
+			defer close(ended)
+			var reset *quic.StreamError
+			if cause := context.Cause(completion); errors.As(cause, &reset) && reset.Remote {
+				task.fail(cause, code)
+			}
+		})
+		return func() {
+			if !stop() {
+				<-ended
+			}
+		}
+	}
+	if receiving, ok := stream.(interface{ ReceiveContext() context.Context }); ok {
+		defer observe(receiving.ReceiveContext(), 0x10d)()
+	}
+	if sending, ok := stream.(interface{ Context() context.Context }); ok {
+		defer observe(sending.Context(), 0x10c)()
+	}
 	parsed := false
 	request, _, err := ReadHTTPRequest(ctx, reader, BodyConfig{Close: func(complete bool) error {
 		if parsed && !complete && task.result() == nil {
