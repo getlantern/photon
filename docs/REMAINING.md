@@ -4,7 +4,8 @@ Summary refreshed 2026-10-09 against the current worktree. This is a gap map, no
 completion certificate or a reduction of the user's objective. Implementing a
 feature, passing a local gate, and proving conformance are separate claims.
 Chronological checkpoints are useful evidence but may describe superseded code.
-The independent quic-go peer is now pinned to v0.63.0. HTTP server URL metadata
+The independent quic-go peer is now pinned to v0.65.0 (moved from v0.63.0 on
+2026-11-22; v0.63.0 measurements below are historical). HTTP server URL metadata
 and ClientConn address methods are aligned. Public HTTP/3 error wrapping now
 covers client exchange/body and tunnel return boundaries, including peer-reset
 upload cause propagation. Server handler body/response/tunnel I/O now also
@@ -26,9 +27,9 @@ and combined-extension audits remain; see [partial reset](PARTIAL_STREAM_RESET.m
 | --- | --- | --- |
 | Independent implementation | Root transport/crypto/recovery/HTTP packages; upstream peer isolated in interop/go.mod | Completed provenance/dependency/license audit for release |
 | RFC 9000/9001/9002 coverage | Internal wire, handshake, packet, stream, recovery and transport implementations; public root race suite and independent gates | Exhaustive normative requirement-to-code/test map (started in CONFORMANCE.md); remaining early-data combinations; independent security review |
-| QUIC v2 and compatible negotiation | v1/v2 vectors and own-peer tests; Picoquic compatible switching in both TLS roles | Independent v2-to-v1 switching; pinned quic-go v2 key-update failures remain exclusions, not successes |
+| QUIC v2 and compatible negotiation | v1/v2 vectors and own-peer tests; Picoquic compatible switching in both TLS roles | Independent v2-to-v1 switching; the former quic-go v2 key-update exclusions were removed with the v0.65.0 pin |
 | Migration and multipath | Public migration and opt-in multipath; Picoquic loss/rebinding/bulk-transfer gates | Full draft audit, heterogeneous path scheduler/fairness evaluation, final RFC/code-point revalidation |
-| Public/API feature parity | Root Config/Conn/stream APIs, HTTP server/client/RoundTripper, DATAGRAM/capsules and QPACK; generated root/HTTP3 export inventories in API_PARITY.md | 4 root and 61 HTTP/3 missing symbol entries, including remaining Transport capabilities, stream I/O and raw HTTP APIs; complete signature/behavior audit and other-package inventories; early API, receive-window tuning/large-window and observability parity |
+| Public/API feature parity | Root Config/Conn/stream APIs, HTTP server/client/RoundTripper, DATAGRAM/capsules and QPACK; generated root/HTTP3 export inventories in API_PARITY.md | 11 root and 62 HTTP/3 missing symbol entries, including remaining Transport capabilities, stream I/O and raw HTTP APIs; complete signature/behavior audit and other-package inventories; early API, receive-window tuning/large-window and observability parity |
 | Performance objective | Matched v1 loopback echo plus focused allocation benchmarks | Current echo remains about 1.87x slower than upstream in a short run; WAN, tail latency, many connections, CPU/peak-memory/fairness and cross-platform comparisons are incomplete |
 | Release-quality verification | Root/default interop race/vet, bounded fuzz campaigns, opt-in external fixtures | Sustained fuzzing, Linux independent interop completion, other-platform runtime gates, external audit and full independent matrix |
 
@@ -196,8 +197,7 @@ normal defaults; explicit maxima equal to initial values keep windows fixed. A c
 can grow stream buffers up to 16 MiB and connection credit up to its configured
 maximum. Engine tests prove growth and emitted credit; independent tests exercise
 fixed and growth-enabled configurations in both roles and all receive directions.
-Default v2 uses shorter transfers; full bulk v2 remains a strict known-failure
-case at the pinned peer key-update boundary. AllowConnectionWindowIncrease now
+Full bulk v2 transfers run by default since the v0.65.0 pin. AllowConnectionWindowIncrease now
 lets applications veto proposed connection-credit growth; v1/v2 tests cover both
 public roles, denial/retry, maximum bounds and cleanup. Total memory-pressure
 behavior, large-window/clipping parity and heterogeneous-path tuning remain unfinished.

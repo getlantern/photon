@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
 	"testing"
 	"time"
 
@@ -21,9 +20,6 @@ func TestUpstreamAbandonedProbeIndependentServer(t *testing.T) {
 func testUpstreamStagedProbeServer(t *testing.T, abandon bool) {
 	for _, version := range []quic.Version{quic.Version1, quic.Version2} {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
-			if abandon && version == quic.Version2 && os.Getenv("QUIC_INTEROP_KNOWN_FAILURES") != "1" {
-				t.Skip("pinned upstream v2 key-update mismatch; enable QUIC_INTEROP_KNOWN_FAILURES=1 for strict reproduction")
-			}
 			ct, st := tlsConfigs(t)
 			l, err := quic.ListenAddr("127.0.0.1:0", st, &quic.Config{Versions: []quic.Version{version}})
 			if err != nil {

@@ -29,6 +29,7 @@ Generated from Go export data with `go run ./scripts/api-inventory -package=`. R
 | `Config.MaxIncomingStreams (field)` | same declaration | `int64` | `int64` |
 | `Config.MaxIncomingUniStreams (field)` | same declaration | `int64` | `int64` |
 | `Config.MaxStreamReceiveWindow (field)` | same declaration | `uint64` | `uint64` |
+| `Config.RequireStreamCreditRelease (field)` | missing | `bool` | `` |
 | `Config.TokenStore (field)` | same declaration | `quic.TokenStore` | `quic.TokenStore` |
 | `Config.Tracer (field)` | missing | `func(ctx context.Context, isClient bool, connID quic.ConnectionID) qlogwriter.Trace` | `` |
 | `Config.Versions (field)` | same declaration | `[]quic.Version` | `[]quic.Version` |
@@ -53,9 +54,11 @@ Generated from Go export data with `go run ./scripts/api-inventory -package=`. R
 | `ConnectionID.Bytes (method)` | same declaration | `func() []byte [value]` | `func() []byte [value]` |
 | `ConnectionID.Len (method)` | same declaration | `func() int [value]` | `func() int [value]` |
 | `ConnectionID.String (method)` | same declaration | `func() string [value]` | `func() string [value]` |
+| `ConnectionID.Valid (method)` | missing | `func() bool [value]` | `` |
 | `ConnectionIDGenerator.ConnectionIDLen (method)` | same declaration | `func() int [value]` | `func() int [value]` |
 | `ConnectionIDGenerator.GenerateConnectionID (method)` | same declaration | `func() (quic.ConnectionID, error) [value]` | `func() (quic.ConnectionID, error) [value]` |
 | `ConnectionState.GSO (field)` | missing | `bool` | `` |
+| `ConnectionState.RequireStreamCreditRelease (field)` | missing | `bool` | `` |
 | `ConnectionState.SupportsDatagrams (field)` | review difference | `struct{Remote bool; Local bool}` | `bool` |
 | `ConnectionState.SupportsStreamResetPartialDelivery (field)` | same declaration | `struct{Remote bool; Local bool}` | `struct{Remote bool; Local bool}` |
 | `ConnectionState.TLS (field)` | same declaration | `crypto/tls.ConnectionState` | `crypto/tls.ConnectionState` |
@@ -64,6 +67,7 @@ Generated from Go export data with `go run ./scripts/api-inventory -package=`. R
 | `ConnectionStats.BytesLost (field)` | same declaration | `uint64` | `uint64` |
 | `ConnectionStats.BytesReceived (field)` | same declaration | `uint64` | `uint64` |
 | `ConnectionStats.BytesSent (field)` | same declaration | `uint64` | `uint64` |
+| `ConnectionStats.CongestionWindow (field)` | missing | `uint64` | `` |
 | `ConnectionStats.LatestRTT (field)` | same declaration | `time.Duration` | `time.Duration` |
 | `ConnectionStats.MeanDeviation (field)` | same declaration | `time.Duration` | `time.Duration` |
 | `ConnectionStats.MinRTT (field)` | same declaration | `time.Duration` | `time.Duration` |
@@ -105,6 +109,7 @@ Generated from Go export data with `go run ./scripts/api-inventory -package=`. R
 | `ReceiveStream.CancelRead (method)` | review difference | `func(errorCode quic.StreamErrorCode) [pointer]` | `func(code quic.StreamErrorCode) [pointer]` |
 | `ReceiveStream.Peek (method)` | review difference | `func(b []byte) (int, error) [pointer]` | `func(p []byte) (int, error) [pointer]` |
 | `ReceiveStream.Read (method)` | same declaration | `func(p []byte) (int, error) [pointer]` | `func(p []byte) (int, error) [pointer]` |
+| `ReceiveStream.ReleaseStreamCredit (method)` | missing | `func() [pointer]` | `` |
 | `ReceiveStream.SetReadDeadline (method)` | same declaration | `func(t time.Time) error [pointer]` | `func(t time.Time) error [pointer]` |
 | `ReceiveStream.SetReceiveFinalSizeCallback (method)` | same declaration | `func(callback func(int64)) [pointer]` | `func(callback func(int64)) [pointer]` |
 | `ReceiveStream.StreamID (method)` | review difference | `func() quic.StreamID [pointer]` | `func() quic.StreamID [value]` |
@@ -128,6 +133,7 @@ Generated from Go export data with `go run ./scripts/api-inventory -package=`. R
 | `Stream.Context (method)` | review difference | `func() context.Context [pointer]` | `func() context.Context [value]` |
 | `Stream.Peek (method)` | review difference | `func(b []byte) (int, error) [pointer]` | `func(p []byte) (int, error) [value]` |
 | `Stream.Read (method)` | review difference | `func(p []byte) (int, error) [pointer]` | `func(p []byte) (int, error) [value]` |
+| `Stream.ReleaseStreamCredit (method)` | missing | `func() [pointer]` | `` |
 | `Stream.SetDeadline (method)` | same declaration | `func(t time.Time) error [pointer]` | `func(t time.Time) error [pointer]` |
 | `Stream.SetPriority (method)` | review difference | `func(urgency int8, incremental bool) [pointer]` | `func(urgency int8, incremental bool) [value]` |
 | `Stream.SetReadDeadline (method)` | review difference | `func(t time.Time) error [pointer]` | `func(t time.Time) error [value]` |
@@ -246,10 +252,11 @@ Generated from Go export data with `go run ./scripts/api-inventory -package=`. R
 | `var ErrPathClosed` | same declaration | `error` | `error` |
 | `var ErrPathNotValidated` | same declaration | `error` | `error` |
 | `var ErrServerClosed` | same declaration | `quic.errServerClosed` | `quic.errServerClosed` |
+| `var ErrStreamClosed` | missing | `error` | `` |
 | `var ErrTransportClosed` | same declaration | `*quic.errTransportClosed` | `*quic.errTransportClosed` |
 | `var ErrWouldBlock` | same declaration | `error` | `error` |
 | `var ErrWriteLimitReached` | same declaration | `error` | `error` |
 | `var QUICVersionContextKey` | same declaration | `*internal/handshake.quicVersionContextKey` | `*internal/handshake.quicVersionContextKey` |
 
-Reference entries: 246; missing: 4; declaration differences: 58; same declarations: 184.
+Reference entries: 253; missing: 11; declaration differences: 58; same declarations: 184.
 Local-only entries are excluded; their presence does not compensate for missing reference capabilities.

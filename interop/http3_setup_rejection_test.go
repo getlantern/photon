@@ -7,7 +7,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -60,12 +59,6 @@ func TestHTTP3DialEarlySetupRejection(t *testing.T) {
 				config := &upstream.Config{Allow0RTT: round == 0, Versions: []upstream.Version{upstream.Version(version)}, Tracer: func(context.Context, bool, upstream.ConnectionID) qlogwriter.Trace { return trace }}
 				if round == 0 {
 					config.InitialStreamReceiveWindow = 1
-					// Extra blocked notifications expose the pinned peer's v2
-					// key-update label defect at a one-byte window. Two bytes
-					// still block SETTINGS setup; retain the strict reproducer.
-					if version == quic.Version2 && os.Getenv("QUIC_INTEROP_KNOWN_FAILURES") == "" {
-						config.InitialStreamReceiveWindow = 2
-					}
 					config.MaxStreamReceiveWindow = config.InitialStreamReceiveWindow
 					t.Logf("remembered stream window: %d", config.InitialStreamReceiveWindow)
 				}

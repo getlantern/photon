@@ -204,8 +204,7 @@ retires CIDs spent on displaced candidates before further probe output.
 The upstream fixture now performs six successive switches per version. Its
 abandonment variant additionally probes and closes five unused paths between
 switches, checking old-path streams before each switch. Both variants pass in
-v1/v2. (Since 2026-11-22 the v2 abandonment variant is skipped by default: it now
-crosses the pinned peer's key-update boundary; see interop/KNOWN_FAILURES.md.) The abandonment fixture timed out on the first replacement probe in both
+v1/v2. The abandonment fixture timed out on the first replacement probe in both
 versions before this fix. Single-candidate replacement is still not simultaneous
 multi-candidate retention or proof of all path-churn/loss combinations.
 

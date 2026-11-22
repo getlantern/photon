@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"os"
 	"testing"
 	"time"
 
@@ -44,9 +43,6 @@ func TestECNSenderRevalidatesAfterMigrationUpstream(t *testing.T) {
 				}
 				defer peer.CloseWithError(0, "")
 				packets := 24
-				if v == quic.Version2 && os.Getenv("QUIC_INTEROP_KNOWN_FAILURES") != "1" {
-					packets = 12
-				}
 				previous := c.LocalAddr().String()
 				for round := 0; round < 3; round++ {
 					if round > 0 {

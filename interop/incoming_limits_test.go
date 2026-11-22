@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"testing"
 	"time"
 
@@ -20,9 +19,6 @@ func TestIncomingStreamLimitsUpstream(t *testing.T) {
 		for _, server := range []bool{false, true} {
 			for _, limits := range [][2]int64{{2, 3}, {-1, 2}, {2, -1}, {64, 1}, {1, 64}, {100, 100}, {300, 300}} {
 				t.Run(fmt.Sprintf("%x/server=%t/%d/%d", version, server, limits[0], limits[1]), func(t *testing.T) {
-					if version == quic.Version2 && limits[0] == 300 && os.Getenv("QUIC_INTEROP_KNOWN_FAILURES") != "1" {
-						t.Skip("pinned upstream v2 key-update mismatch; enable QUIC_INTEROP_KNOWN_FAILURES=1 for strict reproduction")
-					}
 					clientTLS, serverTLS := tlsConfigs(t)
 					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 					defer cancel()

@@ -169,7 +169,31 @@ This occurred while validating preferred-candidate selection changes, which
 are inactive during the failed handshake. Keep this failure distinct from the
 known v2 post-handshake key-update mismatch below.
 
-## QUIC v2 key updates
+## QUIC v2 key updates (resolved by the v0.65.0 pin, 2026-11-22)
+
+Upstream v0.65.0 derives v2 updated secrets with `quicv2 ku`
+(`internal/handshake/updatable_aead.go`), and the interop pin moved to it. The
+default-mode reductions and skips described in this section were removed from
+the handshake stream, public stream, incoming-limit, receive-window, HTTP/3
+live, tunnel, capsule-sequence, one-byte setup and ECN migration fixtures, so
+their full v2 cases now run by default. The full default suite passed three of
+four consecutive runs on macOS arm64 without the race detector; the fourth
+failed only in TestHTTP3ServeListenerAcceptFailureRetainsRequest (upstream
+RoundTrip reached its five-second context), which then passed 40 isolated
+repetitions. That failure's cause is not established. The race-detector and
+Linux gates were not rerun against v0.65.0.
+
+Before the move, TestUpstreamAbandonedProbeIndependentServer/v2 had also begun
+to fail: its final iteration crossed 100 1-RTT packets, the v0.63.0 client
+updated keys, and every later packet failed authentication at our server.
+
+The v0.65.0 HTTPStreamer.HTTPStream returns an error and refuses a takeover
+after response body bytes; it also no longer sends an implicit response header.
+Upstream-server handlers in this module now write the header first and send
+post-takeover bytes on the stream.
+
+The remainder of this section is the historical record against v0.62.0 and
+v0.63.0. Its reproduction commands no longer select a reduced default case.
 
 ### HTTP/3 one-byte setup window (2026-09-29)
 
@@ -195,26 +219,6 @@ QUIC_INTEROP_KNOWN_FAILURES=1 go test -race -run '^TestHTTP3DialEarlySetupReject
 Run from `interop`; the trace prints the remembered window and reports round and
 peer key phase on request failure. Our v2 key derivation was not changed to match
 the defective peer label.
-
-
-### Abandoned-probe migration fixture (2026-11-22)
-
-TestUpstreamAbandonedProbeIndependentServer/v2 now exceeds 100 1-RTT packets in
-its final iteration, so the pinned client initiates a key update and every later
-packet fails authentication at our server; the fixture then reaches its
-six-second context. Instrumented runs placed the first failed open at server
-packet numbers 101-103, and a temporary diagnostic that derived our v2 update
-secret with the peer's `quic ku` label passed thirty repetitions. That diagnostic
-was reverted. V1 and the shorter non-abandoning variant are unaffected. Upstream
-v0.65.0 selects `quicv2 ku` for Version2; the pin has not been moved. The strict
-case remains:
-
-```sh
-QUIC_INTEROP_KNOWN_FAILURES=1 go test -run '^TestUpstreamAbandonedProbeIndependentServer$/^v2$' -count=1 -v .
-```
-
-Skipping this subtest removes default v2 coverage of abandonment between
-switches against the upstream client; it is an exclusion, not a pass.
 
 
 The incoming stream-concurrency fixture now also reaches this boundary at

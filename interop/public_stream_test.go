@@ -17,9 +17,6 @@ import (
 func TestPublicStreams(t *testing.T) {
 	for _, v := range []quic.Version{quic.Version1, quic.Version2} {
 		t.Run(fmt.Sprintf("%x", uint32(v)), func(t *testing.T) {
-			if v == quic.Version2 && os.Getenv("QUIC_INTEROP_KNOWN_FAILURES") != "1" {
-				t.Skip("quic-go v0.62.0 v2 key-update mismatch; set QUIC_INTEROP_KNOWN_FAILURES=1 to reproduce")
-			}
 			clientTLS, serverTLS := tlsConfigs(t)
 			l, err := quic.ListenAddr("127.0.0.1:0", serverTLS, nil)
 			if err != nil {

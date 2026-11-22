@@ -25,7 +25,7 @@ Generated from Go export data with `go run ./scripts/api-inventory -package=http
 | `Error.Is (method)` | same declaration | `func(target error) bool [pointer]` | `func(target error) bool [pointer]` |
 | `Error.Remote (field)` | same declaration | `bool` | `bool` |
 | `Error.Unwrap (method)` | same declaration | `func() error [pointer]` | `func() error [pointer]` |
-| `HTTPStreamer.HTTPStream (method)` | missing | `func() *http3.Stream [value]` | `` |
+| `HTTPStreamer.HTTPStream (method)` | missing | `func() (*http3.Stream, error) [value]` | `` |
 | `QUICListener.Accept (method)` | same declaration | `func(context.Context) (*quic.Conn, error) [value]` | `func(context.Context) (*quic.Conn, error) [value]` |
 | `QUICListener.Addr (method)` | same declaration | `func() net.Addr [value]` | `func() net.Addr [value]` |
 | `QUICListener.Close (method)` | same declaration | `func() error [value]` | `func() error [value]` |
@@ -47,6 +47,7 @@ Generated from Go export data with `go run ./scripts/api-inventory -package=http
 | `RequestStream.CancelWrite (method)` | missing | `func(errorCode quic.StreamErrorCode) [pointer]` | `` |
 | `RequestStream.Close (method)` | missing | `func() error [pointer]` | `` |
 | `RequestStream.Context (method)` | missing | `func() context.Context [pointer]` | `` |
+| `RequestStream.QlogTrace (method)` | missing | `func() qlogwriter.Trace [pointer]` | `` |
 | `RequestStream.Read (method)` | missing | `func(b []byte) (int, error) [pointer]` | `` |
 | `RequestStream.ReadResponse (method)` | missing | `func() (*net/http.Response, error) [pointer]` | `` |
 | `RequestStream.ReceiveDatagram (method)` | missing | `func(ctx context.Context) ([]byte, error) [pointer]` | `` |
@@ -89,6 +90,7 @@ Generated from Go export data with `go run ./scripts/api-inventory -package=http
 | `Stream.Close (method)` | missing | `func() error [value]` | `` |
 | `Stream.Context (method)` | missing | `func() context.Context [value]` | `` |
 | `Stream.QUICStream (method)` | missing | `func() *quic.Stream [value]` | `` |
+| `Stream.QlogTrace (method)` | missing | `func() qlogwriter.Trace [pointer]` | `` |
 | `Stream.Read (method)` | missing | `func(b []byte) (int, error) [pointer]` | `` |
 | `Stream.ReceiveDatagram (method)` | missing | `func(ctx context.Context) ([]byte, error) [pointer]` | `` |
 | `Stream.SendDatagram (method)` | missing | `func(b []byte) error [pointer]` | `` |
@@ -138,7 +140,7 @@ Generated from Go export data with `go run ./scripts/api-inventory -package=http
 | `const NextProtoH3` | same declaration | `untyped string = "h3"` | `untyped string = "h3"` |
 | `func ConfigureTLSConfig` | review difference | `func(tlsConf *crypto/tls.Config) *crypto/tls.Config` | `func(source *crypto/tls.Config) *crypto/tls.Config` |
 | `func ListenAndServeQUIC` | same declaration | `func(addr string, certFile string, keyFile string, handler net/http.Handler) error` | `func(addr string, certFile string, keyFile string, handler net/http.Handler) error` |
-| `func ListenAndServeTLS` | missing | `func(addr string, certFile string, keyFile string, handler net/http.Handler) error` | `` |
+| `func ListenAndServeTLS` | same declaration | `func(addr string, certFile string, keyFile string, handler net/http.Handler) error` | `func(addr string, certFile string, keyFile string, handler net/http.Handler) error` |
 | `func NewCapsuleParser` | same declaration | `func(r io.Reader) *http3.CapsuleParser` | `func(r io.Reader) *http3.CapsuleParser` |
 | `func WriteCapsule` | review difference | `func(w quicvarint.Writer, ct http3.CapsuleType, value []byte) error` | `func(w io.Writer, typ http3.CapsuleType, value []byte) error` |
 | `type CapsuleParser` | same declaration | `struct` | `struct` |
@@ -166,5 +168,5 @@ Generated from Go export data with `go run ./scripts/api-inventory -package=http
 | `var RemoteAddrContextKey` | same declaration | `*http3.contextKey` | `*http3.contextKey` |
 | `var ServerContextKey` | same declaration | `*http3.contextKey` | `*http3.contextKey` |
 
-Reference entries: 161; missing: 61; declaration differences: 8; same declarations: 92.
+Reference entries: 163; missing: 62; declaration differences: 8; same declarations: 93.
 Local-only entries are excluded; their presence does not compensate for missing reference capabilities.

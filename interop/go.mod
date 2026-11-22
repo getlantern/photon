@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	github.com/getlantern/photon v0.0.0
 	github.com/quic-go/qpack v0.6.0
-	github.com/quic-go/quic-go v0.63.0
+	github.com/quic-go/quic-go v0.65.0
 	golang.org/x/net v0.58.0
 	golang.org/x/sys v0.48.0
 )

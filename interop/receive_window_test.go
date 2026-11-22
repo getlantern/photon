@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -132,13 +131,6 @@ func TestReceiveWindowsUpstream(t *testing.T) {
 						}
 						out.SetWriteDeadline(time.Now().Add(5 * time.Second))
 						payload := bytes.Repeat([]byte("configured receive window\n"), 11000)
-						// The strict bulk v2 case crosses the pinned peer's known key-update
-						// mismatch. Keep it reproducible; the default v2 case proves parameter
-						// advertisement and shorter transfer, not large stream-window turnover.
-						if version == quic.Version2 && os.Getenv("QUIC_INTEROP_KNOWN_FAILURES") != "1" {
-							payload = payload[:64<<10]
-							t.Log("v2 bulk transfer requires QUIC_INTEROP_KNOWN_FAILURES=1; see KNOWN_FAILURES.md")
-						}
 						done := make(chan error, 1)
 						go func() {
 							_, e := out.Write(payload)

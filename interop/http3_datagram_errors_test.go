@@ -32,7 +32,7 @@ func TestHTTPDatagramsPublicClientErrors(t *testing.T) {
 						return
 					}
 					if r.URL.Path == "/bad" {
-						stream := w.(peerh3.HTTPStreamer).HTTPStream()
+						stream := peerHTTPStream(w)
 						handlerErrors <- stream.SendDatagram([]byte("forbidden on GET"))
 						<-r.Context().Done()
 						return

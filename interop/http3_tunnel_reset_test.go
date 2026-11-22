@@ -27,7 +27,7 @@ func TestTunnelPeerResetWriteCause(t *testing.T) {
 			server := &peerh3.Server{TLSConfig: st, QUICConfig: &upstream.Config{Versions: []upstream.Version{upstream.Version(version)}}, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(200)
 				w.(http.Flusher).Flush()
-				stream := w.(peerh3.HTTPStreamer).HTTPStream()
+				stream := peerHTTPStream(w)
 				select {
 				case <-reset:
 				case <-r.Context().Done():

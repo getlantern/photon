@@ -7,7 +7,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
 	"testing"
 	"time"
 
@@ -44,8 +43,13 @@ func TestHTTPConnectTunnelIndependentServer(t *testing.T) {
 							return
 						}
 						if r.Host == "receive-only.example:443" {
-							io.WriteString(w, "first")
-							raw := w.(peerh3.HTTPStreamer).HTTPStream()
+							// Upstream refuses HTTPStream after body bytes; send them on the stream instead.
+							w.WriteHeader(200)
+							raw := peerHTTPStream(w)
+							if _, err := raw.Write([]byte("first")); err != nil {
+								handlerErrors <- err
+								return
+							}
 							if err := raw.Close(); err != nil {
 								handlerErrors <- err
 								return
@@ -114,11 +118,6 @@ func TestHTTPConnectTunnelIndependentServer(t *testing.T) {
 					}
 					defer tunnel.Close()
 					size := 11000
-					// Preserve the larger gate under the existing pinned-peer failure switch.
-					// v0.62.0 v2 key updates are known to use the v1 derivation label.
-					if version == quic.Version2 && os.Getenv("QUIC_INTEROP_KNOWN_FAILURES") != "1" {
-						size = 2000
-					}
 					payload := bytes.Repeat([]byte("tunnel"), size)
 					sent := make(chan error, 1)
 					go func() {

@@ -1,7 +1,8 @@
 # Public API parity inventory
 
 Initial Config inventory, 2026-09-28. Current independent peer:
-`github.com/quic-go/quic-go v0.63.0`. The initial behavior inspection used v0.62.0
+`github.com/quic-go/quic-go v0.65.0` (pin moved from v0.63.0 on 2026-11-22; dated
+v0.63.0 and v0.62.0 statements below were not re-verified). The initial behavior inspection used v0.62.0
 `interface.go`, `config.go`, `connection.go` and `internal/protocol/params.go`.
 The exported interface.go is unchanged in v0.63.0; other behavior comparisons
 below retain their v0.62.0 evidence unless explicitly refreshed. This is not
@@ -9,10 +10,10 @@ a full API parity claim.
 The upstream dependency remains confined to the interop module. This inventory
 records contracts; production implementation remains independent.
 
-The 2026-09-30 root and 2026-10-09 HTTP/3 export-data audits now supply reproducible symbol-level baselines:
+The export-data audits, regenerated against v0.65.0 on 2026-11-22, supply reproducible symbol-level baselines:
 [root package](API_ROOT_INVENTORY.md) and [HTTP/3](API_HTTP3_INVENTORY.md).
-The root has 4 missing entries out of 246 reference entries; HTTP/3 has 61 out
-of 161. Entries include types, fields, methods and functions, so these counts are
+The root has 11 missing entries out of 253 reference entries; HTTP/3 has 62 out
+of 163. Entries include types, fields, methods and functions, so these counts are
 not counts of independent features. Matching declarations do not establish
 behavior. Differences also include harmless parameter names, internal alias
 paths and the local Stream's promoted value-method availability.
@@ -27,8 +28,8 @@ Direct v0.63.0 contract checks cover nested selection, clone isolation and callb
 fallback/error behavior. Live upstream clients require the helper to fix a selected
 configuration's deliberately non-h3 ALPN in both v1/v2. Disabling that wrapping
 fails both handshakes; omitting ticket initialization fails cross-clone decryption.
-HTTP/3 inventory totals are 61 missing, 8 review differences and 92 identical
-entries out of 161. No full HTTP/3 feature parity is claimed.
+HTTP/3 inventory totals are 62 missing, 8 review differences and 93 identical
+entries out of 163. No full HTTP/3 feature parity is claimed.
 
 HTTP/3 Transport.Dial now accepts an application QUIC dialer. The callback gets
 host:port, cloned TLS/QUIC settings, h3 ALPN and an origin-derived ServerName
@@ -78,9 +79,13 @@ and the 62-bit boundary. The isolated v0.63.0 comparison checks 1,031 input IDs,
 signed extremes, and valid/invalid reverse-conversion arguments. These conversions
 do not authorize invalid stream IDs on the wire. The return type is an independent
 internal/transport.StreamNum, so the inventory records a declaration difference
-rather than an identical internal/protocol type. Root totals are 4 missing, 58
+rather than an identical internal/protocol type. Root totals are 11 missing, 58
 review differences and 184 identical declarations. Remaining missing entries are
-Config.Tracer, Transport.Tracer, Conn.QlogTrace and ConnectionState.GSO.
+Config.Tracer, Transport.Tracer, Conn.QlogTrace and ConnectionState.GSO, plus seven
+that v0.65.0 added: Config.RequireStreamCreditRelease,
+ConnectionState.RequireStreamCreditRelease, Stream.ReleaseStreamCredit,
+ReceiveStream.ReleaseStreamCredit, ConnectionID.Valid,
+ConnectionStats.CongestionWindow and ErrStreamClosed.
 
 Conn.AddPath, Path.Probe, Path.Switch, ErrPathClosed and ErrPathNotValidated now
 have matching declarations. Handles bind a separate Transport, validate without

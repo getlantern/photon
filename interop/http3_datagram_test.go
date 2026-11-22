@@ -34,7 +34,9 @@ func TestHTTPDatagramsIndependentServer(t *testing.T) {
 						handled <- fmt.Errorf("unexpected request: %s %s", r.Method, r.Proto)
 						return
 					}
-					stream := w.(peerh3.HTTPStreamer).HTTPStream()
+					// Upstream no longer sends an implicit header when the stream is taken over.
+					w.WriteHeader(200)
+					stream := peerHTTPStream(w)
 					for _, want := range payloads {
 						got, err := stream.ReceiveDatagram(ctx)
 						if err != nil || !bytes.Equal(got, want) {

@@ -86,7 +86,7 @@ func TestCapsuleTunnelIndependentServer(t *testing.T) {
 				}
 				w.Header().Set("Capsule-Protocol", "?1")
 				w.WriteHeader(200)
-				raw := w.(peer.HTTPStreamer).HTTPStream()
+				raw := peerHTTPStream(w)
 				parser := peer.NewCapsuleParser(r.Body)
 				for {
 					typ, payload, err := parser.Next()

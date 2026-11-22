@@ -41,7 +41,7 @@ subsystem is implemented. Pin moving drafts and upstream comparison versions.
 | [RFC 9001](https://www.rfc-editor.org/rfc/rfc9001.html) | TLS, packet protection, key lifecycle | Protection vectors, key retirement/updates/usage limits and version-bound 1-RTT resumption implemented; opt-in public early dial/listener and STREAM/DATAGRAM transport with independent accepted STREAM gates exist; early API and combined-extension coverage remain incomplete |
 | [RFC 9002](https://www.rfc-editor.org/rfc/rfc9002.html) | Loss detection, congestion control | RTT/loss/PTO, NewReno, pacing, persistent congestion and ECN implemented with unit/interop gates; full conformance and adverse-network validation incomplete |
 | [RFC 8999](https://www.rfc-editor.org/rfc/rfc8999.html) | Version-independent invariants | Basic header parsing |
-| [RFC 9369](https://www.rfc-editor.org/rfc/rfc9369.html) | QUIC v2 | Public v2 handshakes/streams/migration and protection vectors; pinned upstream v2 key-update failures explicitly tracked |
+| [RFC 9369](https://www.rfc-editor.org/rfc/rfc9369.html) | QUIC v2 | Public v2 handshakes/streams/migration and protection vectors; upstream v2 key-update interop passes since the v0.65.0 pin |
 | [RFC 9368](https://www.rfc-editor.org/rfc/rfc9368.html) | Compatible version negotiation | Authenticated version information and incompatible fallback; experimental public opt-in switching and ticket/token binding tested; combined-negotiation downgrade checks tested; independent v1-to-v2 switching in both roles passes; reverse-direction independent switching remains unverified (see COMPATIBLE_VERSION.md) |
 | [RFC 9221](https://www.rfc-editor.org/rfc/rfc9221.html) | QUIC DATAGRAM | 1-RTT engine send/receive, negotiation, bounded queues, congestion/loss accounting; priority API and delayed ACK policy pending |
 | [RFC 9287](https://www.rfc-editor.org/rfc/rfc9287.html) | QUIC bit greasing | Public opt-in, authenticated bit handling and randomized sending; own-peer and independent Picoquic migration/multipath gates exist; broader PMTU/reordering audit pending (see QUIC_BIT.md) |
@@ -72,10 +72,10 @@ and upstream capabilities before declaring the inventory complete.
    with a pinned upstream quic-go release in both client/server roles.
    Current evidence includes public v1/v2 UDP handshakes, stream transfers,
    cancellation/retirement, flow control and CID lifecycle against quic-go
-   v0.63.0 (peer refreshed 2026-09-28), plus engine loss/reordering tests. Higher incoming stream windows
+   v0.65.0 (peer refreshed 2026-11-22), plus engine loss/reordering tests. Higher incoming stream windows
    and default 100/100 credit now work without the old local/global stream caps.
-   Long v2 transfers against the pinned peer can fail at its known key-update
-   boundary; keep those explicit failures separate from passing shorter gates.
+   Long v2 transfers failed at the peer's key-update boundary through v0.63.0;
+   they run by default since the v0.65.0 pin.
 3. **Recovery and resilience.** RFC 9002 RTT/loss/PTO/congestion algorithms,
    pacing, persistent congestion, ECN, PMTU, reordered/duplicate packets,
    packet loss, and controlled network simulations. Ensure untrusted input

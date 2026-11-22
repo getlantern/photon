@@ -249,9 +249,6 @@ func TestUpstreamHandshake(t *testing.T) {
 						}
 					})
 					t.Run("stream", func(t *testing.T) {
-						if v == wire.Version2 && os.Getenv("QUIC_INTEROP_KNOWN_FAILURES") != "1" {
-							t.Skip("quic-go v0.62.0 uses v1 key-update label for v2; set QUIC_INTEROP_KNOWN_FAILURES=1 to reproduce RFC 9369 mismatch")
-						}
 						if err := exchangeStream(ctx, c, socket, peer, r.conn); err != nil {
 							t.Fatal("stream exchange", err)
 						}

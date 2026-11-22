@@ -1,6 +1,6 @@
 # Independent-peer handshake interoperability
 
-This test-only module pins `github.com/quic-go/quic-go` to v0.63.0; `go.sum`
+This test-only module pins `github.com/quic-go/quic-go` to v0.65.0; `go.sum`
 records dependency checksums. The implementation under test is imported from
 the parent directory through a local module replacement. Upstream is not a
 dependency of the parent implementation.
@@ -145,8 +145,8 @@ both directions at each new binding and use a five-second timeout with
 5.5-second quiet intervals. Exact payload/FIN, changed local/observed addresses,
 and drop counts remain checked. The larger loss-case timeout allows validation
 retries to complete; an initial one-second loss case expired during validation.
-The default keepalive period is 500 ms. A 100 ms v2 case reaches the known peer
-key-update failure and is retained in strict mode; see KNOWN_FAILURES.md.
+The default keepalive period is 500 ms. Strict mode retains a 100 ms v2 case that
+reached the v0.63.0 peer's key-update failure; see KNOWN_FAILURES.md.
 
 `TestIndependentStagedProbeUpstreamServer` exercises public AddPath/Probe/Switch
 against upstream in v1/v2, checking stream delivery and peer addresses before
@@ -166,7 +166,7 @@ packet, the first server packet, or both. Exact drop counters and bidirectional
 streams verify each case; relay readers are joined during cleanup. All eight
 v1/v2 clean/loss cases pass with the race detector. This does not cover arbitrary
 loss patterns, live reordering, address-family changes, arbitrary numbers of
-migrations, or the known v2 key-update limitation.
+migrations.
 
 The public API advertises an active CID limit of four. With the former limit of
 two, the first migration passed but the second waited for a spare CID until its

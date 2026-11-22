@@ -9,7 +9,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -171,11 +170,6 @@ func TestHTTP3LiveIndependentClient(t *testing.T) {
 			transport := &peerh3.Transport{TLSClientConfig: clientTLS, QUICConfig: &upstream.Config{Versions: []upstream.Version{upstream.Version(version)}}}
 			defer transport.Close()
 			payloadRepeats := 1024
-			if version == quic.Version2 && os.Getenv("QUIC_INTEROP_KNOWN_FAILURES") != "1" {
-				// Keep the concurrent v2 lifecycle check below the pinned peer's
-				// documented key-update failure. Strict mode retains the larger gate.
-				payloadRepeats = 64
-			}
 			payload := bytes.Repeat([]byte("reverse-h3-"), payloadRepeats)
 			request, err := http.NewRequestWithContext(ctx, "POST", "https://"+listener.Addr().String()+"/echo", bytes.NewReader(payload))
 			if err != nil {

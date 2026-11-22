@@ -177,16 +177,15 @@ Implemented and tested:
   both endpoints derive matching application traffic keys.
 - Full engine-to-engine handshake tests under packet loss, reordering,
   duplication, and coalescing. Probe retransmissions use fresh packet numbers.
-- Local UDP interoperability tests against upstream quic-go v0.63.0 in both
+- Local UDP interoperability tests against upstream quic-go v0.65.0 in both
   roles and versions, including CID rotation and zero-length peer CIDs.
 - Upstream v1 bidirectional stream requests/responses exceeding both peers’
-  receive windows; v2 streams encounter a recorded upstream key-update mismatch.
+  receive windows; v2 equivalents run since the upstream v0.65.0 pin.
 
 The lower-level TLS tests use two instances of this implementation. The separate
 `interop` module uses a real upstream peer over loopback UDP; it does not yet
-establish complete transport behavior. Its v1 stream cases and small v2 public stream exchanges pass; the large v2 stream
-cases are explicitly skipped by default after a reproduced key-update failure
-in the pinned upstream version (see interop/KNOWN_FAILURES.md). Two current-path
+establish complete transport behavior. Its v1 and v2 stream cases pass; the large v2 cases were skipped until the
+upstream pin moved to v0.65.0 (see interop/KNOWN_FAILURES.md). Two current-path
 validation cases against the upstream server are also explicitly skipped because
 it ignores those challenges; validation against its client passes in both versions.
 Upstream fallback to v2 is also skipped by default because the pinned server

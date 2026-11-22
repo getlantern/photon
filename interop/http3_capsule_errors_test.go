@@ -7,7 +7,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -52,11 +51,7 @@ func TestCapsuleClientResponseRejection(t *testing.T) {
 		for _, path := range paths {
 			groups = append(groups, []string{path})
 		}
-		// Retain the longer sequential v2 regression under the existing pinned-
-		// peer known-failure gate; isolated cases still prove connection reuse.
-		if version == quic.Version1 || os.Getenv("QUIC_INTEROP_KNOWN_FAILURES") == "1" {
-			groups = append(groups, paths)
-		}
+		groups = append(groups, paths)
 		for index, paths := range groups {
 			name := fmt.Sprintf("group%d", index)
 			if len(paths) > 1 {
@@ -99,7 +94,7 @@ func TestCapsuleClientResponseRejection(t *testing.T) {
 						w.Header().Del("Capsule-Protocol")
 					}
 					w.WriteHeader(status)
-					raw := w.(peer.HTTPStreamer).HTTPStream()
+					raw := peerHTTPStream(w)
 					if r.URL.Path == "/payload" {
 						raw.Write([]byte{0, 3, 'x'})
 						raw.Close()
