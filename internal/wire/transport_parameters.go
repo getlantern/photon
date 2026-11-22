@@ -62,7 +62,7 @@ type TransportParameters struct {
 	MaxDatagramFrameSize            uint64
 	GreaseQUICBit                   bool
 	VersionInformation              *VersionInformation
-	// InitialMaxPathID is draft-ietf-quic-multipath-21 parameter 0x3e.
+	// InitialMaxPathID is RFC 10069 parameter 0x3e.
 	// Nil means absent; a present zero still advertises multipath support.
 	// It must not be remembered for a subsequent connection.
 	InitialMaxPathID *uint64

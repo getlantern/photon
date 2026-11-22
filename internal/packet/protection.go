@@ -178,7 +178,7 @@ func (k *Keys) nonce(pn uint64) [12]byte {
 	return k.nonceForPath(0, pn)
 }
 
-// nonceForPath implements draft-ietf-quic-multipath-21 section 2.4.
+// nonceForPath implements RFC 10069 section 2.4.
 func (k *Keys) nonceForPath(pathID uint32, pn uint64) [12]byte {
 	n := k.iv
 	binary.BigEndian.PutUint32(n[:4], binary.BigEndian.Uint32(n[:4])^pathID)
@@ -219,7 +219,7 @@ func (k *Keys) Seal(header, payload []byte, pn uint64) ([]byte, error) {
 }
 
 // SealPath protects a multipath 1-RTT packet. The caller must have negotiated
-// draft-ietf-quic-multipath-21 and assigned this path ID to the destination CID.
+// RFC 10069 multipath and assigned this path ID to the destination CID.
 // Initial, Handshake, and 0-RTT packets must use Seal instead. Packet numbers
 // must be unique within each path; key updates and usage limits span all paths.
 func (k *Keys) SealPath(header, payload []byte, pn uint64, pathID uint32) ([]byte, error) {

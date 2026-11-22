@@ -29,8 +29,8 @@ writing the socket directly while the transport owns it.
 Requires Go 1.26 or newer. Cryptography uses Go's standard library and
 `golang.org/x/crypto`; no cryptographic primitives are implemented from scratch.
 
-Experimental multipath is opt-in through `Config.EnableMultipath`, pinned to
-draft-ietf-quic-multipath-21. Both endpoints must enable it. Bind listeners to a
+Experimental multipath is opt-in through `Config.EnableMultipath`, following
+[RFC 10069](https://www.rfc-editor.org/rfc/rfc10069.html). Both endpoints must enable it. Bind listeners to a
 concrete IP and set the client's `Config.LocalAddr` to a concrete IP (port zero
 is allowed). `ConnectionState.SupportsMultipath` reports negotiation.
 `Conn.OpenPath(ctx, id, local, remote)` opens and validates additional client

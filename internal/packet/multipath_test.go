@@ -12,7 +12,7 @@ import (
 )
 
 func TestMultipathNonceVector(t *testing.T) {
-	// draft-ietf-quic-multipath-21 section 2.4, published nonce example.
+	// RFC 10069 section 2.4, published nonce example.
 	k := &Keys{}
 	copy(k.iv[:], unhex("6b26114b9cba2b63a9e8dd4f"))
 	got := k.nonceForPath(3, 54321)

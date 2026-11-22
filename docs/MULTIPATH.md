@@ -1,8 +1,10 @@
 # Multipath evidence and remaining work
 
-Status checked 2026-09-30 against the [IETF record](https://datatracker.ietf.org/doc/draft-ietf-quic-multipath/):
-revision 21 remains in the RFC Editor queue, In Progress (First Edit). Production code pins that revision;
-publication and final IANA assignments must be rechecked before a release.
+The extension was published as [RFC 10069](https://www.rfc-editor.org/rfc/rfc10069.html)
+in November 2026. Production code was written from draft-21; its assigned values were
+compared with the RFC on 2026-11-22 and match (see [standards freshness](REMAINING.md#standards-freshness)).
+The RFC's normative text has not been diffed against draft-21, and the dated
+sections below describe checks made against that draft.
 This is an evidence inventory, not a completed conformance audit.
 
 | Draft area | Implementation and focused evidence | Limits / remaining gates |

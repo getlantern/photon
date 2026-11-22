@@ -118,7 +118,7 @@ type Config struct {
 	// starts at InitialPacketSize; write failure or migration can reduce it.
 	// Discovery is supported on concrete-address Linux/macOS sockets up to 1452.
 	DisablePathMTUDiscovery bool
-	// EnableMultipath opts into draft-ietf-quic-multipath-21, with path IDs 0–3.
+	// EnableMultipath opts into RFC 10069 multipath, with path IDs 0–3.
 	// Both endpoints must opt in. ListenAddr requires a concrete bind address.
 	// Servers validate client address rebinding within the existing socket family,
 	// reserving an unused peer

@@ -49,12 +49,12 @@ subsystem is implemented. Pin moving drafts and upstream comparison versions.
 | [RFC 9114](https://www.rfc-editor.org/rfc/rfc9114.html) | HTTP/3 | Experimental public server, client and pooled RoundTripper, request semantics and independent-peer gates; full API/semantic parity incomplete (see http3/README.md and HTTP3.md) |
 | [RFC 9204](https://www.rfc-editor.org/rfc/rfc9204.html) | QPACK | Encoder/decoder tables, instructions, field sections, bounded blocking and feedback integrated with HTTP/3; independent ls-qpack/peer gates exist; full audit and compression/performance parity incomplete |
 | [RFC 9297](https://www.rfc-editor.org/rfc/rfc9297.html) | HTTP datagrams and capsules | Negotiated HTTP datagram dispatch, bounded capsules, Extended CONNECT and capsule-protocol validation implemented with independent gates; full ecosystem/API interoperability incomplete |
-| [Multipath draft-21](https://datatracker.ietf.org/doc/draft-ietf-quic-multipath/21/) | Multipath negotiation, frames, protection, lifecycle | Experimental live v1/v2 negotiation, per-path protection/recovery, CID/status lifecycle, validation, abandonment and migration; independent Picoquic fixtures; full audit incomplete—see [multipath evidence](MULTIPATH.md) |
+| [RFC 10069](https://www.rfc-editor.org/rfc/rfc10069.html) (implemented from draft-21) | Multipath negotiation, frames, protection, lifecycle | Experimental live v1/v2 negotiation, per-path protection/recovery, CID/status lifecycle, validation, abandonment and migration; independent Picoquic fixtures; full audit incomplete—see [multipath evidence](MULTIPATH.md) |
 
-Multipath status was rechecked on 2026-09-25: the
-[Datatracker](https://datatracker.ietf.org/doc/draft-ietf-quic-multipath/) still lists
-draft-21 in the RFC Editor queue, with first edit in progress. Recheck status and final
-assigned code points before release. Scheduling and address discovery are not specified by that draft;
+Multipath was published as RFC 10069 in November 2026. On 2026-11-22 the
+transport parameter, frame types and nonce example in the code were compared with
+the RFC and match; its normative text has not been diffed against draft-21, which
+the implementation was written from. Scheduling and address discovery are not specified by the RFC;
 they need separate policies and tests. Survey additional extensions, errata,
 and upstream capabilities before declaring the inventory complete.
 

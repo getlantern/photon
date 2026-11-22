@@ -334,11 +334,15 @@ the existing early-data rejection behavior explicit.
 
 ## Standards freshness
 
-On 2026-09-30 the [IETF Datatracker](https://datatracker.ietf.org/doc/draft-ietf-quic-multipath/)
-still identifies draft-21 as the latest multipath revision, in the RFC Editor
-queue with first edit in progress. It does not yet show a published RFC.
-Keep the draft label and recheck code points before release. This observation
-only updates specification freshness; it is not a conformance result. A separate
+Multipath was published as [RFC 10069](https://www.rfc-editor.org/rfc/rfc10069.html)
+in November 2026. On 2026-11-22 the code's assigned values were compared with
+the RFC: transport parameter 0x3e, PATH_ACK 0x3e/0x3f, frame types
+0x3e75-0x3e7c and the section 2.4 nonce example all match. The implementation was
+written from draft-21, and the RFC's normative text has not been diffed against
+that draft; the cited section numbers (2.2, 2.4, 3.2.1, 4, 5.9) are unchanged.
+The RFC's path-abandon error codes (0x3e, 0x3e75-0x3e77) have no named
+constants here. This observation only updates specification freshness; it is
+not a conformance result. A separate
 [multipath audit slice](MULTIPATH.md#draft-21-control-frame-audit-2026-09-30) maps
 path-limit and disposed-path handling to code and protected v1/v2 tests.
 
