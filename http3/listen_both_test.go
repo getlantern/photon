@@ -15,6 +15,28 @@ import (
 	quic "github.com/getlantern/photon"
 )
 
+// listenTCPWithFreeUDP returns a TCP listener whose port is also free for UDP.
+// serveTLSAndQUIC binds QUIC to the TCP port number and stops, closing the TCP
+// listener, if another socket holds it. A free TCP port says nothing about UDP,
+// and test binaries running alongside bind ephemeral UDP ports all the time.
+func listenTCPWithFreeUDP(t *testing.T) net.Listener {
+	t.Helper()
+	for range 20 {
+		tcp, err := net.Listen("tcp4", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		probe, err := net.ListenPacket("udp4", tcp.Addr().String())
+		if err == nil {
+			probe.Close()
+			return tcp
+		}
+		tcp.Close()
+	}
+	t.Fatal("no port free for both TCP and UDP")
+	return nil
+}
+
 func TestCombinedTLSAndQUIC(t *testing.T) {
 	origin := httptest.NewTLSServer(nil)
 	credentials := origin.TLS.Clone()
@@ -26,10 +48,7 @@ func TestCombinedTLSAndQUIC(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/stop-quic=%v", version, stopQUIC), func(t *testing.T) {
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
-				tcp, err := net.Listen("tcp4", "127.0.0.1:0")
-				if err != nil {
-					t.Fatal(err)
-				}
+				tcp := listenTCPWithFreeUDP(t)
 				address := tcp.Addr().String()
 				_, port, _ := net.SplitHostPort(address)
 				servers := make(chan *Server, 1)
@@ -62,7 +81,13 @@ func TestCombinedTLSAndQUIC(t *testing.T) {
 					response, err := client.RoundTrip(request)
 					if err != nil {
 						client.CloseIdleConnections()
-						t.Fatal(err)
+						select {
+						case serveErr := <-done:
+							done <- serveErr
+							t.Fatal(err, "; server stopped:", serveErr)
+						default:
+							t.Fatal(err)
+						}
 					}
 					body, err := io.ReadAll(response.Body)
 					response.Body.Close()
