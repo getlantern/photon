@@ -143,3 +143,44 @@ func TestFieldStreamCancellationWriteFailure(t *testing.T) {
 		t.Fatal("retried failed feedback", writer.writes.Load())
 	}
 }
+
+// Changing the deadline of a decode the peer keeps blocked must not retain
+// anything per change: the wait can last as long as the peer wants.
+func TestFieldStreamDeadlineChangesRetainNothing(t *testing.T) {
+	decoder, _ := NewFieldDecoder(decoderLimits(), io.Discard)
+	stream, _ := NewFieldStream(decoder, 0)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { _, err := stream.Decode(ctx, []byte{2, 0, 0x80}); done <- err }()
+	for {
+		decoder.mu.Lock()
+		blocked := len(decoder.pending) == 1
+		decoder.mu.Unlock()
+		if blocked {
+			break
+		}
+		runtime.Gosched()
+	}
+	heap := func() uint64 {
+		runtime.GC()
+		var m runtime.MemStats
+		runtime.ReadMemStats(&m)
+		return m.HeapAlloc
+	}
+	before := heap()
+	far := time.Now().Add(time.Hour)
+	const changes = 100000
+	for i := range changes {
+		stream.SetReadDeadline(far.Add(time.Duration(i)))
+		runtime.Gosched()
+	}
+	after := heap()
+	if after > before && after-before > 2<<20 {
+		t.Fatalf("%d deadline changes retained %d bytes", changes, after-before)
+	}
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+}

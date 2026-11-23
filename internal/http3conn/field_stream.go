@@ -78,6 +78,11 @@ func (s *FieldStream) Decode(ctx context.Context, section []byte) ([]qpack.Decod
 	s.pending, s.busy = nil, true
 	s.mu.Unlock()
 	defer func() { s.mu.Lock(); s.busy = false; s.mu.Unlock() }()
+	// One timer for the whole wait: the peer decides how long it lasts, and
+	// the deadline may change any number of times meanwhile.
+	timer := time.NewTimer(0)
+	timer.Stop()
+	defer timer.Stop()
 	for {
 		// A section that is ready wins over a deadline that has passed.
 		select {
@@ -89,9 +94,9 @@ func (s *FieldStream) Decode(ctx context.Context, section []byte) ([]qpack.Decod
 		deadline, changed := s.deadline, s.changed
 		s.mu.Unlock()
 		var expired <-chan time.Time
+		timer.Stop()
 		if !deadline.IsZero() {
-			timer := time.NewTimer(time.Until(deadline))
-			defer timer.Stop()
+			timer.Reset(time.Until(deadline))
 			expired = timer.C
 		}
 		select {
