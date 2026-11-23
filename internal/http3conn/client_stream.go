@@ -96,7 +96,7 @@ func (s *Session) openRequestStream(parent context.Context, stream ClientExchang
 		// readable, unless a GOAWAY already read rejects this stream. Only a
 		// response complete through FIN can still be read, so a stream still
 		// receiving (one used only for datagrams, say) releases its slot now.
-		if s.keptAfterClose(cause, uint64(stream.StreamID())) && receivedAll(stream) {
+		if s.keptAfterClose(cause, uint64(stream.StreamID())) && receivedAll(stream, underlying) {
 			return
 		}
 		cancel(cause)
@@ -285,12 +285,16 @@ type streamedBody struct{}
 func (streamedBody) Read([]byte) (int, error) { return 0, io.EOF }
 func (streamedBody) Close() error             { return nil }
 
-// receivedAll reports whether every byte through FIN has arrived on stream.
-func receivedAll(stream any) bool {
-	receiving, ok := stream.(interface{ ReceiveContext() context.Context })
-	if !ok {
+// receivedAll reports whether every byte through FIN has arrived on stream,
+// asking the QUIC stream beneath it when the wrapper cannot say.
+func receivedAll(stream any, underlying *quic.Stream) bool {
+	var ctx context.Context
+	if receiving, ok := stream.(interface{ ReceiveContext() context.Context }); ok {
+		ctx = receiving.ReceiveContext()
+	} else if underlying != nil {
+		ctx = underlying.ReceiveContext()
+	} else {
 		return false
 	}
-	ctx := receiving.ReceiveContext()
 	return ctx.Err() != nil && context.Cause(ctx) == io.EOF
 }

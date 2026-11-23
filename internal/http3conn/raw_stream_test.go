@@ -1733,9 +1733,8 @@ func TestClientStreamGracefulCloseKeepsOnlyCompleteResponses(t *testing.T) {
 			if err != nil || string(body) != "kept" {
 				t.Fatalf("complete response lost after graceful close: %q %v", body, err)
 			}
-			if done.Load() != 0 {
-				t.Fatal("released before the application finished reading")
-			}
+			// Both directions are finished now, so the kept stream is released.
+			awaitDone(t, done)
 		})
 	}
 }
