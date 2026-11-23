@@ -3,12 +3,14 @@ package http3
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
@@ -48,23 +50,28 @@ func TestCombinedTLSAndQUIC(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/stop-quic=%v", version, stopQUIC), func(t *testing.T) {
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
-				tcp := listenTCPWithFreeUDP(t)
-				address := tcp.Addr().String()
-				_, port, _ := net.SplitHostPort(address)
 				servers := make(chan *Server, 1)
-				done := make(chan error, 1)
-				go func() {
-					done <- serveTLSAndQUIC(tcp, credentials, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-						if r.ProtoMajor == 3 {
-							select {
-							case servers <- r.Context().Value(ServerContextKey).(*Server):
-							default:
-							}
+				handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.ProtoMajor == 3 {
+						select {
+						case servers <- r.Context().Value(ServerContextKey).(*Server):
+						default:
 						}
-						io.WriteString(w, r.Proto)
-					}))
-				}()
-				defer tcp.Close()
+					}
+					io.WriteString(w, r.Proto)
+				})
+				var tcp net.Listener
+				var done chan error
+				var address, port string
+				start := func() {
+					tcp = listenTCPWithFreeUDP(t)
+					address = tcp.Addr().String()
+					_, port, _ = net.SplitHostPort(address)
+					done = make(chan error, 1)
+					go func(tcp net.Listener, done chan error) { done <- serveTLSAndQUIC(tcp, credentials, handler) }(tcp, done)
+				}
+				start()
+				defer func() { tcp.Close() }()
 				defer func() {
 					select {
 					case err := <-done:
@@ -74,8 +81,10 @@ func TestCombinedTLSAndQUIC(t *testing.T) {
 					}
 				}()
 				// Cleanup must stop admission before the join above even on an early failure.
-				defer tcp.Close()
-				for _, h2 := range []bool{false, true} {
+				defer func() { tcp.Close() }()
+				restarts := 0
+				for i := 0; i < 2; i++ {
+					h2 := i == 1
 					client := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, ForceAttemptHTTP2: h2}
 					request, _ := http.NewRequestWithContext(ctx, "GET", "https://"+address+"/", nil)
 					response, err := client.RoundTrip(request)
@@ -85,6 +94,16 @@ func TestCombinedTLSAndQUIC(t *testing.T) {
 						// error says why, and it may still be on its way.
 						select {
 						case serveErr := <-done:
+							// Another socket can take the UDP port after the probe
+							// released it and before the server bound it. Start over
+							// on a fresh port; any other startup failure is fatal.
+							if i == 0 && restarts < 5 && errors.Is(serveErr, syscall.EADDRINUSE) {
+								restarts++
+								tcp.Close()
+								start()
+								i--
+								continue
+							}
 							done <- serveErr
 							t.Fatal(err, "; server stopped:", serveErr)
 						case <-time.After(time.Second):
