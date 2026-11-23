@@ -83,6 +83,7 @@ func TestServerDefaultReplayPolicyAndCancellation(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	direct := httptest.NewRequest(http.MethodGet, "https://example.com/", nil).WithContext(ctx)
+	direct.TLS = nil // httptest reports a complete handshake, which skips the wait
 	done := make(chan struct{})
 	go func() { defer close(done); handler.ServeHTTP(httptest.NewRecorder(), direct) }()
 	cancel()
@@ -96,6 +97,7 @@ func TestServerDefaultReplayPolicyAndCancellation(t *testing.T) {
 	}
 	close(handshake)
 	direct = httptest.NewRequest(http.MethodGet, "https://example.com/", nil)
+	direct.TLS = nil
 	handler.ServeHTTP(httptest.NewRecorder(), direct)
 	if called.Load() != 1 || direct.TLS == nil || !direct.TLS.HandshakeComplete {
 		t.Fatal("default did not refresh TLS after wait")

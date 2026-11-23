@@ -161,7 +161,7 @@ usable, with one exception.
 | --- | --- |
 | `Read` | repeat it; the frame reader keeps a partial frame header, HEADERS block or skipped frame |
 | `ReadResponse` | repeat it; the interim-response count carries over |
-| `Write` | repeat it; the next `Write` or `TryWriteAll` first finishes the interrupted DATA frame |
+| `Write` | repeat it; the next `Write` or `TryWriteAll` with data first finishes the interrupted DATA frame |
 | `TryWriteAll` | repeat it; nothing was queued |
 | `Close` | repeat it; FIN was not queued, the message is as open as before (`Write` still works), and datagram sending resumes unless the stream was reset while `Close` waited (a `CancelWrite` or request abort does not wait for a `Close` that is waiting for room to queue FIN, and ends datagram sending for good). A datagram send that was in progress when `Close` was called has failed. `Close` also fails, retryably, while a DATA frame is unfinished |
 | `SendRequestHeader`, and the response header sent by `HTTPStream` | terminal for the send direction: a HEADERS frame is tied to QPACK state already committed and cannot be abandoned or re-encoded |
@@ -221,9 +221,13 @@ needs (a partial frame header, HEADERS block, skipped frame or section).
   do, for `RoundTrip`, unless `DisableCompression` is set.
 - `SendDatagram` fails until datagrams are negotiated instead of sending
   optimistically.
-- An empty `Write` after `Close`, or after the send direction failed, returns
-  that error, as `TryWriteAll` does. Upstream `Write` returns `0, nil` for an
-  empty slice whatever the stream's state.
+- An empty `Write` or `TryWriteAll` sends nothing, not even the rest of a DATA
+  frame a deadline interrupted, but reports a send direction that has ended,
+  however it ended: `Close`, a failed write, `CancelWrite`, the peer's
+  STOP_SENDING or connection loss. It returns what a call with data would.
+  Upstream, once the header is sent, an empty `Write` first resumes an
+  interrupted frame and otherwise returns `0, nil` whatever the send
+  direction's state.
 - A failed response header write in `HTTPStream` is terminal rather than
   retryable.
 - With a response header sent, `Stream` enforces message rules upstream leaves

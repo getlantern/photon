@@ -120,7 +120,8 @@ func (s *RawStream) readEnded(err error) error {
 }
 
 // Write sends p in one DATA frame. After an expired write deadline, the next
-// Write or TryWriteAll first supplies the rest of the interrupted frame.
+// Write or TryWriteAll with data first supplies the rest of the interrupted
+// frame.
 func (s *RawStream) Write(p []byte) (n int, err error) {
 	defer func() { err = s.mapError.apply(s.ended(err)) }()
 	s.writeMu.Lock()
@@ -130,9 +131,23 @@ func (s *RawStream) Write(p []byte) (n int, err error) {
 	}
 	// An empty Write sends no frame, but still reports an ended send direction.
 	if len(p) == 0 {
-		return 0, s.writer.writable()
+		return 0, s.sendEnded()
 	}
 	return s.writer.Write(p)
+}
+
+// sendEnded reports why sending is over, for a call with nothing to send that
+// never reaches the stream: the writer's own error, or the end of the send
+// direction (CancelWrite, the peer's STOP_SENDING, connection loss) that only
+// a write with data would otherwise run into.
+func (s *RawStream) sendEnded() error {
+	if err := s.writer.writable(); err != nil {
+		return err
+	}
+	if ctx := s.stream.Context(); ctx.Err() != nil {
+		return context.Cause(ctx)
+	}
+	return nil
 }
 
 // TryWriteAll queues p as one DATA frame if the stream takes all of it at once,
@@ -146,6 +161,11 @@ func (s *RawStream) TryWriteAll(p []byte) (err error) {
 	defer s.writeMu.Unlock()
 	if s.writer == nil {
 		return s.noWriter
+	}
+	// An empty call only reports state, even with a DATA frame unfinished: a
+	// call with data finishes that frame.
+	if len(p) == 0 {
+		return s.sendEnded()
 	}
 	return s.writer.TryWrite(p)
 }
@@ -178,15 +198,19 @@ func (s *RawStream) CancelRead(code quic.StreamErrorCode) {
 	// A section waiting for the dynamic table reads nothing from the stream, so
 	// resetting the stream would not wake it. Abandoning its QPACK work does,
 	// and is due anyway. Nothing can be waiting once receiving has ended.
+	waiting := false
 	select {
 	case <-s.received:
 	default:
 		s.canceledRead.CompareAndSwap(nil, &quic.StreamError{StreamID: s.stream.StreamID(), ErrorCode: code})
-		if fields != nil {
-			_ = fields.Cancel()
-		}
+		waiting = fields != nil
 	}
+	// The code reaches the stream before the wait wakes: the receive call it
+	// wakes resets the stream too, and the peer sees only the first code.
 	s.stream.CancelRead(code)
+	if waiting {
+		_ = fields.Cancel()
+	}
 	s.receiveEnded()
 }
 
