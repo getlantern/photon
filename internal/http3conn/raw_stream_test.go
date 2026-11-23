@@ -1519,34 +1519,78 @@ func TestResetInterruptsBlockedClose(t *testing.T) {
 	}
 }
 
-// An empty Write sends nothing, but it must still report a send direction that
-// has ended, exactly as a Write with data or TryWriteAll would.
+// tryRawStream queues TryWriteAll calls until its send direction ends.
+type tryRawStream struct{ *rawTestStream }
+
+func (s *tryRawStream) TryWriteAll(p []byte) error {
+	if err := s.sendCtx.Err(); err != nil {
+		return context.Cause(s.sendCtx)
+	}
+	_, err := s.Write(p)
+	return err
+}
+
+// An empty Write or TryWriteAll sends nothing, but it must still report a send
+// direction that has ended, however it ended: a local Close, CancelWrite, or
+// the peer's STOP_SENDING, which nothing has written into yet.
 func TestRawStreamEmptyWriteReportsEndedSend(t *testing.T) {
-	session, transport, config, _ := rawFixture(t, bytes.NewReader(nil))
-	stream, err := session.openRequestStream(context.Background(), transport, nil, config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer stream.CancelRead(0x10c)
-	request, _ := http.NewRequest("POST", "https://example.com/raw", nil)
-	if err := stream.SendRequestHeader(request); err != nil {
-		t.Fatal(err)
-	}
-	sent := len(transport.Bytes())
-	if n, err := stream.Write(nil); n != 0 || err != nil {
-		t.Fatal("empty write on an open stream:", n, err)
-	}
-	if len(transport.Bytes()) != sent {
-		t.Fatal("empty write sent a frame")
-	}
-	if err := stream.Close(); err != nil {
-		t.Fatal(err)
-	}
-	_, want := stream.Write([]byte("x"))
-	if want == nil {
-		t.Fatal("write after Close succeeded")
-	}
-	if n, err := stream.Write(nil); n != 0 || err == nil || err.Error() != want.Error() {
-		t.Fatalf("empty write after Close: %d %v, want %v", n, err, want)
+	for _, end := range []struct {
+		name  string
+		end   func(*RawStream, *tryRawStream)
+		reset quic.StreamErrorCode // 0: Close
+	}{
+		{"Close", func(stream *RawStream, _ *tryRawStream) { stream.Close() }, 0},
+		{"CancelWrite", func(stream *RawStream, _ *tryRawStream) { stream.CancelWrite(0x10c) }, 0x10c},
+		{"STOP_SENDING", func(_ *RawStream, transport *tryRawStream) {
+			transport.sendCancel(&quic.StreamError{ErrorCode: 0x10b, Remote: true})
+		}, 0x10b},
+	} {
+		for _, call := range []struct {
+			name  string
+			empty func(*RawStream) error
+		}{
+			{"Write", func(stream *RawStream) error {
+				n, err := stream.Write(nil)
+				if n != 0 {
+					t.Fatal("empty write reported", n, "bytes")
+				}
+				return err
+			}},
+			{"TryWriteAll", func(stream *RawStream) error { return stream.TryWriteAll(nil) }},
+		} {
+			t.Run(end.name+"/"+call.name, func(t *testing.T) {
+				session, raw, config, _ := rawFixture(t, bytes.NewReader(nil))
+				transport := &tryRawStream{raw}
+				client, err := session.openRequestStream(context.Background(), transport, nil, config)
+				if err != nil {
+					t.Fatal(err)
+				}
+				stream := client.RawStream
+				defer stream.CancelRead(0x10c)
+				request, _ := http.NewRequest("POST", "https://example.com/raw", nil)
+				if err := client.SendRequestHeader(request); err != nil {
+					t.Fatal(err)
+				}
+				sent := len(transport.Bytes())
+				if err := call.empty(stream); err != nil {
+					t.Fatal("empty call on an open stream:", err)
+				}
+				if len(transport.Bytes()) != sent {
+					t.Fatal("empty call sent a frame")
+				}
+				end.end(stream, transport)
+				err = call.empty(stream)
+				if err == nil {
+					t.Fatal("empty call succeeded after the send direction ended")
+				}
+				var reset *quic.StreamError
+				if end.reset != 0 && (!errors.As(err, &reset) || reset.ErrorCode != end.reset) {
+					t.Fatalf("empty call returned %v, want the reset 0x%x", err, end.reset)
+				}
+				if len(transport.Bytes()) != sent {
+					t.Fatal("empty call sent a frame after the send direction ended")
+				}
+			})
+		}
 	}
 }
