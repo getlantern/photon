@@ -151,7 +151,9 @@ func TestSessionDrained(t *testing.T) {
 		{false, true, &quic.PeerCloseError{Application: true, Code: 0x102}, false},
 		{false, true, &quic.PeerCloseError{Code: 0x100}, false},
 	} {
-		t.Run(fmt.Sprintf("server=%v/goaway=%v/%v", row.server, row.goaway, row.cause), func(t *testing.T) {
+		var closed *quic.PeerCloseError
+		errors.As(row.cause, &closed)
+		t.Run(fmt.Sprintf("server=%v,goaway=%v,app=%v,code=%#x", row.server, row.goaway, closed.Application, closed.Code), func(t *testing.T) {
 			ctx, cancel := context.WithCancelCause(context.Background())
 			cancel(row.cause)
 			s := &Session{ctx: ctx, server: row.server}

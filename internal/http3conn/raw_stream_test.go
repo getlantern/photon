@@ -1686,3 +1686,56 @@ func TestKeptAfterClose(t *testing.T) {
 		})
 	}
 }
+
+// receivingRawStream reports when its receive side has ended, as a QUIC stream
+// does: io.EOF once every byte through FIN has arrived.
+type receivingRawStream struct {
+	*rawTestStream
+	receiveCtx context.Context
+}
+
+func (s *receivingRawStream) ReceiveContext() context.Context { return s.receiveCtx }
+
+// A graceful close keeps a raw request stream only while the transport can
+// still deliver its response: one complete through FIN. A stream still
+// receiving, such as one used only for datagrams, can never be read again,
+// so it releases its request slot and datagram state at once.
+func TestClientStreamGracefulCloseKeepsOnlyCompleteResponses(t *testing.T) {
+	for _, complete := range []bool{true, false} {
+		t.Run(fmt.Sprintf("complete=%v", complete), func(t *testing.T) {
+			wire := append(readerHeaders(t, responseFields("200")...), readerFrame(t, h3.Data, []byte("kept"))...)
+			session, raw, config, done := rawFixture(t, bytes.NewReader(wire))
+			receiveCtx, receiveCancel := context.WithCancelCause(context.Background())
+			defer receiveCancel(context.Canceled)
+			if complete {
+				receiveCancel(io.EOF)
+			}
+			stream, err := session.openRequestStream(context.Background(), &receivingRawStream{raw, receiveCtx}, nil, config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request, _ := http.NewRequest("GET", "https://example.com/", nil)
+			if err := stream.SendRequestHeader(request); err != nil {
+				t.Fatal(err)
+			}
+			if err := stream.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := stream.ReadResponse(); err != nil {
+				t.Fatal(err)
+			}
+			session.cancel(&quic.PeerCloseError{Application: true, Code: 0x100})
+			if !complete {
+				awaitDone(t, done)
+				return
+			}
+			body, err := io.ReadAll(stream)
+			if err != nil || string(body) != "kept" {
+				t.Fatalf("complete response lost after graceful close: %q %v", body, err)
+			}
+			if done.Load() != 0 {
+				t.Fatal("released before the application finished reading")
+			}
+		})
+	}
+}
