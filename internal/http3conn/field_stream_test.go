@@ -50,6 +50,7 @@ func TestFieldStreamCancellation(t *testing.T) {
 		})
 	}
 	wg.Wait()
+	decoder.Flushed()
 	if !bytes.Equal(feedback.Bytes(), []byte{0x40}) {
 		t.Fatalf("cancellation count: %x", feedback.Bytes())
 	}
@@ -73,6 +74,7 @@ func TestFieldStreamSequential(t *testing.T) {
 	if err := stream.Cancel(); err != nil {
 		t.Fatal(err)
 	}
+	decoder.Flushed()
 	if !bytes.Equal(feedback.Bytes(), []byte{0x44}) {
 		t.Fatal(feedback.Bytes())
 	}
@@ -108,27 +110,35 @@ func TestFieldStreamCancellationWriteFailure(t *testing.T) {
 		}
 		runtime.Gosched()
 	}
+	// The cancellation is queued, so the canceled stream sees its own
+	// cancellation. The failed write then fails the decoder for everyone else.
 	cancel()
 	select {
 	case err := <-done:
-		if err != io.ErrShortWrite {
-			t.Fatal("cancellation hid feedback failure", err)
+		if !errors.Is(err, context.Canceled) {
+			t.Fatal(err)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("decode stranded after write failure")
 	}
+	decoder.Flushed()
 	if got := readySection(t, other); got.Err != io.ErrShortWrite {
 		t.Fatal(got)
 	}
-	if err := stream.Cancel(); err != io.ErrShortWrite {
-		t.Fatal("lost repeated cancellation failure", err)
+	if err := stream.Cancel(); err != nil {
+		t.Fatal("repeated cancellation changed its result", err)
 	}
-	if _, err := stream.Decode(context.Background(), []byte{0, 0}); err != io.ErrShortWrite {
+	if _, err := stream.Decode(context.Background(), []byte{0, 0}); err != ErrFieldSectionCanceled {
+		t.Fatal("canceled stream decoded again", err)
+	}
+	later, _ := NewFieldStream(decoder, 8)
+	if _, err := later.Decode(context.Background(), []byte{0, 0}); err != io.ErrShortWrite {
 		t.Fatal("lost terminal failure on later decode", err)
 	}
-	if _, err := stream.Decode(ctx, []byte{0, 0}); err != io.ErrShortWrite {
-		t.Fatal("lost terminal failure with canceled context", err)
+	if err := later.Cancel(); err != io.ErrShortWrite {
+		t.Fatal("lost terminal failure on later cancellation", err)
 	}
+	decoder.Flushed()
 	if writer.writes != 1 {
 		t.Fatal("retried failed feedback", writer.writes)
 	}

@@ -268,11 +268,7 @@ func ServeRequest(parent context.Context, stream ServerRequestStream, config Ser
 		}
 		response.hijacked = true
 		task.detached.Store(true)
-		body.raw.Store(taken)
-		// Receiving may already be over; the stream must not wait for it again.
-		if body.ended.Load() {
-			taken.receiveEnded()
-		}
+		body.handOff(taken)
 		raw = taken
 		return raw, nil
 	}
@@ -404,7 +400,7 @@ func (b *serverRequestBody) Read(p []byte) (int, error) {
 	}
 	n, err := b.ReadCloser.Read(p)
 	if err != nil && !h3.IsDeadline(err) {
-		b.ended.Store(true)
+		b.end()
 	}
 	if err != nil && err != io.EOF && err != io.ErrClosedPipe && !h3.IsDeadline(err) {
 		var connError *h3.Error
@@ -415,6 +411,26 @@ func (b *serverRequestBody) Read(p []byte) (int, error) {
 	}
 	return n, b.mapError.apply(err)
 }
+
+// end records that receiving is over and tells a raw stream that has taken the
+// body over. A read can be in progress across the takeover: whichever of end
+// and handOff comes second sees the other's store.
+func (b *serverRequestBody) end() {
+	b.ended.Store(true)
+	if raw := b.raw.Load(); raw != nil {
+		raw.receiveEnded()
+	}
+}
+
+// handOff gives later reads to raw. Receiving may already be over, in which
+// case raw must not wait for it again.
+func (b *serverRequestBody) handOff(raw *RawStream) {
+	b.raw.Store(raw)
+	if b.ended.Load() {
+		raw.receiveEnded()
+	}
+}
+
 func invokeHandler(handler http.Handler, writer http.ResponseWriter, request *http.Request) (err error) {
 	defer func() {
 		if value := recover(); value != nil {
@@ -431,9 +447,6 @@ func invokeHandler(handler http.Handler, writer http.ResponseWriter, request *ht
 
 func (b *serverRequestBody) Close() error {
 	b.closed.Store(true)
-	b.ended.Store(true)
-	if raw := b.raw.Load(); raw != nil {
-		defer raw.receiveEnded()
-	}
+	defer b.end()
 	return b.mapError.apply(b.ReadCloser.Close())
 }

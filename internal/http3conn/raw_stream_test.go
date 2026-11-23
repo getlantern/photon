@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"runtime"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -958,83 +957,172 @@ func returnsPromptly(t *testing.T, what string, call func()) {
 	}
 }
 
-// A section that decodes at once still owes the peer an acknowledgment, written
-// to a decoder stream whose credit the peer controls. The receive controls must
-// work while that write is stuck, and must not get stuck behind it themselves.
-func TestClientStreamReceiveControlsReachFeedbackWrite(t *testing.T) {
+// A section that decodes at once still owes the peer an acknowledgment, on a
+// decoder stream whose credit the peer controls. Neither the read nor the
+// receive controls may wait for that credit.
+func TestClientStreamReadNotHeldByFeedbackCredit(t *testing.T) {
 	dynamic := readerFrame(t, h3.Headers, []byte{2, 0, 0x80})
-	for _, mode := range []string{"headers/deadline", "headers/cancel", "trailers/deadline", "trailers/cancel", "trailers/close"} {
-		t.Run(mode, func(t *testing.T) {
-			trailers := strings.HasPrefix(mode, "trailers")
+	for _, section := range []string{"headers", "trailers"} {
+		t.Run(section, func(t *testing.T) {
 			wire, insert := dynamic, qpack.EncoderInstruction{Type: qpack.InsertLiteralName, Name: ":status", Value: "200"}
-			if trailers {
+			if section == "trailers" {
 				wire = append(readerHeaders(t, responseFields("200")...), dynamic...)
 				insert = qpack.EncoderInstruction{Type: qpack.InsertLiteralName, Name: "x-end", Value: "done"}
 			}
 			feedback := newGatedWriter()
-			var released sync.Once
-			release := func() { released.Do(func() { close(feedback.release) }) }
-			defer release()
-			_, decoder, stream, _, _ := blockedFixture(t, bytes.NewReader(wire), feedback)
-			defer func() { stream.CancelRead(0x10c); stream.CancelWrite(0x10c) }()
+			defer close(feedback.release)
+			session, decoder, stream, _, done := blockedFixture(t, bytes.NewReader(wire), feedback)
 			if err := decoderUpdate(t, decoder, insert); err != nil {
 				t.Fatal(err)
 			}
+			decoder.Flushed()
 			feedback.armed.Store(true)
 			var response *http.Response
-			receive := func() (err error) {
-				response, err = stream.ReadResponse()
-				return err
-			}
-			if trailers {
-				if err := receive(); err != nil {
-					t.Fatal(err)
-				}
-				receive = func() error {
-					_, err := stream.Read(make([]byte, 1))
-					return err
-				}
-			}
-			result := make(chan error, 1)
-			go func() { result <- receive() }()
-			select {
-			case <-feedback.entered:
-			case <-time.After(3 * time.Second):
-				t.Fatal("section never reached its acknowledgment")
-			}
-			switch {
-			case strings.HasSuffix(mode, "cancel"):
-				returnsPromptly(t, "CancelRead", func() { stream.CancelRead(0x77) })
-			case strings.HasSuffix(mode, "close"):
-				returnsPromptly(t, "Body.Close", func() { response.Body.Close() })
-			default:
-				returnsPromptly(t, "SetReadDeadline", func() { stream.SetReadDeadline(time.Now().Add(-time.Second)) })
-			}
 			var err error
-			select {
-			case err = <-result:
-			case <-time.After(3 * time.Second):
-				t.Fatal("receive control left the read blocked behind QPACK feedback")
+			returnsPromptly(t, "ReadResponse", func() { response, err = stream.ReadResponse() })
+			if err != nil || response.StatusCode != 200 {
+				t.Fatal(response, err)
 			}
-			if !strings.HasSuffix(mode, "deadline") {
-				if err == nil || err == io.EOF {
-					t.Fatal("read succeeded after its direction was ended:", err)
-				}
-				return
-			}
-			if !errors.Is(err, os.ErrDeadlineExceeded) {
-				t.Fatal(err)
-			}
-			// The section is still being acknowledged; the repeated call gets it.
-			returnsPromptly(t, "SetReadDeadline", func() { stream.SetReadDeadline(time.Time{}) })
-			release()
-			err = receive()
-			if trailers {
+			if section == "trailers" {
+				returnsPromptly(t, "Read", func() { _, err = stream.Read(make([]byte, 1)) })
 				if err != io.EOF || response.Trailer.Get("X-End") != "done" {
 					t.Fatal(err, response.Trailer)
 				}
-			} else if err != nil || response.StatusCode != 200 {
-				t.Fatal(response, err)
+			}
+			// The acknowledgment is stuck, and stays stuck throughout.
+			select {
+			case <-feedback.entered:
+			case <-time.After(3 * time.Second):
+				t.Fatal("section was never acknowledged")
+			}
+			returnsPromptly(t, "SetReadDeadline", func() { stream.SetReadDeadline(time.Now().Add(-time.Second)) })
+			returnsPromptly(t, "Body.Close", func() { response.Body.Close() })
+			returnsPromptly(t, "CancelRead", func() { stream.CancelRead(0x77) })
+			returnsPromptly(t, "CancelWrite", func() { stream.CancelWrite(0x77) })
+			awaitRelease(t, session, done)
+		})
+	}
+}
+
+// Round 3's scenario: ReadResponse timed out with its HEADERS section waiting
+// for the dynamic table, sending is finished, and CancelRead starts the
+// stream's cleanup while the decoder stream has no credit. A ReadResponse
+// retried at that moment must not wait for the peer.
+func TestClientStreamRetryWhileCleanupLacksFeedbackCredit(t *testing.T) {
+	feedback := newGatedWriter()
+	defer close(feedback.release)
+	feedback.armed.Store(true)
+	wire := readerFrame(t, h3.Headers, []byte{2, 0, 0x80})
+	session, decoder, stream, _, done := blockedFixture(t, bytes.NewReader(wire), feedback)
+	result := make(chan error, 1)
+	go func() { _, err := stream.ReadResponse(); result <- err }()
+	awaitBlockedSection(t, decoder)
+	stream.SetReadDeadline(time.Now().Add(-time.Second))
+	select {
+	case err := <-result:
+		if !errors.Is(err, os.ErrDeadlineExceeded) {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("read deadline left ReadResponse blocked")
+	}
+	stream.SetReadDeadline(time.Time{})
+	if err := stream.Close(); err != nil {
+		t.Fatal(err)
+	}
+	returnsPromptly(t, "CancelRead", func() { stream.CancelRead(0x77) })
+	// The cancellation is on its way to a decoder stream that will not take it.
+	select {
+	case <-feedback.entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("no QPACK cancellation for the abandoned section")
+	}
+	go func() { _, err := stream.ReadResponse(); result <- err }()
+	select {
+	case err := <-result:
+		if err == nil {
+			t.Fatal("response read after CancelRead")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("retried ReadResponse waits for decoder-stream credit")
+	}
+	// Nor does the stream's release.
+	awaitRelease(t, session, done)
+}
+
+// An abandoned request gives its slot back whether or not the peer lets the
+// QPACK cancellation through.
+func TestClientStreamAbandonedReleasesWithoutFeedbackCredit(t *testing.T) {
+	feedback := newGatedWriter()
+	defer close(feedback.release)
+	feedback.armed.Store(true)
+	session, _, stream, _, done := blockedFixture(t, bytes.NewReader(nil), feedback)
+	stream.CancelRead(0x10c)
+	stream.CancelWrite(0x10c)
+	awaitRelease(t, session, done)
+	select {
+	case <-feedback.entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("no QPACK cancellation for the abandoned request")
+	}
+}
+
+// heldBody is a request body whose Read waits for the test to decide how it ends.
+type heldBody struct {
+	entered chan struct{}
+	outcome chan error
+}
+
+func (b *heldBody) Read([]byte) (int, error) {
+	close(b.entered)
+	return 0, <-b.outcome
+}
+func (b *heldBody) Close() error { return nil }
+
+// A request-body read in progress when the stream is taken over still decides
+// when receiving is over, whichever way it ends. An expired deadline does not
+// end it.
+func TestServerBodyReadAcrossTakeover(t *testing.T) {
+	for name, outcome := range map[string]error{
+		"FIN":        io.EOF,
+		"reset":      &quic.StreamError{ErrorCode: 0x10c, Remote: true},
+		"connection": &quic.PeerCloseError{Application: true, Code: 0x100},
+		"deadline":   os.ErrDeadlineExceeded,
+	} {
+		t.Run(name, func(t *testing.T) {
+			transport, _, _ := exchangeFixture(t, bytes.NewReader(nil))
+			ctx, cancel := context.WithCancelCause(context.Background())
+			defer cancel(nil)
+			task := &requestTask{ctx: ctx, stream: transport, cancel: cancel, abort: func(uint64, string) {}}
+			source := &heldBody{entered: make(chan struct{}), outcome: make(chan error, 1)}
+			body := &serverRequestBody{ReadCloser: source, task: task}
+			result := make(chan error, 1)
+			go func() { _, err := body.Read(make([]byte, 1)); result <- err }()
+			select {
+			case <-source.entered:
+			case <-time.After(3 * time.Second):
+				t.Fatal("read never started")
+			}
+			raw := newRawStream(transport, nil, task, nil)
+			body.handOff(raw)
+			select {
+			case <-raw.received:
+				t.Fatal("receiving over while a read is still waiting")
+			default:
+			}
+			source.outcome <- outcome
+			if err := <-result; err != outcome {
+				t.Fatal(err)
+			}
+			// The read has returned, so its effect on the stream is settled.
+			ended := false
+			select {
+			case <-raw.received:
+				ended = true
+			default:
+			}
+			if ended != (name != "deadline") {
+				t.Fatal("receive direction ended:", ended)
 			}
 		})
 	}

@@ -210,6 +210,9 @@ func TestFieldDecoderUndeliverableFeedbackDetaches(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			// Each operation succeeds; its feedback fails afterwards, and that
+			// detaches the decoder.
+			d.Flushed()
 			writer.fail = true
 			switch operation {
 			case "submit":
@@ -222,14 +225,15 @@ func TestFieldDecoderUndeliverableFeedbackDetaches(t *testing.T) {
 				}
 			case "instruction":
 				// The insert is applied even though its acknowledgment is lost.
-				if err := decoderUpdate(t, d, insert); err != cause {
+				if err := decoderUpdate(t, d, insert); err != nil {
 					t.Fatal(err)
 				}
 			case "cancel":
-				if err := d.Cancel(8); err != cause {
+				if err := d.Cancel(8); err != nil {
 					t.Fatal(err)
 				}
 			}
+			d.Flushed()
 			if result := readySection(t, unblocked); result.Err != nil || len(result.Fields) != 1 || result.Fields[0] != fs("x", "value") {
 				t.Fatal("section completed by the insert", result)
 			}
@@ -247,6 +251,7 @@ func TestFieldDecoderUndeliverableFeedbackDetaches(t *testing.T) {
 			if result := readySection(t, ready); result.Err != nil || len(result.Fields) != 1 || result.Fields[0] != fs("x", "value") {
 				t.Fatal(result)
 			}
+			d.Flushed()
 			if writer.writes != writes {
 				t.Fatal("feedback written after detach")
 			}

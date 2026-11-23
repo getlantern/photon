@@ -23,9 +23,17 @@ type DecodedSection struct {
 // the result before submitting the next section. Methods are concurrency-safe.
 // Cancel is called at most once per stream, and the stream owner prevents later
 // submissions. Close must be called on connection termination to release waiters.
-// The writer must have a deadline or cancellation mechanism that interrupts I/O;
-// feedback writes are serialized and must not reenter this owner. Any terminal
-// error requires connection termination, never retry of uncertain feedback.
+//
+// No method writes to the decoder stream or waits for one that does: the peer
+// controls that stream's credit, and every request shares this lock. Feedback
+// is queued under the lock, in the order the decoder produced it and before the
+// result that caused it becomes visible, and one goroutine writes it outside
+// the lock while there is any. Feedback only tells the peer's encoder what has
+// arrived here, so sending it late costs the peer compression, never
+// correctness; its order is what matters. A write failure fails the decoder
+// later, through feedbackFailed. The writer must have a deadline or
+// cancellation mechanism that interrupts I/O. Any terminal error requires
+// connection termination, never retry of uncertain feedback.
 type FieldDecoder struct {
 	mu       sync.Mutex
 	decoder  *qpack.Decoder
@@ -33,12 +41,29 @@ type FieldDecoder struct {
 	pending  map[uint64]chan DecodedSection
 	err      error
 	detached error
-	// Reports a feedback write failure to the connection owner; request-side
-	// callers scope it to their request. A non-nil result means the peer closed
-	// gracefully: the feedback is merely undeliverable and the decoder detaches
-	// with that cause instead of failing. Runs with the decoder locked.
+	// Reports a failure of the decoder stream to the connection owner: a failed
+	// write, or a feedback backlog over the limit. A non-nil result means the
+	// peer closed gracefully: the feedback is merely undeliverable and the
+	// decoder detaches with that cause instead of failing. Runs with the
+	// decoder locked.
 	feedbackFailed func(error) error
+
+	queue, spare []qpack.DecoderInstruction // unwritten feedback, in order
+	maxQueued    int
+	flushing     chan struct{} // non-nil while the writer runs; closed when it stops
+	// The owner interrupted the decoder stream, which it does only to shut
+	// down. Feedback is dropped from then on and the decoder is left for the
+	// owner to Close or Detach with the real cause: the interruption surfaces
+	// as an expired deadline, which readers would take for a retryable one.
+	interrupted bool
 }
+
+// defaultFeedbackBacklog bounds unwritten feedback, at 16 bytes an instruction.
+// A request owes an acknowledgment per field section and one cancellation, a
+// few bytes on the wire in all, so a peer this far behind has stopped reading
+// its decoder stream. The bound is far above what the writer's own scheduling
+// delay can accumulate.
+const defaultFeedbackBacklog = 8192
 
 func NewFieldDecoder(limits qpack.DecoderLimits, writer io.Writer) (*FieldDecoder, error) {
 	decoder, err := qpack.NewDecoder(limits)
@@ -49,7 +74,81 @@ func NewFieldDecoder(limits qpack.DecoderLimits, writer io.Writer) (*FieldDecode
 	if err != nil {
 		return nil, err
 	}
-	return &FieldDecoder{decoder: decoder, feedback: feedback, pending: make(map[uint64]chan DecodedSection)}, nil
+	return &FieldDecoder{decoder: decoder, feedback: feedback, pending: make(map[uint64]chan DecodedSection), maxQueued: defaultFeedbackBacklog}, nil
+}
+
+// enqueue schedules feedback for the writer. It runs with the decoder locked
+// and never blocks. Adjacent insert count increments are merged, which the
+// peer cannot tell from receiving them separately; nothing is reordered,
+// because an increment counts from whatever the instructions before it
+// acknowledged. A backlog over the limit is a peer that does not read its
+// decoder stream, and fails the decoder.
+func (d *FieldDecoder) enqueue(instructions []qpack.DecoderInstruction) error {
+	if d.detached != nil || d.interrupted {
+		return nil
+	}
+	for _, instruction := range instructions {
+		if last := len(d.queue) - 1; instruction.Type == qpack.InsertCountIncrement && last >= 0 && d.queue[last].Type == qpack.InsertCountIncrement {
+			d.queue[last].Value += instruction.Value
+			continue
+		}
+		d.queue = append(d.queue, instruction)
+	}
+	if len(d.queue) > d.maxQueued {
+		err := &h3.Error{Code: h3.ExcessiveLoad, Reason: "QPACK decoder feedback backlog"}
+		if cause := d.undeliverable(err); cause != nil {
+			d.detach(cause)
+			return nil
+		}
+		return d.fail(err)
+	}
+	if len(d.queue) > 0 && d.flushing == nil {
+		d.flushing = make(chan struct{})
+		go d.flush(d.flushing)
+	}
+	return nil
+}
+
+// flush writes queued feedback until there is none, or the decoder ends.
+func (d *FieldDecoder) flush(done chan struct{}) {
+	var batch []qpack.DecoderInstruction
+	for {
+		d.mu.Lock()
+		d.spare = batch[:0]
+		if d.err != nil || d.detached != nil || d.interrupted || len(d.queue) == 0 {
+			d.queue, d.flushing = d.queue[:0], nil
+			d.mu.Unlock()
+			close(done)
+			return
+		}
+		batch, d.queue = d.queue, d.spare
+		d.mu.Unlock()
+		if _, err := d.feedback.Write(batch); err != nil {
+			d.mu.Lock()
+			if h3.IsDeadline(err) {
+				d.interrupted = true
+			} else if d.err == nil && d.detached == nil {
+				if cause := d.undeliverable(err); cause != nil {
+					d.detach(cause)
+				} else {
+					d.fail(err)
+				}
+			}
+			d.mu.Unlock()
+		}
+	}
+}
+
+// Flushed waits until no feedback is being written. After Close or Detach, and
+// once the owner has interrupted the writer, that is when the decoder's
+// goroutine has gone.
+func (d *FieldDecoder) Flushed() {
+	d.mu.Lock()
+	flushing := d.flushing
+	d.mu.Unlock()
+	if flushing != nil {
+		<-flushing
+	}
 }
 func (s *SettingsState) NewFieldDecoder(limits qpack.DecoderLimits, writer io.Writer) (*FieldDecoder, error) {
 	local := s.Local()
@@ -74,14 +173,8 @@ func (d *FieldDecoder) Submit(id uint64, section []byte) (<-chan DecodedSection,
 	if err != nil {
 		return nil, d.fail(d.protocolError(err, QPACKDecompressionFailed))
 	}
-	if d.detached == nil {
-		if _, err = d.feedback.Write(feedback); err != nil {
-			cause := d.undeliverable(err)
-			if cause == nil {
-				return nil, d.fail(err)
-			}
-			d.detach(cause)
-		}
+	if err = d.enqueue(feedback); err != nil {
+		return nil, err
 	}
 	if d.detached != nil && blocked {
 		d.decoder.Cancel(id)
@@ -119,11 +212,8 @@ func (d *FieldDecoder) EncoderInstruction(instruction []byte) error {
 	if n != len(instruction) {
 		return d.fail(&h3.Error{Code: QPACKEncoderStreamError, Reason: "multiple encoder instructions in one dispatch"})
 	}
-	var cause error
-	if _, err = d.feedback.Write(feedback); err != nil {
-		if cause = d.undeliverable(err); cause == nil {
-			return d.fail(err)
-		}
+	if err = d.enqueue(feedback); err != nil {
+		return err
 	}
 	for _, section := range ready {
 		result := d.pending[section.StreamID]
@@ -131,10 +221,7 @@ func (d *FieldDecoder) EncoderInstruction(instruction []byte) error {
 		result <- DecodedSection{Fields: section.Fields}
 		close(result)
 	}
-	if cause != nil {
-		d.detach(cause)
-	}
-	return cause
+	return d.detached
 }
 func (d *FieldDecoder) Cancel(id uint64) error {
 	d.mu.Lock()
@@ -149,21 +236,15 @@ func (d *FieldDecoder) Cancel(id uint64) error {
 	if err != nil {
 		return d.fail(d.protocolError(err, QPACKDecompressionFailed))
 	}
-	var cause error
-	if _, err = d.feedback.Write(feedback); err != nil {
-		if cause = d.undeliverable(err); cause == nil {
-			return d.fail(err)
-		}
+	if err = d.enqueue(feedback); err != nil {
+		return err
 	}
 	if result, ok := d.pending[id]; ok {
 		delete(d.pending, id)
 		result <- DecodedSection{Err: ErrFieldSectionCanceled}
 		close(result)
 	}
-	if cause != nil {
-		d.detach(cause)
-	}
-	return cause
+	return d.detached
 }
 
 // Detach ends the instruction and feedback streams after a graceful peer close
@@ -208,8 +289,8 @@ func (d *FieldDecoder) protocolError(err error, code uint64) error {
 	return &h3.Error{Code: code, Reason: err.Error()}
 }
 
-// undeliverable reports a failed feedback write. It returns the cause to detach
-// with, or nil when the decoder must fail.
+// undeliverable reports a decoder stream that can no longer carry feedback. It
+// returns the cause to detach with, or nil when the decoder must fail.
 func (d *FieldDecoder) undeliverable(err error) error {
 	if d.feedbackFailed == nil {
 		return nil

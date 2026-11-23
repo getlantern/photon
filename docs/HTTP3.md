@@ -13,6 +13,69 @@ Raw request streams and connections (`Stream`, `RequestStream`, `HTTPStreamer`,
 `RawClientConn`, `RawServerConn`) sit on the same session, message and datagram
 components described below; see [HTTP3_RAW_STREAMS.md](HTTP3_RAW_STREAMS.md).
 
+## QPACK decoder feedback
+
+This section is current; it supersedes what the stage notes below say about
+feedback being written synchronously.
+
+`FieldDecoder` serves every request on a connection behind one lock. Its
+feedback (section acknowledgments, stream cancellations, insert count
+increments) goes to the QPACK decoder stream, whose flow-control credit the
+peer controls. No `FieldDecoder` method writes to that stream or waits for a
+write: `Submit`, `Cancel`, `EncoderInstruction`, `Detach` and `Close` only take
+the lock for in-memory work. So a peer that withholds decoder-stream credit
+cannot hold a header read, a cancellation, request cleanup or the release of a
+request's concurrency slot.
+
+- Queue. Feedback is appended to a queue under the lock, in the order the
+  decoder produced it and before the result that caused it becomes visible. One
+  goroutine, started when the queue becomes non-empty and gone when it is
+  empty, writes batches outside the lock.
+- What RFC 9204 requires. Decoder instructions only inform the encoder. A
+  Section Acknowledgment must be emitted "after the decoder finishes decoding"
+  a section that used the dynamic table
+  ([section 2.2.2.1](https://www.rfc-editor.org/rfc/rfc9204.html#section-2.2.2.1)),
+  with no bound on how long after;
+  [section 2.2.2.3](https://www.rfc-editor.org/rfc/rfc9204.html#section-2.2.2.3)
+  lets the decoder choose when to send Insert Count Increments and notes that
+  delay only costs compression; a Stream Cancellation only lets the encoder
+  drop references
+  ([section 2.2.2.2](https://www.rfc-editor.org/rfc/rfc9204.html#section-2.2.2.2)).
+  Until feedback arrives the encoder assumes less: the stream may be blocked
+  ([section 2.1.2](https://www.rfc-editor.org/rfc/rfc9204.html#section-2.1.2))
+  and its entries stay referenced. So late feedback is always safe, and nothing
+  requires a decoded section to wait for its acknowledgment. What must hold is
+  order and exactly-once delivery. By
+  [section 2.1.4](https://www.rfc-editor.org/rfc/rfc9204.html#section-2.1.4)
+  an acknowledgment raises the Known Received Count to the section's Required
+  Insert Count and an increment adds to it, so an increment counts from what
+  the instructions before it acknowledged: moved past an acknowledgment it
+  would over-report (a connection error at the encoder) or under-report for
+  good. The queue is never reordered, and increments are merged only when
+  adjacent, which the encoder cannot tell from receiving them separately. Each
+  acknowledgment stands for the earliest unacknowledged section on its stream,
+  so none is dropped or duplicated. An acknowledgment followed by a
+  cancellation of the same stream is sent in that order; QUIC never reuses a
+  stream ID, so a cancellation cannot meet a later stream.
+- Bound. Unwritten feedback is limited to 8192 instructions (16 bytes each). A
+  request owes one acknowledgment per field section that used the dynamic table
+  and at most one cancellation, so only a peer that has stopped reading its
+  decoder stream gets there. Past the bound the decoder fails with
+  H3_EXCESSIVE_LOAD and the connection is closed with that code.
+- Failure. A failed write is reported through the session's hook as before: the
+  session is canceled and the connection aborted, and the decoder fails, which
+  releases blocked sections and makes later calls return the error. The call
+  that produced the feedback has already returned successfully. After GOAWAY
+  and a graceful H3_NO_ERROR close the hook reports the feedback as merely
+  undeliverable, and the decoder detaches instead: table state stays so
+  buffered responses still decode, and further feedback is dropped.
+- Shutdown. The session interrupts the decoder stream with a write deadline,
+  then closes or detaches the decoder, then waits for the writer (`Flushed`).
+  `Close` and `Detach` themselves never wait. An interrupted write does not
+  become the decoder's error, which would look like a retryable read deadline
+  to request readers; the session's `Close` supplies the cause. Feedback still
+  queued at that point is discarded with the connection.
+
 The initial `internal/http3wire` layer follows
 [RFC 9114 sections 7 and 8](https://www.rfc-editor.org/rfc/rfc9114.html#section-7):
 
@@ -437,7 +500,8 @@ exclusive decoder-stream feedback writes. SettingsState construction derives wir
 limits from the local advertisement and rejects budgets that cannot honor its
 table capacity or blocked-stream allowance. Submit returns a buffered one-result
 channel, with no worker goroutine per section. Encoder updates resume waiting
-sections, and feedback is written before results become visible. Cancel releases
+sections, and feedback is queued before results become visible (see QPACK
+decoder feedback above; it was originally written at that point). Cancel releases
 a pending section; Close releases all waiters and table state. Callers must close
 on connection termination, cancel each stream at most once, and prohibit later
 submissions on canceled streams. No lifetime stream tombstone map is retained.
@@ -471,8 +535,8 @@ remain unfinished.
 cancellation. It rejects concurrent Decode calls, makes Cancel idempotent, prevents
 submissions after cancellation, and cancels the stream's QPACK work when a Decode
 context ends. It does not reset QUIC itself; request transport lifecycle remains
-with the stream owner. Cancellation feedback still requires an interruptible
-critical-stream writer. Both live HTTP/3 roles use this wrapper for section reads.
+with the stream owner. Cancellation feedback is queued and no longer waits for
+the decoder stream. Both live HTTP/3 roles use this wrapper for section reads.
 
 Blocked-section live tests now cover cancellation in addition to insertion-driven
 resumption. The canceled waiter receives ErrFieldSectionCanceled, later submission
@@ -481,7 +545,9 @@ one instruction under repeated/concurrent cancellation and context cancellation
 after a section is observably blocked. These tests retain handcrafted QPACK peers;
 independent dynamic-QPACK interoperability remains unfinished.
 
-A cancellation error-propagation bug in FieldStream is fixed: after a failed
+(Superseded: feedback is now queued, so a canceled stream reports its own
+cancellation, and a failed feedback write fails the decoder for every other
+stream and the session.) A cancellation error-propagation bug in FieldStream is fixed: after a failed
 feedback write, subsequent Decode calls return that terminal failure instead of
 masking it as an ordinary request cancellation. Regression coverage cancels an
 observably blocked decode with a short-writing feedback sink, checks failure

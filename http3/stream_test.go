@@ -704,3 +704,50 @@ func TestHTTPStreamAfterRequestBodyFinished(t *testing.T) {
 		})
 	}
 }
+
+// A request-body read can be in progress when the handler takes the stream
+// over. When it then reaches the end of the request, the stream must learn of
+// it like any later read: only its send direction is left to finish.
+func TestHTTPStreamBodyReadAcrossTakeover(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	taken := make(chan takenStream, 1)
+	finished := make(chan error, 1)
+	server := &Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reading := make(chan struct{})
+		go func() {
+			close(reading)
+			_, err := io.Copy(io.Discard, r.Body)
+			finished <- err
+		}()
+		<-reading
+		w.WriteHeader(http.StatusOK)
+		stream, err := w.(HTTPStreamer).HTTPStream()
+		taken <- takenStream{stream: stream, request: r, err: err}
+	})}
+	client, origin := dialTestServer(ctx, t, server, nil)
+	input, output := io.Pipe()
+	request, _ := http.NewRequestWithContext(ctx, "POST", origin+"/", input)
+	response, err := client.RoundTrip(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	peer := await(ctx, t, "takeover", taken)
+	if peer.err != nil {
+		t.Fatal(peer.err)
+	}
+	// Only now does the request end, under the read that predates the takeover.
+	output.Close()
+	if err := await(ctx, t, "request body read", finished); err != nil {
+		t.Fatal(err)
+	}
+	if err := peer.stream.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-peer.request.Context().Done():
+	case <-ctx.Done():
+		t.Fatal("stream waits for a receive direction that a read in progress at takeover finished")
+	}
+}

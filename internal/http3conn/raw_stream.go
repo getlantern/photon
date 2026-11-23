@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	quic "github.com/getlantern/photon"
@@ -39,6 +40,8 @@ type RawStream struct {
 	receivedOnce sync.Once
 	completed    func() // reports a validated end of message, before received closes
 
+	canceledRead atomic.Pointer[quic.StreamError] // set by the first CancelRead
+
 	fieldsMu     sync.Mutex
 	fields       *FieldStream // the receive direction's QPACK waits, once it has any
 	readDeadline time.Time
@@ -66,7 +69,6 @@ func (s *RawStream) attachFields(fields *FieldStream) {
 	s.fieldsMu.Lock()
 	defer s.fieldsMu.Unlock()
 	s.fields = fields
-	fields.Detach()
 	fields.SetReadDeadline(s.readDeadline)
 }
 func (s *RawStream) setReadDeadline(t time.Time) {
@@ -173,8 +175,16 @@ func (s *RawStream) CancelRead(code quic.StreamErrorCode) {
 	s.fieldsMu.Lock()
 	fields := s.fields
 	s.fieldsMu.Unlock()
-	if fields != nil {
-		fields.StopReading(&quic.StreamError{StreamID: s.stream.StreamID(), ErrorCode: code})
+	// A section waiting for the dynamic table reads nothing from the stream, so
+	// resetting the stream would not wake it. Abandoning its QPACK work does,
+	// and is due anyway. Nothing can be waiting once receiving has ended.
+	select {
+	case <-s.received:
+	default:
+		s.canceledRead.CompareAndSwap(nil, &quic.StreamError{StreamID: s.stream.StreamID(), ErrorCode: code})
+		if fields != nil {
+			_ = fields.Cancel()
+		}
 	}
 	s.stream.CancelRead(code)
 	s.receiveEnded()
@@ -233,6 +243,10 @@ func (s *RawStream) ended(err error) error {
 	var message *MessageError
 	if errors.As(err, &protocol) || errors.As(err, &message) {
 		return err
+	}
+	// CancelRead ended a wait that the QUIC stream's own error could not.
+	if canceled := s.canceledRead.Load(); canceled != nil && errors.Is(err, ErrFieldSectionCanceled) {
+		return canceled
 	}
 	if cause := context.Cause(s.task.ctx); cause != nil && cause != context.Canceled {
 		return cause

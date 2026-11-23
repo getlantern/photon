@@ -155,31 +155,26 @@ controls. The receive path can wait in these places:
 | Wait | Peer-controlled | Ended by |
 | --- | --- | --- |
 | QUIC stream read | yes | the QUIC read deadline and `CancelRead` |
-| the shared QPACK decoder's lock (another stream is writing feedback) | yes | read deadline, `CancelRead`, body close, request end |
-| this section's own feedback write (acknowledgment) | yes, decoder-stream credit | the same |
-| a dynamic-table insertion the section references | yes | the same |
+| a dynamic-table insertion the section references | yes | read deadline, `CancelRead`, body close, request end |
+| the shared QPACK decoder's lock | no: held only for in-memory work | immediately |
+| QPACK feedback (acknowledgment, cancellation) | not waited for: queued | n/a |
 | `RawStream`'s read lock | no: held only by this stream's own `Read`/`ReadResponse` | that call returning |
-| `FieldStream`'s and `RawStream`'s state mutexes | no: never held across I/O | immediately |
+| `FieldStream`'s and `RawStream`'s state mutexes | no | immediately |
 | `Information` and trailer callbacks | no: application code | the application |
 
-The three QPACK waits read nothing from the request stream, so the QUIC
-stream's controls cannot reach them. A raw stream therefore detaches its
-`FieldStream`: the section is handed to the shared decoder from a goroutine (at
-most one per stream), and `Decode` waits for it under the read deadline,
-`StopReading` (from `CancelRead`) and its context (body close, request end).
-An expired deadline keeps the section in flight for the repeated call.
-`CancelRead`, `SetReadDeadline` and `Body.Close` only set state and return.
-Ordinary requests are not detached and behave as before.
+A section waiting for an insertion reads nothing from the request stream, so
+the QUIC stream's controls cannot reach it. `FieldStream` applies the read
+deadline to that wait and keeps the undecided section for the repeated call;
+`CancelRead` cancels the stream's QPACK work, which ends the wait; a body close
+or the request's end reach it through its context.
 
-What is not interruptible is the QPACK cancellation that releases an abandoned
-request: it is written under the decoder's lock, after any section still in
-flight. It runs in the stream's cleanup, never in an application call, and
-ends with the connection (the session interrupts the decoder stream's writer).
-Until then a peer that withholds decoder-stream credit keeps the abandoned
-request's slot occupied. Ordinary requests have always had this property;
-removing it means queueing decoder feedback instead of writing it under the
-lock, which is a change to `FieldDecoder`, not to raw streams. A response read
-through its validated end needs no cancellation and releases at once.
+Decoder feedback used to be written under the shared decoder's lock, which put
+the peer's decoder-stream credit on this path three ways: a section's own
+acknowledgment, another stream's write holding the lock, and the cancellation
+that releases an abandoned request. It is now queued and written by one
+goroutine outside the lock ([HTTP3.md](HTTP3.md), QPACK decoder feedback), so
+none of them remains, and an abandoned request gives its slot back whether or
+not the peer accepts the cancellation.
 
 `ReadResponse` keeps its count of interim responses across calls repeated
 after a deadline, so `MaxInformational` bounds the response rather than each

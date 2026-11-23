@@ -92,6 +92,7 @@ func TestFieldDecoderDetach(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	d.Flushed()
 	writes := writer.writes
 	cause := errors.New("peer drained")
 	d.Detach(cause)
@@ -111,6 +112,7 @@ func TestFieldDecoderDetach(t *testing.T) {
 	if d.Cancel(4) != cause || d.EncoderInstruction(nil) != cause {
 		t.Fatal("lost detach cause")
 	}
+	d.Flushed()
 	if writer.writes != writes {
 		t.Fatal("feedback written after detach")
 	}

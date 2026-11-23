@@ -46,15 +46,17 @@ func TestSessionRequestFeedbackFailureStopsSession(t *testing.T) {
 			case <-time.After(time.Second):
 				t.Fatal("encoder stream not consumed")
 			}
-			// The peer stops the decoder stream; only a request-side write notices.
+			// The peer stops the decoder stream; only feedback for a request
+			// notices. The request-side call has queued it and succeeds.
+			session.Decoder().Flushed()
 			feedback.fail = tc.cause
 			if tc.submit {
 				_, err = session.Decoder().Submit(0, []byte{2, 0, 0x80})
 			} else {
 				err = session.Decoder().Cancel(0)
 			}
-			if err != tc.cause {
-				t.Fatal("request-side cause", err)
+			if err != nil {
+				t.Fatal("request-side call", err)
 			}
 			select {
 			case <-session.Done():
