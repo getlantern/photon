@@ -221,6 +221,9 @@ needs (a partial frame header, HEADERS block, skipped frame or section).
   do, for `RoundTrip`, unless `DisableCompression` is set.
 - `SendDatagram` fails until datagrams are negotiated instead of sending
   optimistically.
+- An empty `Write` after `Close`, or after the send direction failed, returns
+  that error, as `TryWriteAll` does. Upstream `Write` returns `0, nil` for an
+  empty slice whatever the stream's state.
 - A failed response header write in `HTTPStream` is terminal rather than
   retryable.
 - With a response header sent, `Stream` enforces message rules upstream leaves

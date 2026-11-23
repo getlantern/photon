@@ -1518,3 +1518,35 @@ func TestResetInterruptsBlockedClose(t *testing.T) {
 		})
 	}
 }
+
+// An empty Write sends nothing, but it must still report a send direction that
+// has ended, exactly as a Write with data or TryWriteAll would.
+func TestRawStreamEmptyWriteReportsEndedSend(t *testing.T) {
+	session, transport, config, _ := rawFixture(t, bytes.NewReader(nil))
+	stream, err := session.openRequestStream(context.Background(), transport, nil, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.CancelRead(0x10c)
+	request, _ := http.NewRequest("POST", "https://example.com/raw", nil)
+	if err := stream.SendRequestHeader(request); err != nil {
+		t.Fatal(err)
+	}
+	sent := len(transport.Bytes())
+	if n, err := stream.Write(nil); n != 0 || err != nil {
+		t.Fatal("empty write on an open stream:", n, err)
+	}
+	if len(transport.Bytes()) != sent {
+		t.Fatal("empty write sent a frame")
+	}
+	if err := stream.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_, want := stream.Write([]byte("x"))
+	if want == nil {
+		t.Fatal("write after Close succeeded")
+	}
+	if n, err := stream.Write(nil); n != 0 || err == nil || err.Error() != want.Error() {
+		t.Fatalf("empty write after Close: %d %v, want %v", n, err, want)
+	}
+}

@@ -128,8 +128,9 @@ func (s *RawStream) Write(p []byte) (n int, err error) {
 	if s.writer == nil {
 		return 0, s.noWriter
 	}
+	// An empty Write sends no frame, but still reports an ended send direction.
 	if len(p) == 0 {
-		return 0, nil
+		return 0, s.writer.writable()
 	}
 	return s.writer.Write(p)
 }

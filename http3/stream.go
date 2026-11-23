@@ -65,7 +65,8 @@ type Stream struct {
 func (s *Stream) Read(b []byte) (int, error) { return s.datagramStream.Read(b) }
 
 // Write sends b in one DATA frame. It fails if HTTPStream was called before
-// the response header was set.
+// the response header was set. An empty b sends nothing, but still returns the
+// error of a send direction that has ended.
 func (s *Stream) Write(b []byte) (int, error) { return s.datagramStream.Write(b) }
 
 // TryWriteAll writes b in a DATA frame if the entire frame can be queued

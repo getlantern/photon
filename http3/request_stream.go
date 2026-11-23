@@ -186,6 +186,8 @@ func (s *RequestStream) ReadResponse() (*http.Response, error) { return s.stream
 func (s *RequestStream) Read(b []byte) (int, error) { return s.stream.Read(b) }
 
 // Write sends b in one DATA frame. It can only be used after SendRequestHeader.
+// An empty b sends nothing, but still returns the error of a send direction
+// that has ended.
 func (s *RequestStream) Write(b []byte) (int, error) { return s.stream.Write(b) }
 
 // TryWriteAll writes b in a DATA frame if the entire frame can be queued
