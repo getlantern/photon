@@ -243,3 +243,94 @@ func TestFieldDecoderInterruptedFeedback(t *testing.T) {
 		t.Fatal("section did not get the owner's cause")
 	}
 }
+
+// The backlog can overflow under any call that produces feedback, and ending
+// the decoder there releases every waiting section. The call must still finish
+// its own work on the state it started with, and must leave the decoder free:
+// a later Close returns.
+func TestFieldDecoderBacklogOverflowAtEachEntryPoint(t *testing.T) {
+	drained := errors.New("peer drained")
+	for _, graceful := range []bool{false, true} {
+		for _, entry := range []string{"Submit", "Cancel", "EncoderInstruction"} {
+			name := entry + "/fail"
+			if graceful {
+				name = entry + "/detach"
+			}
+			t.Run(name, func(t *testing.T) {
+				writer := newStalledFeedback()
+				defer close(writer.release)
+				d := stall(t, writer)
+				d.feedbackFailed = func(error) error {
+					if graceful {
+						return drained
+					}
+					return nil
+				}
+				// One entry is in the table; two sections wait for a second.
+				if err := decoderUpdate(t, d, insertX); err != nil {
+					t.Fatal(err)
+				}
+				first, _ := d.Submit(0, []byte{3, 0, 0x80})
+				second, _ := d.Submit(4, []byte{3, 0, 0x80})
+				d.mu.Lock()
+				d.maxQueued = len(d.queue)
+				d.mu.Unlock()
+				overflowed := error(drained)
+				finished := make(chan error, 1)
+				go func() {
+					switch entry {
+					case "Submit":
+						// Decodes at once and owes an acknowledgment.
+						result, err := d.Submit(8, []byte{2, 0, 0x80})
+						if err == nil {
+							err = (<-result).Err
+						}
+						finished <- err
+					case "Cancel":
+						finished <- d.Cancel(0)
+					case "EncoderInstruction":
+						// Completes both waiting sections: two acknowledgments.
+						wire, _ := qpack.AppendEncoderInstruction(nil, insertX)
+						finished <- d.EncoderInstruction(wire)
+					}
+				}()
+				var err error
+				select {
+				case err = <-finished:
+				case <-time.After(3 * time.Second):
+					t.Fatal(entry, "never returned from the overflow")
+				}
+				var protocol *h3.Error
+				if !graceful {
+					if !errors.As(err, &protocol) || protocol.Code != h3.ExcessiveLoad {
+						t.Fatal(err)
+					}
+					overflowed = protocol
+				} else if entry != "Submit" && err != drained || entry == "Submit" && err != nil {
+					// A section that decoded before the detach keeps its fields.
+					t.Fatal(err)
+				}
+				// Each waiting section was either completed by the call or
+				// released by the decoder's end; none is left waiting.
+				for i, result := range []<-chan DecodedSection{first, second} {
+					decoded := readySection(t, result)
+					switch {
+					case entry == "EncoderInstruction":
+						if decoded.Err != nil || len(decoded.Fields) != 1 {
+							t.Fatal("section the insertion completed:", decoded)
+						}
+					case entry == "Cancel" && i == 0:
+						if decoded.Err != ErrFieldSectionCanceled {
+							t.Fatal("canceled section:", decoded.Err)
+						}
+					default:
+						if decoded.Err != overflowed {
+							t.Fatal("waiting section:", decoded.Err)
+						}
+					}
+				}
+				returnsPromptly(t, "Close", func() { d.Close(errors.New("connection stopped")) })
+			})
+		}
+	}
+}

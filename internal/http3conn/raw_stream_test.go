@@ -1401,3 +1401,54 @@ func TestTakeoverConcurrentWithReadOutcome(t *testing.T) {
 		})
 	}
 }
+
+// finDeadlineStream fails to queue FIN while its deadline is expired.
+type finDeadlineStream struct {
+	*datagramTestStream
+	expired bool
+}
+
+func (s *finDeadlineStream) Close() error {
+	if s.expired {
+		return os.ErrDeadlineExceeded
+	}
+	return s.datagramTestStream.Close()
+}
+
+// A Close that times out before FIN is queued has ended nothing: the stream
+// still sends datagrams and DATA, and Close can be repeated. Once FIN is
+// queued, datagram sending is over.
+func TestCloseDeadlineKeepsStreamUsable(t *testing.T) {
+	s, unused, _ := datagramSendSession(t, datagramSinkFunc(func(context.Context, []byte) error { return nil }))
+	unused.Remove()
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(context.Canceled)
+	receiveCtx, receiveCancel := context.WithCancel(context.Background())
+	defer receiveCancel()
+	transport := &finDeadlineStream{datagramTestStream: &datagramTestStream{exchangeStream: &exchangeStream{serveStream: &serveStream{source: bytes.NewReader(nil)}, sendCtx: ctx, sendCancel: cancel}, receiveCtx: receiveCtx, receiveCancel: receiveCancel}, expired: true}
+	bound, err := s.BindDatagramStream(transport, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bound.Release(context.Background())
+	writer := responseWriterOn(t, bound, "GET")
+	if err := writer.Headers(responseFields("200")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); !h3.IsDeadline(err) {
+		t.Fatal(err)
+	}
+	if err := bound.SendDatagram(context.Background(), []byte("after the deadline")); err != nil {
+		t.Fatal("timed-out Close ended datagram sending:", err)
+	}
+	if _, err := writer.Write([]byte("more")); err != nil {
+		t.Fatal("timed-out Close ended the message:", err)
+	}
+	transport.expired = false
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := bound.SendDatagram(context.Background(), []byte("after FIN")); !errors.Is(err, ErrDatagramSendClosed) {
+		t.Fatal("datagram sent after FIN:", err)
+	}
+}

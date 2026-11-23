@@ -81,11 +81,14 @@ func NewFieldDecoder(limits qpack.DecoderLimits, writer io.Writer) (*FieldDecode
 // and never blocks. Adjacent insert count increments are merged, which the
 // peer cannot tell from receiving them separately; nothing is reordered,
 // because an increment counts from whatever the instructions before it
-// acknowledged. A backlog over the limit is a peer that does not read its
-// decoder stream, and fails the decoder.
-func (d *FieldDecoder) enqueue(instructions []qpack.DecoderInstruction) error {
+// acknowledged.
+//
+// It changes nothing but the queue, so the caller's view of pending sections
+// and of the decoder stays valid. It reports a backlog over the limit, which
+// the caller hands to overflow once its own work on that state is done.
+func (d *FieldDecoder) enqueue(instructions []qpack.DecoderInstruction) (overflow bool) {
 	if d.detached != nil || d.interrupted {
-		return nil
+		return false
 	}
 	for _, instruction := range instructions {
 		if last := len(d.queue) - 1; instruction.Type == qpack.InsertCountIncrement && last >= 0 && d.queue[last].Type == qpack.InsertCountIncrement {
@@ -95,18 +98,26 @@ func (d *FieldDecoder) enqueue(instructions []qpack.DecoderInstruction) error {
 		d.queue = append(d.queue, instruction)
 	}
 	if len(d.queue) > d.maxQueued {
-		err := &h3.Error{Code: h3.ExcessiveLoad, Reason: "QPACK decoder feedback backlog"}
-		if cause := d.undeliverable(err); cause != nil {
-			d.detach(cause)
-			return nil
-		}
-		return d.fail(err)
+		return true
 	}
 	if len(d.queue) > 0 && d.flushing == nil {
 		d.flushing = make(chan struct{})
 		go d.flush(d.flushing)
 	}
-	return nil
+	return false
+}
+
+// overflow ends the decoder for a feedback backlog over the limit: a peer that
+// does not read its decoder stream. It releases every section still waiting,
+// so a caller runs it last, after delivering the results it produced itself.
+// It returns the error the decoder now reports.
+func (d *FieldDecoder) overflow() error {
+	err := &h3.Error{Code: h3.ExcessiveLoad, Reason: "QPACK decoder feedback backlog"}
+	if cause := d.undeliverable(err); cause != nil {
+		d.detach(cause)
+		return cause
+	}
+	return d.fail(err)
 }
 
 // flush writes queued feedback until there is none, or the decoder ends.
@@ -173,9 +184,7 @@ func (d *FieldDecoder) Submit(id uint64, section []byte) (<-chan DecodedSection,
 	if err != nil {
 		return nil, d.fail(d.protocolError(err, QPACKDecompressionFailed))
 	}
-	if err = d.enqueue(feedback); err != nil {
-		return nil, err
-	}
+	overflow := d.enqueue(feedback)
 	if d.detached != nil && blocked {
 		d.decoder.Cancel(id)
 		return nil, d.detached
@@ -186,6 +195,13 @@ func (d *FieldDecoder) Submit(id uint64, section []byte) (<-chan DecodedSection,
 	} else {
 		result <- DecodedSection{Fields: fields}
 		close(result)
+	}
+	// A section decoded before the decoder ended keeps its fields unless the
+	// decoder failed outright; one left waiting was released with the cause.
+	if overflow {
+		if d.overflow(); d.err != nil {
+			return nil, d.err
+		}
 	}
 	return result, nil
 }
@@ -212,16 +228,17 @@ func (d *FieldDecoder) EncoderInstruction(instruction []byte) error {
 	if n != len(instruction) {
 		return d.fail(&h3.Error{Code: QPACKEncoderStreamError, Reason: "multiple encoder instructions in one dispatch"})
 	}
-	if err = d.enqueue(feedback); err != nil {
-		return err
-	}
+	overflow := d.enqueue(feedback)
 	for _, section := range ready {
 		result := d.pending[section.StreamID]
 		delete(d.pending, section.StreamID)
 		result <- DecodedSection{Fields: section.Fields}
 		close(result)
 	}
-	return d.detached
+	if overflow {
+		return d.overflow()
+	}
+	return nil
 }
 func (d *FieldDecoder) Cancel(id uint64) error {
 	d.mu.Lock()
@@ -236,15 +253,16 @@ func (d *FieldDecoder) Cancel(id uint64) error {
 	if err != nil {
 		return d.fail(d.protocolError(err, QPACKDecompressionFailed))
 	}
-	if err = d.enqueue(feedback); err != nil {
-		return err
-	}
+	overflow := d.enqueue(feedback)
 	if result, ok := d.pending[id]; ok {
 		delete(d.pending, id)
 		result <- DecodedSection{Err: ErrFieldSectionCanceled}
 		close(result)
 	}
-	return d.detached
+	if overflow {
+		return d.overflow()
+	}
+	return nil
 }
 
 // Detach ends the instruction and feedback streams after a graceful peer close

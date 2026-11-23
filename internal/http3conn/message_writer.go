@@ -207,12 +207,23 @@ func (w *MessageWriter) Close() error {
 	if w.unfinished() {
 		return errUnfinishedData
 	}
+	// Finishing the message is undone if FIN is not queued after all.
+	message := *w.message
+	var body BodyLength
+	if message.body != nil {
+		body = *message.body
+	}
 	if err := w.message.Finish(); err != nil {
 		return w.fail(err)
 	}
 	if err := w.stream.Close(); err != nil {
-		// A deadline that expired before FIN was queued sent nothing.
+		// A deadline that expired before FIN was queued sent nothing: the
+		// message is as open as it was.
 		if h3.IsDeadline(err) {
+			*w.message = message
+			if message.body != nil {
+				*message.body = body
+			}
 			return err
 		}
 		return w.fail(err)

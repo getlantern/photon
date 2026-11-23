@@ -6,6 +6,7 @@ import (
 	"net"
 
 	quic "github.com/getlantern/photon"
+	h3 "github.com/getlantern/photon/internal/http3wire"
 )
 
 // DatagramTransportStream provides independent send and receive completion.
@@ -66,9 +67,15 @@ func (s *DatagramStream) Read(p []byte) (int, error) {
 	}
 	return n, err
 }
+
+// Close queues FIN with datagram sending held off, so that no datagram can
+// follow it. If a deadline expires before FIN is queued the stream is as it
+// was and datagram sending resumes; any other outcome ends it.
 func (s *DatagramStream) Close() error {
-	s.request.CloseSend()
-	return s.DatagramTransportStream.Close()
+	finish := s.request.suspendSend()
+	err := s.DatagramTransportStream.Close()
+	finish(!h3.IsDeadline(err))
+	return err
 }
 func (s *DatagramStream) CancelWrite(code quic.StreamErrorCode) {
 	s.request.CloseSend()
@@ -98,7 +105,7 @@ func (s *DatagramStream) sendEnded() {
 	if !errors.As(cause, &reset) {
 		cause = ErrDatagramSendClosed
 	}
-	s.request.cancelSend(cause)
+	s.request.endSend(cause)
 }
 
 // DetachDatagrams releases HTTP datagram state without waiting for transport

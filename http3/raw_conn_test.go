@@ -151,6 +151,11 @@ func TestRawServerConn(t *testing.T) {
 	go func() { shutdown <- server.Shutdown(ctx) }()
 	select {
 	case <-client.session.GoawayReceived():
+	case <-client.session.Done():
+		// A GOAWAY racing the close is still a GOAWAY.
+		if _, draining := client.session.Goaway(); !draining {
+			t.Fatal("raw connection closed without GOAWAY:", context.Cause(client.Context()))
+		}
 	case <-ctx.Done():
 		t.Fatal("raw connection sent no GOAWAY")
 	}

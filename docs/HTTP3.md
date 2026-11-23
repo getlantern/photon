@@ -62,6 +62,10 @@ request's concurrency slot.
   and at most one cancellation, so only a peer that has stopped reading its
   decoder stream gets there. Past the bound the decoder fails with
   H3_EXCESSIVE_LOAD and the connection is closed with that code.
+- Overflow and state. Queueing changes nothing but the queue. A call whose
+  feedback overflows the bound first finishes its own work on the pending
+  sections it started with, then ends the decoder as its last step, which
+  releases whatever is still waiting.
 - Failure. A failed write is reported through the session's hook as before: the
   session is canceled and the connection aborted, and the decoder fails, which
   releases blocked sections and makes later calls return the error. The call

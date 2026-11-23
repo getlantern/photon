@@ -39,6 +39,8 @@ type DatagramRequest struct {
 	cancelAbort          context.CancelCauseFunc
 	abort                func(uint64) // guarded by owner.mu; called outside the lock
 	sendGate             chan struct{}
+	sendMu               sync.Mutex // guards sendContext, cancelSend and sendEnded
+	sendEnded            error      // sending is over for good, with this cause
 	sendContext          context.Context
 	receiveContext       context.Context // guarded by owner.mu
 	cancelSend           context.CancelCauseFunc
@@ -235,7 +237,7 @@ func (d *DatagramDispatch) Close() {
 	defer d.mu.Unlock()
 	d.closed = true
 	for _, r := range d.requests {
-		r.cancelSend(ErrDatagramSendClosed)
+		r.endSend(ErrDatagramSendClosed)
 		r.closeLocked()
 	}
 	clear(d.requests)
@@ -243,11 +245,49 @@ func (d *DatagramDispatch) Close() {
 
 // CloseSend must precede transport FIN/RESET_STREAM. It joins an already admitted
 // send after interrupting its queue-capacity wait; receive remains independent.
-func (r *DatagramRequest) CloseSend() {
-	r.cancelSend(ErrDatagramSendClosed)
+func (r *DatagramRequest) CloseSend() { r.suspendSend()(true) }
+
+// suspendSend stops datagram sending for an attempt to end the stream's send
+// direction: no datagram may follow FIN. It interrupts and joins an admitted
+// send and keeps others out until finish is called. finish(true) ends sending
+// for good. finish(false) resumes it: the attempt did not end the stream, as
+// when a deadline expires before FIN is queued. A send the attempt interrupted
+// has failed either way.
+func (r *DatagramRequest) suspendSend() (finish func(ended bool)) {
+	r.sendMu.Lock()
+	interrupt := r.cancelSend
+	r.sendMu.Unlock()
+	interrupt(ErrDatagramSendClosed)
 	<-r.sendGate
-	defer func() { r.sendGate <- struct{}{} }()
-	r.sendClosed = true
+	return func(ended bool) {
+		r.sendMu.Lock()
+		if ended {
+			r.sendClosed = true
+			if r.sendEnded == nil {
+				r.sendEnded = ErrDatagramSendClosed
+			}
+		} else if r.sendEnded == nil {
+			r.sendContext, r.cancelSend = context.WithCancelCause(context.Background())
+		}
+		r.sendMu.Unlock()
+		r.sendGate <- struct{}{}
+	}
+}
+
+// endSend ends datagram sending for good, without waiting for a send in progress.
+func (r *DatagramRequest) endSend(cause error) {
+	r.sendMu.Lock()
+	if r.sendEnded == nil {
+		r.sendEnded = cause
+	}
+	cancel := r.cancelSend
+	r.sendMu.Unlock()
+	cancel(cause)
+}
+func (r *DatagramRequest) sendLifetime() context.Context {
+	r.sendMu.Lock()
+	defer r.sendMu.Unlock()
+	return r.sendContext
 }
 
 // Check synchronously as well as observing cancellation asynchronously: a queued

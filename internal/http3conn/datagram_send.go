@@ -34,10 +34,11 @@ func (s *Session) SendHTTPDatagram(ctx context.Context, r *DatagramRequest, payl
 	}
 	sendCtx, cancel := context.WithCancelCause(ctx)
 	stop := context.AfterFunc(s.ctx, func() { cancel(context.Cause(s.ctx)) })
-	stopRequest := context.AfterFunc(r.sendContext, func() { cancel(context.Cause(r.sendContext)) })
+	lifetime := r.sendLifetime()
+	stopRequest := context.AfterFunc(lifetime, func() { cancel(context.Cause(lifetime)) })
 	defer func() { stop(); stopRequest(); cancel(context.Canceled) }()
-	if r.sendContext.Err() != nil {
-		cancel(context.Cause(r.sendContext))
+	if lifetime.Err() != nil {
+		cancel(context.Cause(lifetime))
 	}
 	if s.ctx.Err() != nil {
 		cancel(context.Cause(s.ctx))
