@@ -120,7 +120,8 @@ func (s *RawStream) readEnded(err error) error {
 }
 
 // Write sends p in one DATA frame. After an expired write deadline, the next
-// Write or TryWriteAll first supplies the rest of the interrupted frame.
+// Write or TryWriteAll with data first supplies the rest of the interrupted
+// frame.
 func (s *RawStream) Write(p []byte) (n int, err error) {
 	defer func() { err = s.mapError.apply(s.ended(err)) }()
 	s.writeMu.Lock()
@@ -161,7 +162,9 @@ func (s *RawStream) TryWriteAll(p []byte) (err error) {
 	if s.writer == nil {
 		return s.noWriter
 	}
-	if len(p) == 0 && !s.writer.unfinished() {
+	// An empty call only reports state, even with a DATA frame unfinished: a
+	// call with data finishes that frame.
+	if len(p) == 0 {
 		return s.sendEnded()
 	}
 	return s.writer.TryWrite(p)
@@ -195,15 +198,19 @@ func (s *RawStream) CancelRead(code quic.StreamErrorCode) {
 	// A section waiting for the dynamic table reads nothing from the stream, so
 	// resetting the stream would not wake it. Abandoning its QPACK work does,
 	// and is due anyway. Nothing can be waiting once receiving has ended.
+	waiting := false
 	select {
 	case <-s.received:
 	default:
 		s.canceledRead.CompareAndSwap(nil, &quic.StreamError{StreamID: s.stream.StreamID(), ErrorCode: code})
-		if fields != nil {
-			_ = fields.Cancel()
-		}
+		waiting = fields != nil
 	}
+	// The code reaches the stream before the wait wakes: the receive call it
+	// wakes resets the stream too, and the peer sees only the first code.
 	s.stream.CancelRead(code)
+	if waiting {
+		_ = fields.Cancel()
+	}
 	s.receiveEnded()
 }
 
