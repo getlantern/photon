@@ -204,7 +204,7 @@ after a deadline, so `MaxInformational` bounds the response rather than each
 attempt; the `MessageReader` already keeps everything else a repeated call
 needs (a partial frame header, HEADERS block, skipped frame or section).
 
-## Knowing differences from upstream
+## Known differences from upstream
 
 - Server extension routing is unchanged: Extended CONNECT reaches a handler
   only through `ExtendedConnectHandlers`/`DatagramHandlers`.

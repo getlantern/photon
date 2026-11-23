@@ -57,7 +57,9 @@ request's concurrency slot.
   so none is dropped or duplicated. An acknowledgment followed by a
   cancellation of the same stream is sent in that order; QUIC never reuses a
   stream ID, so a cancellation cannot meet a later stream.
-- Bound. Unwritten feedback is limited to 8192 instructions (16 bytes each). A
+- Bound. The queue of feedback waiting for the flusher is limited to 8192
+  instructions (16 bytes each). The batch the flusher is writing has already
+  left the queue and is not counted, so at most twice that is held unwritten. A
   request owes one acknowledgment per field section that used the dynamic table
   and at most one cancellation, so only a peer that has stopped reading its
   decoder stream gets there. Past the bound the decoder fails with
