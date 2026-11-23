@@ -1656,9 +1656,9 @@ func TestCancelReadCodeBeatsWokenQPACKWait(t *testing.T) {
 	}
 }
 
-// Raw request streams and ExchangeRequest share this decision. A graceful peer
-// close keeps a response unless a GOAWAY already read rejects its stream; the
-// close can arrive before the control stream reader reaches the GOAWAY.
+// ExchangeRequest uses this decision. A graceful peer close keeps a response
+// unless a GOAWAY already read rejects its stream; the close can arrive before
+// the control stream reader reaches the GOAWAY.
 func TestKeptAfterClose(t *testing.T) {
 	graceful := &quic.PeerCloseError{Application: true, Code: 0x100}
 	for _, row := range []struct {
@@ -1672,7 +1672,7 @@ func TestKeptAfterClose(t *testing.T) {
 		{"graceful, GOAWAY keeps the stream", graceful, &PeerGoaway{ID: 8, RequestIDs: true}, 4, true},
 		{"graceful, GOAWAY rejects the stream", graceful, &PeerGoaway{ID: 4, RequestIDs: true}, 4, false},
 		{"error close", &quic.PeerCloseError{Application: true, Code: 0x102}, nil, 4, false},
-		{"transport close", &quic.PeerCloseError{Code: 0}, nil, 4, false},
+		{"transport close with the same code", &quic.PeerCloseError{Code: 0x100}, nil, 4, false},
 		{"local stop", errors.New("stopped"), nil, 4, false},
 	} {
 		t.Run(row.name, func(t *testing.T) {

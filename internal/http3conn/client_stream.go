@@ -92,9 +92,11 @@ func (s *Session) openRequestStream(parent context.Context, stream ClientExchang
 	observed := make(chan struct{})
 	observeLease := func() {
 		cause := context.Cause(lease.Context())
-		// As for ExchangeRequest: a graceful close leaves a buffered response
-		// readable, unless a GOAWAY already read rejects this stream.
-		if s.keptAfterClose(cause, uint64(stream.StreamID())) {
+		var closed *quic.PeerCloseError
+		goaway := s.goaway.Load()
+		// As for ExchangeRequest: a graceful close after a GOAWAY that kept this
+		// stream leaves a buffered response readable.
+		if errors.As(cause, &closed) && closed.Application && closed.Code == 0x100 && goaway != nil && !goaway.Rejects(uint64(stream.StreamID())) {
 			return
 		}
 		cancel(cause)

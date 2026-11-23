@@ -275,19 +275,21 @@ func StartSession(parent context.Context, transport IncomingTransport, local *Lo
 	return s, nil
 }
 
-// drained returns the session's cause if it is a graceful peer close.
-// ExchangeRequest keeps accepted responses readable after one; their buffered
-// field sections still need the table state received so far.
+// drained returns the session's cause if it is a graceful peer close: for a
+// server, only one after the client's GOAWAY. ExchangeRequest keeps accepted
+// responses readable after one; their buffered field sections still need the
+// table state received so far.
 func (s *Session) drained() error {
-	if cause := context.Cause(s.ctx); gracefulPeerClose(cause) {
+	cause := context.Cause(s.ctx)
+	if gracefulPeerClose(cause) && (!s.server || s.goaway.Load() != nil) {
 		return cause
 	}
 	return nil
 }
 
 // keptAfterClose reports whether a peer close leaves the response on request
-// stream id readable: a graceful close does, unless a GOAWAY the session has
-// read shows the peer did not process the request. QUIC can acknowledge the
+// stream id readable: a graceful close does, unless a GOAWAY the session read
+// before the close shows the peer did not process the request. QUIC can acknowledge the
 // peer's GOAWAY before the control stream reader gets to it, so the close may
 // be seen first. A response the transport holds complete was processed either
 // way, and the transport refuses to read an incomplete one after the close.

@@ -77,7 +77,7 @@ request's concurrency slot.
   buffered responses still decode, and further feedback is dropped. This does
   not depend on the session having read the peer's GOAWAY: QUIC can acknowledge
   the GOAWAY, and the peer close, before the control stream reader reaches it.
-  A GOAWAY that was read still rejects the requests it names, and the transport
+  A GOAWAY read before the close still rejects the requests it names, and the transport
   refuses to read a response that was not complete when the connection closed.
 - Shutdown. The session interrupts the decoder stream with a write deadline,
   then closes or detaches the decoder, then waits for the writer (`Flushed`).
