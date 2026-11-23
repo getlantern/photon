@@ -1,0 +1,33 @@
+File: quic-current-echo.test
+Type: cpu
+Time: 2026-09-29 18:08:00 MDT
+Duration: 3.30s, Total samples = 10.56s (319.59%)
+Showing nodes accounting for 9.89s, 93.66% of 10.56s total
+Dropped 186 nodes (cum <= 0.05s)
+Showing top 25 nodes out of 107
+      flat  flat%   sum%        cum   cum%
+     6.59s 62.41% 62.41%      6.59s 62.41%  syscall.rawsyscalln
+     1.27s 12.03% 74.43%      1.27s 12.03%  runtime.kevent
+     0.91s  8.62% 83.05%      0.91s  8.62%  runtime.usleep
+     0.59s  5.59% 88.64%      0.59s  5.59%  runtime.pthread_cond_wait
+     0.29s  2.75% 91.38%      0.29s  2.75%  runtime.pthread_cond_signal
+     0.07s  0.66% 92.05%      0.81s  7.67%  runtime.stealWork
+     0.05s  0.47% 92.52%      0.19s  1.80%  runtime.selectgo
+     0.02s  0.19% 92.71%      0.06s  0.57%  runtime.sellock
+     0.01s 0.095% 92.80%      0.09s  0.85%  github.com/quic-go/quic-go.(*Conn).handleFrames
+     0.01s 0.095% 92.90%      0.21s  1.99%  github.com/quic-go/quic-go.(*Conn).handlePackets
+     0.01s 0.095% 92.99%      0.15s  1.42%  github.com/quic-go/quic-go.(*Conn).handleShortHeaderPacket
+     0.01s 0.095% 93.09%      0.12s  1.14%  github.com/quic-go/quic-go.(*Conn).sendPackets
+     0.01s 0.095% 93.18%      0.07s  0.66%  github.com/quic-go/quic-go.(*ReceiveStream).Read
+     0.01s 0.095% 93.28%      0.08s  0.76%  github.com/quic-go/quic-go.(*packetPacker).appendPacket
+     0.01s 0.095% 93.37%      0.07s  0.66%  runtime.mallocgc
+     0.01s 0.095% 93.47%      1.25s 11.84%  runtime.netpoll
+     0.01s 0.095% 93.56%      0.13s  1.23%  runtime.resetspinning
+     0.01s 0.095% 93.66%      0.73s  6.91%  runtime.runqgrab
+         0     0% 93.66%      0.07s  0.66%  github.com/getlantern/photon.(*SendStream).Write
+         0     0% 93.66%      0.07s  0.66%  github.com/getlantern/photon.(*SendStream).WriteWithLimit
+         0     0% 93.66%      0.08s  0.76%  github.com/getlantern/photon.(*streamDeadline).run
+         0     0% 93.66%      0.06s  0.57%  github.com/getlantern/photon/internal/transport.(*UDPServer).Wait
+         0     0% 93.66%      0.06s  0.57%  github.com/getlantern/photon/internal/transport.(*UDPServer).invoke
+         0     0% 93.66%      0.92s  8.71%  github.com/getlantern/photon/internal/transport.(*UDPServer).readSocket
+         0     0% 93.66%      2.72s 25.76%  github.com/getlantern/photon/internal/transport.(*UDPServer).run

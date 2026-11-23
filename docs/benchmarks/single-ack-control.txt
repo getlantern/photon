@@ -1,0 +1,9 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/getlantern/photon/internal/recovery
+cpu: Apple M4
+BenchmarkACKBatch/1-10  	  100000	       232.6 ns/op	     128 B/op	       2 allocs/op
+BenchmarkACKBatch/1-10  	  100000	       175.8 ns/op	     128 B/op	       2 allocs/op
+BenchmarkACKBatch/1-10  	  100000	       154.1 ns/op	     128 B/op	       2 allocs/op
+PASS
+ok  	github.com/getlantern/photon/internal/recovery	0.329s

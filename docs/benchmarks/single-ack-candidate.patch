@@ -1,0 +1,32 @@
+--- a/internal/recovery/sent.go
++++ b/internal/recovery/sent.go
+@@ -205,8 +205,15 @@
+ 	// avoids geometric slice growth for cumulative ACKs without reserving from
+ 	// peer-controlled range widths (or allocating for duplicate ACKs).
+ 	lookup := useACKLookup(f, len(s.packets))
++	// The largest packet was already looked up for RTT and ECN processing.
++	// Reuse it when the frame acknowledges just that packet.
++	single := len(f.Ranges) == 1 && f.Ranges[0].Smallest == largest
+ 	count := 0
+-	if lookup {
++	if single {
++		if largestNew {
++			count = 1
++		}
++	} else if lookup {
+ 		for _, span := range f.Ranges {
+ 			for pn := span.Smallest; pn <= span.Largest; pn++ {
+ 				if _, ok := s.packets[pn]; ok {
+@@ -230,7 +237,11 @@
+ 		eliciting = eliciting || p.AckEliciting
+ 		r.remove(s, p)
+ 	}
+-	if lookup {
++	if single {
++		if largestNew {
++			retire(largestPacket)
++		}
++	} else if lookup {
+ 		// Wire ranges descend. Visit them in reverse so retirement produces
+ 		// ascending packet numbers directly, including disjoint ranges.
+ 		for i := len(f.Ranges) - 1; i >= 0; i-- {

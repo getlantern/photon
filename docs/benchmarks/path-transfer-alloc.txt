@@ -1,0 +1,19 @@
+File: quic-path-transfer.test
+Type: alloc_space
+Time: 2026-09-20 11:25:41 MDT
+Showing nodes accounting for 112.55MB, 85.72% of 131.31MB total
+Dropped 38 nodes (cum <= 0.66MB)
+Showing top 12 nodes out of 67
+      flat  flat%   sum%        cum   cum%
+   64.01MB 48.75% 48.75%    64.01MB 48.75%  github.com/getlantern/photon/internal/transport.(*Router).Sync
+   12.77MB  9.72% 58.47%    12.77MB  9.72%  github.com/getlantern/photon/internal/transport.init.func1
+    7.51MB  5.72% 64.19%     7.51MB  5.72%  github.com/getlantern/photon/internal/stream.(*Send).Write
+    5.51MB  4.19% 68.38%     6.01MB  4.57%  github.com/getlantern/photon/internal/packet.(*Keys).seal
+       5MB  3.81% 72.19%        5MB  3.81%  crypto/internal/fips140/aes/gcm.sliceForAppend
+    4.26MB  3.24% 75.43%     4.26MB  3.24%  github.com/getlantern/photon/internal/stream.NewReceive
+       3MB  2.28% 77.72%        3MB  2.28%  github.com/getlantern/photon/internal/wire.ConsumeFrame
+    2.50MB  1.90% 79.62%     4.50MB  3.43%  context.WithDeadlineCause
+       2MB  1.52% 81.15%        2MB  1.52%  time.newTimer
+       2MB  1.52% 82.67%    68.09MB 51.86%  github.com/getlantern/photon/internal/transport.(*ServerEndpoint).NextDatagram
+       2MB  1.52% 84.19%     2.50MB  1.90%  github.com/getlantern/photon/internal/transport.(*UDPServer).invoke
+       2MB  1.52% 85.72%        2MB  1.52%  internal/reflectlite.Swapper

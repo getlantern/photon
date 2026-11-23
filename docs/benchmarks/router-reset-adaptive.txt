@@ -1,0 +1,51 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/getlantern/photon/internal/transport
+cpu: Apple M4
+BenchmarkRouterUnknownReset/1/miss-10         	 1490368	       151.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/1/miss-10         	 1600920	       148.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/1/miss-10         	 1713081	       145.2 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/1/miss-10         	 1672652	       144.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/1/miss-10         	 1626993	       146.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/1/unique-10       	 1665778	       145.4 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/1/unique-10       	 1351324	       174.7 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/1/unique-10       	 1558268	       153.6 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/1/unique-10       	 1562797	       150.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/1/unique-10       	 1633462	       151.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/1/duplicate-10    	 1497848	       155.5 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/1/duplicate-10    	 1609388	       147.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/1/duplicate-10    	 1635283	       176.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/1/duplicate-10    	 1645911	       145.5 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/1/duplicate-10    	 1658594	       142.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/256/miss-10       	 1560271	       152.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/256/miss-10       	 1616086	       147.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/256/miss-10       	 1598194	       150.6 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/256/miss-10       	 1621814	       146.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/256/miss-10       	 1595785	       148.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/256/unique-10     	 1000000	       230.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/256/unique-10     	 1000000	       229.7 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/256/unique-10     	 1000000	       231.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/256/unique-10     	 1000000	       228.4 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/256/unique-10     	  888079	       233.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/256/duplicate-10  	  773995	       326.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/256/duplicate-10  	  806982	       313.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/256/duplicate-10  	  769435	       313.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/256/duplicate-10  	  761353	       311.4 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/256/duplicate-10  	  815008	       319.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/4096/miss-10      	 1597356	       149.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/4096/miss-10      	 1558981	       155.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/4096/miss-10      	 1390605	       167.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/4096/miss-10      	 1543668	       190.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/4096/miss-10      	 1257218	       185.5 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/4096/unique-10    	 1000000	       232.2 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/4096/unique-10    	 1000000	       240.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/4096/unique-10    	 1000000	       232.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/4096/unique-10    	 1000000	       231.5 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/4096/unique-10    	 1029310	       234.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/4096/duplicate-10 	  504898	       472.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/4096/duplicate-10 	  450886	       444.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/4096/duplicate-10 	  632764	       417.7 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/4096/duplicate-10 	  463700	       436.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouterUnknownReset/4096/duplicate-10 	  557232	       427.2 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/getlantern/photon/internal/transport	11.376s

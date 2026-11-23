@@ -1,0 +1,38 @@
+--- a/internal/transport/udp_ecn_send_unix.go
++++ b/internal/transport/udp_ecn_send_unix.go
+@@ -23,21 +23,7 @@
+ 	if marking > recovery.ECT0 {
+ 		return 0, errors.New("quic: invalid outgoing ECN marking")
+ 	}
+-	if udp, ok := socket.(*net.UDPConn); ok {
+-		// Keep this buffer separate from the interface call below: passing it
+-		// to an arbitrary implementation would force native sends to allocate.
+-		var control [64]byte
+-		size := encodeECNControl(control[:], peer, marking)
+-		n, _, err := udp.WriteMsgUDPAddrPort(data, control[:size], peer)
+-		return n, err
+-	}
+ 	var control [64]byte
+-	size := encodeECNControl(control[:], peer, marking)
+-	n, _, err := socket.WriteMsgUDP(data, control[:size], net.UDPAddrFromAddrPort(peer))
+-	return n, err
+-}
+-
+-func encodeECNControl(control []byte, peer netip.AddrPort, marking recovery.ECNMark) int {
+ 	size := unix.CmsgSpace(4)
+ 	header := (*unix.Cmsghdr)(unsafe.Pointer(&control[0]))
+ 	header.Level = unix.IPPROTO_IP
+@@ -48,7 +34,12 @@
+ 	}
+ 	header.SetLen(unix.CmsgLen(4))
+ 	binary.NativeEndian.PutUint32(control[unix.CmsgLen(0):], uint32(marking))
+-	return size
++	if udp, ok := socket.(*net.UDPConn); ok {
++		n, _, err := udp.WriteMsgUDPAddrPort(data, control[:size], peer)
++		return n, err
++	}
++	n, _, err := socket.WriteMsgUDP(data, control[:size], net.UDPAddrFromAddrPort(peer))
++	return n, err
+ }
+ 
+ func unsupportedECNError(err error) bool {

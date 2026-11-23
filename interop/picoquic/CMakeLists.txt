@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.18)
+project(independent_quic_peer C CXX)
+if(NOT PICOQUIC_SOURCE)
+    message(FATAL_ERROR "Set PICOQUIC_SOURCE to the pinned Picoquic checkout")
+endif()
+add_subdirectory("${PICOQUIC_SOURCE}" picoquic)
+add_executable(picoquic-client client.c)
+target_link_libraries(picoquic-client PRIVATE picoquic-core picoquic-log)

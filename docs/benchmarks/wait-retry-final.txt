@@ -1,0 +1,15 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/getlantern/photon/internal/transport
+cpu: Apple M4
+BenchmarkWaitRetries/1-10  	   10000	       705.6 ns/op	     152 B/op	       3 allocs/op
+BenchmarkWaitRetries/1-10  	   10000	       592.6 ns/op	     152 B/op	       3 allocs/op
+BenchmarkWaitRetries/1-10  	   10000	       519.9 ns/op	     152 B/op	       3 allocs/op
+BenchmarkWaitRetries/8-10  	   10000	      3213 ns/op	     152 B/op	       3 allocs/op
+BenchmarkWaitRetries/8-10  	   10000	      2859 ns/op	     152 B/op	       3 allocs/op
+BenchmarkWaitRetries/8-10  	   10000	      3047 ns/op	     152 B/op	       3 allocs/op
+BenchmarkWaitRetries/32-10 	   10000	     11310 ns/op	     152 B/op	       3 allocs/op
+BenchmarkWaitRetries/32-10 	   10000	     11680 ns/op	     152 B/op	       3 allocs/op
+BenchmarkWaitRetries/32-10 	   10000	     11658 ns/op	     152 B/op	       3 allocs/op
+PASS
+ok  	github.com/getlantern/photon/internal/transport	0.702s

@@ -1,0 +1,27 @@
+File: quic-write-batch-after.test
+Type: alloc_space
+Time: 2026-09-29 10:56:40 MDT
+Showing nodes accounting for 22.09MB, 8.11% of 272.24MB total
+Dropped 20 nodes (cum <= 1.36MB)
+Showing top 20 nodes out of 165
+      flat  flat%   sum%        cum   cum%
+   28.53MB 10.48% 10.48%    28.53MB 10.48%  github.com/getlantern/photon/internal/stream.(*Send).WriteBuffer
+   -6.50MB  2.39%  8.09%   -14.50MB  5.33%  github.com/getlantern/photon.(*SendStream).Write.func1
+   -5.50MB  2.02%  6.07%    -4.50MB  1.65%  github.com/getlantern/photon/internal/transport.(*UDPServer).invoke
+   -4.79MB  1.76%  4.31%    -4.79MB  1.76%  github.com/getlantern/photon/internal/transport.init.func1
+    3.50MB  1.29%  5.60%        7MB  2.57%  context.WithDeadlineCause
+    3.50MB  1.29%  6.89%     6.50MB  2.39%  github.com/getlantern/photon/internal/transport.(*Conn).enqueue
+    3.50MB  1.29%  8.17%     3.50MB  1.29%  golang.org/x/net/internal/socket.sockaddrToAddr
+       3MB  1.10%  9.27%        3MB  1.10%  github.com/getlantern/photon/internal/transport.reserveStreamItem
+      -3MB  1.10%  8.17%       -3MB  1.10%  encoding/binary.bigEndian.AppendUint32 (inline)
+   -2.50MB  0.92%  7.25%    -4.50MB  1.65%  time.NewTimer
+      -2MB  0.73%  6.52%    -2.50MB  0.92%  github.com/getlantern/photon/internal/recovery.(*congestionHistory).sent
+       2MB  0.73%  7.25%        2MB  0.73%  github.com/getlantern/photon/internal/packet.(*Keys).seal
+   -1.66MB  0.61%  6.64%    -5.16MB  1.89%  github.com/getlantern/photon/interop.BenchmarkServerStreamEcho.func1
+    1.50MB  0.55%  7.20%     1.50MB  0.55%  time.newTimer
+   -1.50MB  0.55%  6.65%    -1.50MB  0.55%  container/list.(*List).insertValue (inline)
+    1.50MB  0.55%  7.20%     1.50MB  0.55%  github.com/getlantern/photon/internal/recovery.(*congestionHistory).ack.func1
+   -1.50MB  0.55%  6.65%       -2MB  0.73%  github.com/getlantern/photon/internal/wire.ConsumeFrame
+    1.50MB  0.55%  7.20%       -2MB  0.73%  github.com/getlantern/photon/internal/recovery.(*Sent).OnSent
+    1.50MB  0.55%  7.75%    -1.50MB  0.55%  github.com/getlantern/photon/internal/transport.(*Conn).makeHeader
+       1MB  0.37%  8.11%        1MB  0.37%  github.com/quic-go/quic-go.(*frameSorter).push

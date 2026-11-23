@@ -1,0 +1,12 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/getlantern/photon/internal/packet
+cpu: Apple M4
+BenchmarkOpenOwnedPacket-10       	 3802842	       308.7 ns/op	4535.82 MB/s	    1440 B/op	       2 allocs/op
+BenchmarkOpenOwnedPacket-10       	 3898008	       307.3 ns/op	4555.41 MB/s	    1440 B/op	       2 allocs/op
+BenchmarkOpenOwnedPacket-10       	 3896368	       307.7 ns/op	4549.60 MB/s	    1440 B/op	       2 allocs/op
+BenchmarkOpenBorrowedPacket-10    	 5320482	       225.5 ns/op	6209.33 MB/s	      32 B/op	       1 allocs/op
+BenchmarkOpenBorrowedPacket-10    	 5333154	       225.5 ns/op	6207.31 MB/s	      32 B/op	       1 allocs/op
+BenchmarkOpenBorrowedPacket-10    	 5327772	       226.0 ns/op	6194.06 MB/s	      32 B/op	       1 allocs/op
+PASS
+ok  	github.com/getlantern/photon/internal/packet	8.302s

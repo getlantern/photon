@@ -1,0 +1,12 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/getlantern/photon/interop
+cpu: Apple M4
+BenchmarkServerStreamEcho/independent-10         	     100	  11359860 ns/op	 184.61 MB/s	 2053796 B/op	   41814 allocs/op
+BenchmarkServerStreamEcho/independent-10         	     100	  11306957 ns/op	 185.47 MB/s	 2135025 B/op	   41930 allocs/op
+BenchmarkServerStreamEcho/independent-10         	     100	  11120840 ns/op	 188.58 MB/s	 2138387 B/op	   41956 allocs/op
+BenchmarkServerStreamEcho/upstream-10            	     100	   6046624 ns/op	 346.83 MB/s	  653981 B/op	   19763 allocs/op
+BenchmarkServerStreamEcho/upstream-10            	     100	   6009493 ns/op	 348.97 MB/s	  653410 B/op	   19756 allocs/op
+BenchmarkServerStreamEcho/upstream-10            	     100	   6105826 ns/op	 343.47 MB/s	  655396 B/op	   19790 allocs/op
+PASS
+ok  	github.com/getlantern/photon/interop	5.901s

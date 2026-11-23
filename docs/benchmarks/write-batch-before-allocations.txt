@@ -1,0 +1,32 @@
+File: quic-write-batch-before.test
+Type: alloc_objects
+Time: 2026-09-29 10:56:40 MDT
+Showing nodes accounting for 3977771, 96.03% of 4142023 total
+Dropped 63 nodes (cum <= 20710)
+Showing top 25 nodes out of 106
+      flat  flat%   sum%        cum   cum%
+    799559 19.30% 19.30%    1138171 27.48%  golang.org/x/net/internal/socket.(*Conn).recvMsg
+    273078  6.59% 25.90%     273078  6.59%  container/list.(*List).insertValue (inline)
+    221191  5.34% 31.24%     469302 11.33%  github.com/getlantern/photon.(*SendStream).Write.func1
+    218463  5.27% 36.51%     404156  9.76%  github.com/getlantern/photon/internal/recovery.(*congestionHistory).sent
+    207536  5.01% 41.52%     207536  5.01%  golang.org/x/net/internal/socket.sockaddrToAddr
+    196611  4.75% 46.27%     196611  4.75%  encoding/binary.bigEndian.AppendUint32 (inline)
+    163845  3.96% 50.22%     163845  3.96%  github.com/getlantern/photon/internal/packet.(*Keys).seal
+    163842  3.96% 54.18%     163842  3.96%  github.com/quic-go/quic-go.(*ReceiveStream).handleStreamFrameImpl
+    154487  3.73% 57.91%     154487  3.73%  github.com/getlantern/photon/internal/transport.(*UDPServer).invoke
+    147460  3.56% 61.47%     147460  3.56%  github.com/getlantern/photon/internal/packet.(*Keys).open
+    142000  3.43% 64.90%     142000  3.43%  github.com/getlantern/photon/internal/recovery.(*congestionHistory).ack.func1 (inline)
+    139266  3.36% 68.26%     357725  8.64%  github.com/getlantern/photon/internal/transport.parsePacketFrames
+    131077  3.16% 71.42%     218459  5.27%  github.com/getlantern/photon/internal/wire.ConsumeFrame
+    131076  3.16% 74.59%     131076  3.16%  golang.org/x/sys/unix.anyToSockaddr
+    114691  2.77% 77.36%     114691  2.77%  net.ipToSockaddr
+    109228  2.64% 79.99%     158383  3.82%  github.com/getlantern/photon/internal/transport.(*Conn).enqueue
+     98305  2.37% 82.37%     252792  6.10%  github.com/getlantern/photon/internal/transport.(*UDPServer).Wait
+     87385  2.11% 84.48%    1004919 24.26%  github.com/getlantern/photon/internal/transport.(*Conn).NextDatagram
+     87382  2.11% 86.59%      87382  2.11%  github.com/getlantern/photon/internal/wire.consumeAckBody
+     81143  1.96% 88.55%     127959  3.09%  time.NewTimer
+     65539  1.58% 90.13%     220425  5.32%  github.com/getlantern/photon/internal/transport.(*Conn).WriteStream
+     65537  1.58% 91.71%     262148  6.33%  github.com/getlantern/photon/internal/transport.(*Conn).makeHeader
+     65537  1.58% 93.29%      65878  1.59%  github.com/quic-go/quic-go.(*framer).Append
+     64378  1.55% 94.85%     206378  4.98%  github.com/getlantern/photon/internal/recovery.(*Sent).OnACK
+     49155  1.19% 96.03%      49155  1.19%  github.com/getlantern/photon/internal/transport.reserveStreamItem

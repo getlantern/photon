@@ -1,0 +1,164 @@
+package transport
+
+import (
+	"errors"
+	"net/netip"
+
+	"github.com/getlantern/photon/internal/wire"
+)
+
+var ErrRouteCollision = errors.New("quic: connection routing identity collision")
+var ErrRouterCapacity = errors.New("quic: connection router capacity reached")
+
+type connectionRoute struct {
+	peer netip.AddrPort
+	ids  []string
+	zero bool
+}
+
+// Router demultiplexes one local UDP endpoint. It is serialized by its owner,
+// like Conn. Sync must follow connection events and precede transmission of
+// newly issued CIDs. CID collisions must prevent transmission, not be ignored.
+// This initial router enforces fixed peer addresses; migration is not enabled.
+type Router struct {
+	cidLength, capacity int
+	ids                 map[string]*Conn
+	peers               map[netip.AddrPort]map[*Conn]struct{}
+	entries             map[*Conn]connectionRoute
+}
+
+func NewRouter(cidLength, capacity int) (*Router, error) {
+	if cidLength < 0 || cidLength > 20 || capacity < 1 || capacity > 65536 {
+		return nil, errors.New("quic: invalid router limits")
+	}
+	return &Router{cidLength: cidLength, capacity: capacity, ids: make(map[string]*Conn), peers: make(map[netip.AddrPort]map[*Conn]struct{}), entries: make(map[*Conn]connectionRoute)}, nil
+}
+func canonicalPeer(peer netip.AddrPort) netip.AddrPort {
+	return netip.AddrPortFrom(peer.Addr().Unmap(), peer.Port())
+}
+
+// Add registers routing before the first output packet is handed to the socket.
+func (r *Router) Add(c *Conn, peer netip.AddrPort) error {
+	if c == nil || c.closed || !peer.IsValid() || peer.Port() == 0 {
+		return errors.New("quic: invalid connection route")
+	}
+	if _, ok := r.entries[c]; ok {
+		return ErrRouteCollision
+	}
+	if len(r.entries) >= r.capacity {
+		return ErrRouterCapacity
+	}
+	if len(c.config.LocalCID) != 0 && len(c.config.LocalCID) != r.cidLength {
+		return errors.New("quic: inconsistent local CID length")
+	}
+	peer = canonicalPeer(peer)
+	r.entries[c] = connectionRoute{peer: peer}
+	if err := r.Sync(c); err != nil {
+		delete(r.entries, c)
+		return err
+	}
+	if r.peers[peer] == nil {
+		r.peers[peer] = make(map[*Conn]struct{})
+	}
+	r.peers[peer][c] = struct{}{}
+	return nil
+}
+
+// Sync atomically reflects CID issuance and retirement. Closing/draining IDs
+// remain registered until the connection becomes closed. The original Initial
+// routing alias remains for the connection's lifetime to prevent readmission.
+func (r *Router) Sync(c *Conn) error {
+	route, ok := r.entries[c]
+	if !ok {
+		return errors.New("quic: unregistered connection")
+	}
+	if c.closed {
+		r.Remove(c)
+		return nil
+	}
+	desired := make(map[string]struct{})
+	if c.localIDs != nil {
+		for _, id := range c.localIDs.active {
+			desired[string(id.cid)] = struct{}{}
+		}
+	}
+	if c.config.Server {
+		initial := c.config.OriginalDCID
+		if c.config.RetrySourceCID != nil {
+			initial = c.config.RetrySourceCID
+		}
+		desired[string(initial)] = struct{}{}
+	}
+	_, zero := desired[""]
+	for other := range r.peers[route.peer] {
+		if other != c && (zero || r.entries[other].zero) {
+			return ErrRouteCollision
+		}
+	}
+	for id := range desired {
+		if id != "" {
+			if owner := r.ids[id]; owner != nil && owner != c {
+				return ErrRouteCollision
+			}
+		}
+	}
+	for _, id := range route.ids {
+		delete(r.ids, id)
+	}
+	route.ids = nil
+	route.zero = zero
+	for id := range desired {
+		if id != "" {
+			r.ids[id] = c
+			route.ids = append(route.ids, id)
+		}
+	}
+	r.entries[c] = route
+	return nil
+}
+func (r *Router) Remove(c *Conn) {
+	route, ok := r.entries[c]
+	if !ok {
+		return
+	}
+	for _, id := range route.ids {
+		delete(r.ids, id)
+	}
+	delete(r.peers[route.peer], c)
+	if len(r.peers[route.peer]) == 0 {
+		delete(r.peers, route.peer)
+	}
+	delete(r.entries, c)
+}
+
+// Route returns a connection and whether the datagram belongs to a reserved
+// routing identity. A known CID from another address returns (nil,true): discard
+// it rather than accidentally admitting a second connection on the same CID.
+// Unknown datagrams return (nil,false), allowing stateless Initial admission.
+func (r *Router) Route(data []byte, peer netip.AddrPort) (*Conn, bool) {
+	if !peer.IsValid() || peer.Port() == 0 {
+		return nil, false
+	}
+	peer = canonicalPeer(peer)
+	h, err := wire.ParseHeader(data, r.cidLength)
+	if err == nil {
+		if c := r.ids[string(h.DCID)]; c != nil {
+			if r.entries[c].peer != peer {
+				return nil, true
+			}
+			return c, true
+		}
+	}
+	for c := range r.peers[peer] {
+		route := r.entries[c]
+		if route.zero && len(data) > 0 && (data[0]&0x80 == 0 || (err == nil && len(h.DCID) == 0)) {
+			return c, true
+		}
+		// A reset can carry an unrecognized destination CID. The connection still
+		// performs authentication-before-reset handling on the delivered datagram.
+		if c.isStatelessReset(data) {
+			return c, true
+		}
+	}
+	return nil, false
+}

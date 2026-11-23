@@ -1,0 +1,62 @@
+--- internal/recovery/persistent.go	2026-09-29 12:25:18
++++ /tmp/quic-history-before.go	2026-09-29 12:25:18
+@@ -36,15 +36,15 @@
+ 		h.removeFront()
+ 	}
+ 	id := transmissionID{space, p.Number}
+-	h.index[id] = h.order.PushBack(&congestionRecord{id: id, sent: p.SentAt, eliciting: p.AckEliciting && !p.MTUProbe, sampled: sampled})
++	h.index[id] = h.order.PushBack(congestionRecord{id: id, sent: p.SentAt, eliciting: p.AckEliciting && !p.MTUProbe, sampled: sampled})
+ }
+ func (h *congestionHistory) removeFront() {
+ 	e := h.order.Front()
+-	delete(h.index, e.Value.(*congestionRecord).id)
++	delete(h.index, e.Value.(congestionRecord).id)
+ 	h.order.Remove(e)
+ }
+ func (h *congestionHistory) trimAcknowledged() {
+-	for h.order.Front() != nil && h.order.Front().Value.(*congestionRecord).state == 2 {
++	for h.order.Front() != nil && h.order.Front().Value.(congestionRecord).state == 2 {
+ 		h.removeFront()
+ 	}
+ }
+@@ -54,8 +54,9 @@
+ 		if e == nil {
+ 			return
+ 		}
+-		p := e.Value.(*congestionRecord)
++		p := e.Value.(congestionRecord)
+ 		p.state = 2
++		e.Value = p
+ 	}
+ 	if useACKLookup(f, len(h.index)) {
+ 		for _, span := range f.Ranges {
+@@ -75,16 +76,18 @@
+ 	defer h.trimAcknowledged()
+ 	for id, e := range h.index {
+ 		if id.space == space {
+-			p := e.Value.(*congestionRecord)
++			p := e.Value.(congestionRecord)
+ 			p.state = 2
++			e.Value = p
+ 		}
+ 	}
+ }
+ func (h *congestionHistory) lost(space Space, packets []Packet) {
+ 	for _, p := range packets {
+ 		if e := h.index[transmissionID{space, p.Number}]; e != nil {
+-			v := e.Value.(*congestionRecord)
++			v := e.Value.(congestionRecord)
+ 			v.state = 1
++			e.Value = v
+ 		}
+ 	}
+ }
+@@ -92,7 +95,7 @@
+ 	var first, previous time.Time
+ 	var through *list.Element
+ 	for e := h.order.Front(); e != nil; e = e.Next() {
+-		p := e.Value.(*congestionRecord)
++		p := e.Value.(congestionRecord)
+ 		// Unresolved packets and local clock regressions are conservative barriers.
+ 		if p.state != 1 || !p.sampled || (!previous.IsZero() && p.sent.Before(previous)) {
+ 			first = time.Time{}

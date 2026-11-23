@@ -1,0 +1,173 @@
+=== RUN   TestIndependentClientMigrationUpstreamServer
+=== RUN   TestIndependentClientMigrationUpstreamServer/1/response
+    migration_test.go:48: migration trace:
+        0s relay request 127.0.0.1:63298 -> 127.0.0.1:64206 bytes=1280 checksum=af113313 dropped=false
+        55µs relay request 127.0.0.1:63298 -> 127.0.0.1:64206 bytes=1280 checksum=3e032e54 dropped=false
+        4.844ms upstream sent pn=0 checksum=b6ec4562 frames: *wire.NewConnectionIDFrame *wire.NewConnectionIDFrame *wire.NewConnectionIDFrame
+        4.937ms relay response 127.0.0.1:58336 -> 127.0.0.1:64206 bytes=1280 checksum=ba495d73 dropped=false
+        5.103ms relay response 127.0.0.1:58336 -> 127.0.0.1:64206 bytes=716 checksum=b6ec4562 dropped=false
+        8.01ms relay request 127.0.0.1:63298 -> 127.0.0.1:64206 bytes=1280 checksum=e435be3d dropped=false
+        9.145ms relay request 127.0.0.1:63298 -> 127.0.0.1:64206 bytes=48 checksum=8d809598 dropped=false
+        9.206ms relay request 127.0.0.1:63298 -> 127.0.0.1:64206 bytes=79 checksum=fe59e18d dropped=false
+        9.244ms relay request 127.0.0.1:63298 -> 127.0.0.1:64206 bytes=34 checksum=e733a549 dropped=false
+        9.273ms relay request 127.0.0.1:63298 -> 127.0.0.1:64206 bytes=53 checksum=c24dd8e1 dropped=false
+        9.297ms relay request 127.0.0.1:63298 -> 127.0.0.1:64206 bytes=53 checksum=e1585756 dropped=false
+        9.324ms relay request 127.0.0.1:63298 -> 127.0.0.1:64206 bytes=53 checksum=bf00e582 dropped=false
+        9.7ms upstream received pn=0 checksum=00000000 frames: *wire.AckFrame
+        9.755ms upstream received pn=1 checksum=00000000 frames: *wire.NewConnectionIDFrame
+        9.795ms upstream received pn=2 checksum=00000000 frames: *wire.NewConnectionIDFrame
+        9.821ms upstream received pn=3 checksum=00000000 frames: *wire.NewConnectionIDFrame
+        9.897ms upstream sent pn=1 checksum=00000000 frames: *wire.AckFrame *wire.HandshakeDoneFrame *wire.RetireConnectionIDFrame *qlog.CryptoFrame *wire.NewTokenFrame
+        10.026ms relay response 127.0.0.1:58336 -> 127.0.0.1:64206 bytes=302 checksum=4e3ae80a dropped=false
+        10.561ms relay request 127.0.0.1:63298 -> 127.0.0.1:64206 bytes=33 checksum=2c71dcb0 dropped=false
+        10.596ms relay request 127.0.0.1:63298 -> 127.0.0.1:64206 bytes=53 checksum=fc951512 dropped=false
+        10.626ms relay request 127.0.0.1:63298 -> 127.0.0.1:64206 bytes=1366 checksum=1c684aac dropped=false
+        10.691ms round=0 begin local=127.0.0.1:63298 peer=127.0.0.1:64206
+        10.722ms upstream received pn=4 checksum=00000000 frames: *wire.AckFrame
+        10.759ms upstream received pn=5 checksum=00000000 frames: *wire.NewConnectionIDFrame
+        10.86ms upstream received pn=6 checksum=00000000 frames: *wire.PingFrame
+        10.904ms upstream sent pn=2 checksum=00000000 frames: *wire.AckFrame
+        10.989ms relay request 127.0.0.1:63298 -> 127.0.0.1:64206 bytes=47 checksum=f22de89f dropped=false
+        11.015ms relay response 127.0.0.1:58336 -> 127.0.0.1:64206 bytes=32 checksum=dee61980 dropped=false
+        11.102ms relay request 127.0.0.1:63298 -> 127.0.0.1:64206 bytes=29 checksum=adea8817 dropped=false
+        11.131ms upstream received pn=7 checksum=00000000 frames: *qlog.StreamFrame
+        11.171ms upstream received pn=8 checksum=00000000 frames: *qlog.StreamFrame
+        11.243ms upstream sent pn=3 checksum=00000000 frames: *wire.AckFrame
+        11.268ms round=0 stream delivered peer=127.0.0.1:64206 want=127.0.0.1:64206
+        11.339ms relay response 127.0.0.1:58336 -> 127.0.0.1:64206 bytes=32 checksum=7f3a45f3 dropped=false
+        11.359ms round=0 address confirmed peer=127.0.0.1:64206
+        11.498ms upstream sent pn=4 checksum=00000000 frames: *qlog.StreamFrame
+        11.609ms relay response 127.0.0.1:58336 -> 127.0.0.1:64206 bytes=46 checksum=7f79c799 dropped=false
+        11.88ms round=1 begin local=127.0.0.1:63298 peer=127.0.0.1:64206
+        11.907ms relay request 127.0.0.1:63298 -> 127.0.0.1:64206 bytes=33 checksum=4d257001 dropped=false
+        12.039ms upstream received pn=9 checksum=00000000 frames: *wire.AckFrame
+        12.094ms upstream sent pn=5 checksum=00000000 frames: *wire.MaxStreamsFrame
+        12.196ms relay response 127.0.0.1:58336 -> 127.0.0.1:64206 bytes=30 checksum=3d7ff015 dropped=false
+        12.28ms relay request 127.0.0.1:53146 -> 127.0.0.1:55595 bytes=1200 checksum=19d636eb dropped=false
+        12.46ms upstream received pn=10 checksum=00000000 frames: challenge=230183794e8ff57b *wire.PingFrame
+        12.516ms upstream sent pn=6 checksum=00000000 frames: challenge=68a602949b68ff29 response=230183794e8ff57b
+        12.582ms relay response 127.0.0.1:58336 -> 127.0.0.1:55595 bytes=1200 checksum=5553653e dropped=true
+        38.506ms upstream sent pn=7 checksum=00000000 frames: *wire.PingFrame
+        38.596ms upstream sent pn=8 checksum=00000000 frames: *wire.AckFrame
+        38.668ms relay response 127.0.0.1:58336 -> 127.0.0.1:64206 bytes=1366 checksum=196dcd18 dropped=false
+        39.073ms relay response 127.0.0.1:58336 -> 127.0.0.1:64206 bytes=33 checksum=d65d0c2f dropped=false
+        75.727ms upstream sent pn=10 checksum=75a67771 frames: *wire.MaxStreamsFrame
+        75.831ms upstream sent pn=11 checksum=256343b9 frames: *wire.MaxStreamsFrame
+        75.949ms relay response 127.0.0.1:58336 -> 127.0.0.1:64206 bytes=30 checksum=75a67771 dropped=false
+        76.039ms relay response 127.0.0.1:58336 -> 127.0.0.1:64206 bytes=30 checksum=256343b9 dropped=false
+        149.061ms upstream sent pn=13 checksum=8a566cf2 frames: *wire.MaxStreamsFrame
+        149.254ms upstream sent pn=14 checksum=aadcf5c5 frames: *wire.MaxStreamsFrame
+        149.517ms relay response 127.0.0.1:58336 -> 127.0.0.1:64206 bytes=30 checksum=8a566cf2 dropped=false
+        149.691ms relay response 127.0.0.1:58336 -> 127.0.0.1:64206 bytes=30 checksum=aadcf5c5 dropped=false
+        294.308ms upstream sent pn=16 checksum=b6af6ad7 frames: *wire.MaxStreamsFrame
+        294.48ms upstream sent pn=17 checksum=9b2f4fed frames: *wire.MaxStreamsFrame
+        294.746ms relay response 127.0.0.1:58336 -> 127.0.0.1:64206 bytes=30 checksum=b6af6ad7 dropped=false
+        294.884ms relay response 127.0.0.1:58336 -> 127.0.0.1:64206 bytes=30 checksum=9b2f4fed dropped=false
+        583.854ms upstream sent pn=19 checksum=27558f5c frames: *wire.MaxStreamsFrame
+        583.967ms upstream sent pn=20 checksum=f8a53d24 frames: *wire.MaxStreamsFrame
+        584.209ms relay response 127.0.0.1:58336 -> 127.0.0.1:64206 bytes=30 checksum=27558f5c dropped=false
+        584.293ms relay response 127.0.0.1:58336 -> 127.0.0.1:64206 bytes=30 checksum=f8a53d24 dropped=false
+        1.012514s upstream sent pn=22 checksum=f7888844 frames: *wire.MaxStreamsFrame *wire.RetireConnectionIDFrame
+        1.012536s relay request 127.0.0.1:53146 -> 127.0.0.1:55595 bytes=1200 checksum=de6a7a5f dropped=false
+        1.01258s upstream sent pn=23 checksum=dd78409c frames: *wire.MaxStreamsFrame *wire.RetireConnectionIDFrame
+        1.012651s relay response 127.0.0.1:58336 -> 127.0.0.1:64206 bytes=32 checksum=f7888844 dropped=false
+        1.012688s relay response 127.0.0.1:58336 -> 127.0.0.1:64206 bytes=32 checksum=dd78409c dropped=false
+        1.012907s upstream received pn=11 checksum=00000000 frames: challenge=6e4e90b207e2ce27 *wire.PingFrame
+        1.012961s upstream sent pn=24 checksum=00000000 frames: challenge=4746a85fc1fd3a1d response=6e4e90b207e2ce27
+        1.013049s relay response 127.0.0.1:58336 -> 127.0.0.1:55595 bytes=1200 checksum=041ea388 dropped=false
+        1.013419s relay request 127.0.0.1:53146 -> 127.0.0.1:55595 bytes=1200 checksum=2949e423 dropped=false
+        1.013452s relay request 127.0.0.1:53146 -> 127.0.0.1:55595 bytes=45 checksum=803e8d7b dropped=false
+        1.013514s relay request 127.0.0.1:53146 -> 127.0.0.1:55595 bytes=53 checksum=8598c8df dropped=false
+        1.013545s relay request 127.0.0.1:53146 -> 127.0.0.1:55595 bytes=27 checksum=bca54562 dropped=false
+        1.013571s relay request 127.0.0.1:53146 -> 127.0.0.1:55595 bytes=1326 checksum=2553d990 dropped=false
+        1.013586s upstream received pn=12 checksum=00000000 frames: response=4746a85fc1fd3a1d
+        1.013657s upstream received pn=13 checksum=00000000 frames: *wire.AckFrame
+        1.013675s round=1 committed local=127.0.0.1:53146
+        1.013717s upstream received pn=14 checksum=00000000 frames: *wire.NewConnectionIDFrame
+        1.01376s upstream received pn=15 checksum=00000000 frames: *wire.RetireConnectionIDFrame
+        1.013849s upstream received pn=16 checksum=00000000 frames: *wire.PingFrame
+        1.0139s upstream sent pn=25 checksum=00000000 frames: *wire.AckFrame *wire.RetireConnectionIDFrame *wire.MaxStreamsFrame
+        1.013914s relay request 127.0.0.1:53146 -> 127.0.0.1:55595 bytes=47 checksum=3588cb0c dropped=false
+        1.013973s relay request 127.0.0.1:53146 -> 127.0.0.1:55595 bytes=29 checksum=bc4fe3a3 dropped=false
+        1.013996s relay response 127.0.0.1:58336 -> 127.0.0.1:55595 bytes=37 checksum=bce1814e dropped=false
+        1.014059s upstream received pn=17 checksum=00000000 frames: *qlog.StreamFrame
+        1.014093s upstream received pn=18 checksum=00000000 frames: *qlog.StreamFrame
+        1.014109s round=1 stream delivered peer=127.0.0.1:55595 want=127.0.0.1:55595
+        1.014133s upstream sent pn=26 checksum=00000000 frames: *wire.AckFrame
+        1.014158s round=1 address confirmed peer=127.0.0.1:55595
+        1.014235s relay request 127.0.0.1:53146 -> 127.0.0.1:55595 bytes=47 checksum=bc5a8b1c dropped=false
+        1.014256s upstream sent pn=27 checksum=00000000 frames: *qlog.StreamFrame
+        1.014283s relay response 127.0.0.1:58336 -> 127.0.0.1:55595 bytes=32 checksum=c8f7531d dropped=false
+        1.014334s relay response 127.0.0.1:58336 -> 127.0.0.1:55595 bytes=46 checksum=961b6861 dropped=false
+        1.014363s upstream received pn=19 checksum=00000000 frames: *wire.AckFrame
+        1.014681s relay request 127.0.0.1:53146 -> 127.0.0.1:55595 bytes=47 checksum=f2e48036 dropped=false
+        1.014698s round=2 begin local=127.0.0.1:53146 peer=127.0.0.1:55595
+        1.014878s upstream received pn=20 checksum=00000000 frames: *wire.AckFrame
+        1.014925s upstream sent pn=28 checksum=00000000 frames: *wire.MaxStreamsFrame
+        1.015001s relay response 127.0.0.1:58336 -> 127.0.0.1:55595 bytes=30 checksum=ef8be792 dropped=false
+        1.015223s relay request 127.0.0.1:57357 -> 127.0.0.1:54954 bytes=1200 checksum=9503969e dropped=false
+        1.015441s upstream received pn=21 checksum=00000000 frames: challenge=8f91bf495d962411 *wire.PingFrame
+        1.015496s upstream sent pn=29 checksum=00000000 frames: response=8f91bf495d962411 challenge=84a59db959578929
+        1.015554s relay response 127.0.0.1:58336 -> 127.0.0.1:54954 bytes=1200 checksum=b8f49086 dropped=true
+        1.041582s upstream sent pn=31 checksum=1cc9f248 frames: *wire.AckFrame *wire.MaxStreamsFrame
+        1.041772s upstream sent pn=32 checksum=c9175327 frames: *wire.MaxStreamsFrame
+        1.041919s upstream sent pn=33 checksum=00000000 frames: *wire.PingFrame
+        1.042001s relay response 127.0.0.1:58336 -> 127.0.0.1:55595 bytes=36 checksum=1cc9f248 dropped=false
+        1.042121s relay response 127.0.0.1:58336 -> 127.0.0.1:55595 bytes=30 checksum=c9175327 dropped=false
+        1.04219s relay response 127.0.0.1:58336 -> 127.0.0.1:55595 bytes=1366 checksum=18169108 dropped=false
+        1.095498s upstream sent pn=35 checksum=a230190e frames: *wire.MaxStreamsFrame
+        1.095611s upstream sent pn=36 checksum=cd13789b frames: *wire.MaxStreamsFrame
+        1.095762s relay response 127.0.0.1:58336 -> 127.0.0.1:55595 bytes=30 checksum=a230190e dropped=false
+        1.09583s relay response 127.0.0.1:58336 -> 127.0.0.1:55595 bytes=30 checksum=cd13789b dropped=false
+        1.202523s upstream sent pn=38 checksum=b8ca744a frames: *wire.MaxStreamsFrame
+        1.202678s upstream sent pn=39 checksum=4fb3528b frames: *wire.MaxStreamsFrame
+        1.202861s relay response 127.0.0.1:58336 -> 127.0.0.1:55595 bytes=30 checksum=b8ca744a dropped=false
+        1.202983s relay response 127.0.0.1:58336 -> 127.0.0.1:55595 bytes=30 checksum=4fb3528b dropped=false
+        1.415761s upstream sent pn=41 checksum=f723c288 frames: *wire.MaxStreamsFrame
+        1.416232s upstream sent pn=42 checksum=c0f14eb6 frames: *wire.MaxStreamsFrame
+        1.41664s relay response 127.0.0.1:58336 -> 127.0.0.1:55595 bytes=30 checksum=f723c288 dropped=false
+        1.416672s relay response 127.0.0.1:58336 -> 127.0.0.1:55595 bytes=30 checksum=c0f14eb6 dropped=false
+        1.839973s upstream sent pn=44 checksum=629e2bd3 frames: *wire.MaxStreamsFrame
+        1.840035s upstream sent pn=45 checksum=7132f98d frames: *wire.MaxStreamsFrame
+        1.840161s relay response 127.0.0.1:58336 -> 127.0.0.1:55595 bytes=30 checksum=629e2bd3 dropped=false
+        1.840252s relay response 127.0.0.1:58336 -> 127.0.0.1:55595 bytes=30 checksum=7132f98d dropped=false
+        2.015395s relay request 127.0.0.1:57357 -> 127.0.0.1:54954 bytes=1200 checksum=17681381 dropped=false
+        2.015478s upstream sent pn=47 checksum=1f988df8 frames: *wire.MaxStreamsFrame *wire.RetireConnectionIDFrame
+        2.015533s upstream sent pn=48 checksum=2375c1ff frames: *wire.RetireConnectionIDFrame *wire.MaxStreamsFrame
+        2.0156s relay response 127.0.0.1:58336 -> 127.0.0.1:55595 bytes=32 checksum=1f988df8 dropped=false
+        2.015641s relay response 127.0.0.1:58336 -> 127.0.0.1:55595 bytes=32 checksum=2375c1ff dropped=false
+        2.015659s upstream received pn=22 checksum=00000000 frames: challenge=1752438f9faf31e9 *wire.PingFrame
+        2.015714s upstream sent pn=49 checksum=00000000 frames: challenge=2813f6559ebd19d9 response=1752438f9faf31e9
+        2.015779s relay response 127.0.0.1:58336 -> 127.0.0.1:54954 bytes=1200 checksum=cd895396 dropped=false
+        2.016317s relay request 127.0.0.1:57357 -> 127.0.0.1:54954 bytes=1200 checksum=75c0bae2 dropped=false
+        2.016371s relay request 127.0.0.1:57357 -> 127.0.0.1:54954 bytes=59 checksum=f00f2b56 dropped=false
+        2.01641s relay request 127.0.0.1:57357 -> 127.0.0.1:54954 bytes=53 checksum=787705d3 dropped=false
+        2.016456s relay request 127.0.0.1:57357 -> 127.0.0.1:54954 bytes=27 checksum=4465aac4 dropped=false
+        2.016491s relay request 127.0.0.1:57357 -> 127.0.0.1:54954 bytes=1326 checksum=03540dda dropped=false
+        2.016644s round=2 committed local=127.0.0.1:57357
+        2.016669s upstream received pn=23 checksum=00000000 frames: response=2813f6559ebd19d9
+        2.016759s upstream received pn=24 checksum=00000000 frames: *wire.AckFrame
+        2.0168s upstream received pn=25 checksum=00000000 frames: *wire.NewConnectionIDFrame
+        2.016865s upstream received pn=26 checksum=00000000 frames: *wire.RetireConnectionIDFrame
+        2.016952s relay request 127.0.0.1:57357 -> 127.0.0.1:54954 bytes=47 checksum=e3b780f6 dropped=false
+        2.016986s upstream received pn=27 checksum=00000000 frames: *wire.PingFrame
+        2.017022s relay request 127.0.0.1:57357 -> 127.0.0.1:54954 bytes=29 checksum=319bc1d1 dropped=false
+        2.017066s upstream sent pn=50 checksum=00000000 frames: *wire.AckFrame *wire.RetireConnectionIDFrame *wire.MaxStreamsFrame *wire.NewConnectionIDFrame
+        2.017175s upstream received pn=28 checksum=00000000 frames: *qlog.StreamFrame
+        2.017206s relay response 127.0.0.1:58336 -> 127.0.0.1:54954 bytes=61 checksum=eb69bcbc dropped=false
+        2.017234s round=2 stream delivered peer=127.0.0.1:54954 want=127.0.0.1:54954
+        2.017258s upstream received pn=29 checksum=00000000 frames: *qlog.StreamFrame
+        2.017278s round=2 address confirmed peer=127.0.0.1:54954
+        2.017321s upstream sent pn=51 checksum=00000000 frames: *wire.AckFrame
+        2.017386s upstream sent pn=52 checksum=00000000 frames: *qlog.StreamFrame
+        2.017527s relay response 127.0.0.1:58336 -> 127.0.0.1:54954 bytes=32 checksum=24f64226 dropped=false
+        2.017585s relay response 127.0.0.1:58336 -> 127.0.0.1:54954 bytes=46 checksum=0005ea1d dropped=false
+        2.01762s relay request 127.0.0.1:57357 -> 127.0.0.1:54954 bytes=61 checksum=8a4df4c8 dropped=false
+        2.017762s upstream received pn=30 checksum=00000000 frames: *wire.AckFrame
+        2.017913s relay request 127.0.0.1:57357 -> 127.0.0.1:54954 bytes=61 checksum=0f9a5d51 dropped=false
+        2.018022s upstream sent pn=53 checksum=86e42f39 frames: *wire.ConnectionCloseFrame
+        2.018074s relay response 127.0.0.1:58336 -> 127.0.0.1:54954 bytes=30 checksum=86e42f39 dropped=false
+--- PASS: TestIndependentClientMigrationUpstreamServer (2.03s)
+    --- PASS: TestIndependentClientMigrationUpstreamServer/1/response (2.03s)
+PASS
+ok  	github.com/getlantern/photon/interop	3.432s

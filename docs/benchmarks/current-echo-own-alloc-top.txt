@@ -1,0 +1,29 @@
+File: quic-current-echo.test
+Type: alloc_objects
+Time: 2026-09-29 18:08:03 MDT
+Active filters:
+   focus=github.com/getlantern/photon(/internal/|[.])
+Showing nodes accounting for 4783745, 47.65% of 10039438 total
+Dropped 20 nodes (cum <= 50197)
+Showing top 20 nodes out of 60
+      flat  flat%   sum%        cum   cum%
+    458780  4.57%  4.57%     458780  4.57%  github.com/getlantern/photon/internal/recovery.(*congestionHistory).sent
+    458766  4.57%  9.14%     458766  4.57%  github.com/getlantern/photon/internal/packet.(*Keys).seal
+    405519  4.04% 13.18%     618524  6.16%  github.com/getlantern/photon/internal/transport.(*Conn).enqueue
+    360459  3.59% 16.77%     360459  3.59%  github.com/getlantern/photon/internal/packet.(*Keys).open
+    338618  3.37% 20.14%     981767  9.78%  github.com/getlantern/photon/internal/transport.(*Conn).writeStream
+    327685  3.26% 23.41%     327685  3.26%  encoding/binary.bigEndian.AppendUint32 (inline)
+    294925  2.94% 26.34%     415075  4.13%  github.com/getlantern/photon/internal/wire.ConsumeFrame
+    294917  2.94% 29.28%     709992  7.07%  github.com/getlantern/photon/internal/transport.parsePacketFrames
+    262157  2.61% 31.89%     355789  3.54%  context.WithDeadlineCause
+    229388  2.28% 34.18%     323020  3.22%  github.com/getlantern/photon/internal/transport.(*UDPServer).invoke
+    229379  2.28% 36.46%     557064  5.55%  github.com/getlantern/photon/internal/transport.(*Conn).makeHeader
+    218463  2.18% 38.64%    1845993 18.39%  github.com/getlantern/photon/internal/transport.(*Conn).NextDatagram
+    213005  2.12% 40.76%     213005  2.12%  github.com/getlantern/photon/internal/transport.reserveStreamItem
+    152920  1.52% 42.28%     152920  1.52%  github.com/getlantern/photon/internal/recovery.(*ackOnlyOrder).PushBack (inline)
+    120150  1.20% 43.48%     120150  1.20%  github.com/getlantern/photon/internal/wire.consumeAckBody
+     98305  0.98% 44.46%     421325  4.20%  github.com/getlantern/photon/internal/transport.(*UDPServer).Wait
+     93632  0.93% 45.39%      93632  0.93%  context.(*cancelCtx).Done
+     93632  0.93% 46.32%      93632  0.93%  time.newTimer
+     67505  0.67% 47.00%      67505  0.67%  github.com/getlantern/photon/internal/recovery.(*Sent).OnACK
+     65540  0.65% 47.65%     344860  3.44%  github.com/getlantern/photon.(*ReceiveStream).read.func1

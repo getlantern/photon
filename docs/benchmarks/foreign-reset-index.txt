@@ -1,0 +1,21 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/getlantern/photon/internal/transport
+cpu: Apple M4
+BenchmarkForeignResetSelection/1-10  	 1577407	       151.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkForeignResetSelection/1-10  	 1583077	       151.2 ns/op	       0 B/op	       0 allocs/op
+BenchmarkForeignResetSelection/1-10  	 1576968	       152.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkForeignResetSelection/1-10  	 1573299	       154.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkForeignResetSelection/1-10  	 1557505	       155.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkForeignResetSelection/256-10         	 1524673	       157.2 ns/op	       0 B/op	       0 allocs/op
+BenchmarkForeignResetSelection/256-10         	 1518679	       157.7 ns/op	       0 B/op	       0 allocs/op
+BenchmarkForeignResetSelection/256-10         	 1488750	       161.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkForeignResetSelection/256-10         	 1526209	       165.5 ns/op	       0 B/op	       0 allocs/op
+BenchmarkForeignResetSelection/256-10         	 1516500	       158.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkForeignResetSelection/4096-10        	 1512252	       158.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkForeignResetSelection/4096-10        	 1465052	       162.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkForeignResetSelection/4096-10        	 1498028	       160.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkForeignResetSelection/4096-10        	 1517568	       158.4 ns/op	       0 B/op	       0 allocs/op
+BenchmarkForeignResetSelection/4096-10        	 1501219	       160.4 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/getlantern/photon/internal/transport	4.064s

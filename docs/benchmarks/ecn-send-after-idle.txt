@@ -1,0 +1,12 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/getlantern/photon/internal/transport
+cpu: Apple M4
+BenchmarkSocketSendECN/127.0.0.1:0-10         	  142966	      8783 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSocketSendECN/127.0.0.1:0-10         	  143554	      8251 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSocketSendECN/127.0.0.1:0-10         	  139815	      8412 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSocketSendECN/[::1]:0-10             	  151527	      7842 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSocketSendECN/[::1]:0-10             	  151825	      7775 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSocketSendECN/[::1]:0-10             	  150026	      7840 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/getlantern/photon/internal/transport	8.856s

@@ -1,0 +1,70 @@
+=== RUN   TestPicoquicMultipath
+=== RUN   TestPicoquicMultipath/127.0.0.1
+=== RUN   TestPicoquicMultipath/127.0.0.1/1/loss=false
+=== RUN   TestPicoquicMultipath/127.0.0.1/1/loss=true
+=== RUN   TestPicoquicMultipath/127.0.0.1/6b3343cf/loss=false
+=== RUN   TestPicoquicMultipath/127.0.0.1/6b3343cf/loss=true
+=== RUN   TestPicoquicMultipath/::1
+=== RUN   TestPicoquicMultipath/::1/1/loss=false
+=== RUN   TestPicoquicMultipath/::1/1/loss=true
+=== RUN   TestPicoquicMultipath/::1/6b3343cf/loss=false
+=== RUN   TestPicoquicMultipath/::1/6b3343cf/loss=true
+--- PASS: TestPicoquicMultipath (42.90s)
+    --- PASS: TestPicoquicMultipath/127.0.0.1 (21.59s)
+        --- PASS: TestPicoquicMultipath/127.0.0.1/1/loss=false (1.26s)
+        --- PASS: TestPicoquicMultipath/127.0.0.1/1/loss=true (9.38s)
+        --- PASS: TestPicoquicMultipath/127.0.0.1/6b3343cf/loss=false (1.25s)
+        --- PASS: TestPicoquicMultipath/127.0.0.1/6b3343cf/loss=true (9.69s)
+    --- PASS: TestPicoquicMultipath/::1 (21.31s)
+        --- PASS: TestPicoquicMultipath/::1/1/loss=false (1.26s)
+        --- PASS: TestPicoquicMultipath/::1/1/loss=true (9.38s)
+        --- PASS: TestPicoquicMultipath/::1/6b3343cf/loss=false (1.28s)
+        --- PASS: TestPicoquicMultipath/::1/6b3343cf/loss=true (9.39s)
+=== RUN   TestPicoquicClientMultipath
+=== RUN   TestPicoquicClientMultipath/127.0.0.1
+=== RUN   TestPicoquicClientMultipath/127.0.0.1/1/clean
+=== RUN   TestPicoquicClientMultipath/127.0.0.1/1/request
+=== RUN   TestPicoquicClientMultipath/127.0.0.1/1/response
+=== RUN   TestPicoquicClientMultipath/127.0.0.1/1/both
+=== RUN   TestPicoquicClientMultipath/127.0.0.1/1/bulk
+=== RUN   TestPicoquicClientMultipath/127.0.0.1/6b3343cf/clean
+=== RUN   TestPicoquicClientMultipath/127.0.0.1/6b3343cf/request
+=== RUN   TestPicoquicClientMultipath/127.0.0.1/6b3343cf/response
+=== RUN   TestPicoquicClientMultipath/127.0.0.1/6b3343cf/both
+=== RUN   TestPicoquicClientMultipath/127.0.0.1/6b3343cf/bulk
+=== RUN   TestPicoquicClientMultipath/::1
+=== RUN   TestPicoquicClientMultipath/::1/1/clean
+=== RUN   TestPicoquicClientMultipath/::1/1/request
+=== RUN   TestPicoquicClientMultipath/::1/1/response
+=== RUN   TestPicoquicClientMultipath/::1/1/both
+=== RUN   TestPicoquicClientMultipath/::1/1/bulk
+=== RUN   TestPicoquicClientMultipath/::1/6b3343cf/clean
+=== RUN   TestPicoquicClientMultipath/::1/6b3343cf/request
+=== RUN   TestPicoquicClientMultipath/::1/6b3343cf/response
+=== RUN   TestPicoquicClientMultipath/::1/6b3343cf/both
+=== RUN   TestPicoquicClientMultipath/::1/6b3343cf/bulk
+--- PASS: TestPicoquicClientMultipath (5.45s)
+    --- PASS: TestPicoquicClientMultipath/127.0.0.1 (2.82s)
+        --- PASS: TestPicoquicClientMultipath/127.0.0.1/1/clean (0.22s)
+        --- PASS: TestPicoquicClientMultipath/127.0.0.1/1/request (0.37s)
+        --- PASS: TestPicoquicClientMultipath/127.0.0.1/1/response (0.43s)
+        --- PASS: TestPicoquicClientMultipath/127.0.0.1/1/both (0.43s)
+        --- PASS: TestPicoquicClientMultipath/127.0.0.1/1/bulk (0.09s)
+        --- PASS: TestPicoquicClientMultipath/127.0.0.1/6b3343cf/clean (0.06s)
+        --- PASS: TestPicoquicClientMultipath/127.0.0.1/6b3343cf/request (0.32s)
+        --- PASS: TestPicoquicClientMultipath/127.0.0.1/6b3343cf/response (0.42s)
+        --- PASS: TestPicoquicClientMultipath/127.0.0.1/6b3343cf/both (0.42s)
+        --- PASS: TestPicoquicClientMultipath/127.0.0.1/6b3343cf/bulk (0.08s)
+    --- PASS: TestPicoquicClientMultipath/::1 (2.63s)
+        --- PASS: TestPicoquicClientMultipath/::1/1/clean (0.06s)
+        --- PASS: TestPicoquicClientMultipath/::1/1/request (0.33s)
+        --- PASS: TestPicoquicClientMultipath/::1/1/response (0.42s)
+        --- PASS: TestPicoquicClientMultipath/::1/1/both (0.42s)
+        --- PASS: TestPicoquicClientMultipath/::1/1/bulk (0.09s)
+        --- PASS: TestPicoquicClientMultipath/::1/6b3343cf/clean (0.06s)
+        --- PASS: TestPicoquicClientMultipath/::1/6b3343cf/request (0.32s)
+        --- PASS: TestPicoquicClientMultipath/::1/6b3343cf/response (0.44s)
+        --- PASS: TestPicoquicClientMultipath/::1/6b3343cf/both (0.41s)
+        --- PASS: TestPicoquicClientMultipath/::1/6b3343cf/bulk (0.09s)
+PASS
+ok  	github.com/getlantern/photon/interop	49.737s

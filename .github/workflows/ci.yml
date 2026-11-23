@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            interop/go.sum
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "gofmt needed:"
+            echo "$unformatted"
+            exit 1
+          fi
+      - name: go mod tidy is clean
+        run: |
+          go mod tidy
+          (cd interop && go mod tidy)
+          git diff --exit-code -- go.mod go.sum interop/go.mod interop/go.sum
+      - name: vet
+        run: go vet ./...
+      - name: test
+        run: go test -race -count=1 ./...
+      # The interop module tests against pinned upstream quic-go. Picoquic and
+      # ls-qpack fixtures are not built here, so those tests skip.
+      - name: interop vet
+        working-directory: interop
+        run: go vet ./...
+      - name: interop test
+        working-directory: interop
+        run: go test -race -count=1 ./...
+
+  # Type-check platforms the test job does not run on.
+  cross-vet:
+    name: vet (${{ matrix.goos }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [windows, freebsd]
+    env:
+      GOOS: ${{ matrix.goos }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            interop/go.sum
+      - run: go vet ./...
+      - working-directory: interop
+        run: go vet ./...

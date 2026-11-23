@@ -1,0 +1,36 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/getlantern/photon/internal/transport
+cpu: Apple M4
+BenchmarkForeignResetSelection/1-10    	 1377146	       164.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkForeignResetSelection/1-10    	 1536138	       156.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkForeignResetSelection/1-10    	 1555165	       154.5 ns/op	       0 B/op	       0 allocs/op
+BenchmarkForeignResetSelection/1-10    	 1532503	       157.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkForeignResetSelection/1-10    	 1537578	       156.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkForeignResetSelection/256-10  	    8550	     27568 ns/op	       0 B/op	       0 allocs/op
+BenchmarkForeignResetSelection/256-10  	    8704	     28352 ns/op	       0 B/op	       0 allocs/op
+BenchmarkForeignResetSelection/256-10  	    9001	     26989 ns/op	       0 B/op	       0 allocs/op
+BenchmarkForeignResetSelection/256-10  	    9004	     29049 ns/op	       0 B/op	       0 allocs/op
+BenchmarkForeignResetSelection/256-10  	    9178	     27195 ns/op	       0 B/op	       0 allocs/op
+BenchmarkForeignResetSelection/4096-10 	     434	    533477 ns/op	       0 B/op	       0 allocs/op
+BenchmarkForeignResetSelection/4096-10 	     471	    512090 ns/op	       0 B/op	       0 allocs/op
+BenchmarkForeignResetSelection/4096-10 	     459	    528722 ns/op	       0 B/op	       0 allocs/op
+BenchmarkForeignResetSelection/4096-10 	     433	    548888 ns/op	       0 B/op	       0 allocs/op
+BenchmarkForeignResetSelection/4096-10 	     438	    550808 ns/op	       0 B/op	       0 allocs/op
+BenchmarkForeignResetPublication/1-10  	 3642054	        66.83 ns/op	       0 B/op	       0 allocs/op
+BenchmarkForeignResetPublication/1-10  	 3716766	        65.38 ns/op	       0 B/op	       0 allocs/op
+BenchmarkForeignResetPublication/1-10  	 3585578	        65.84 ns/op	       0 B/op	       0 allocs/op
+BenchmarkForeignResetPublication/1-10  	 3622843	        66.72 ns/op	       0 B/op	       0 allocs/op
+BenchmarkForeignResetPublication/1-10  	 3618742	        66.35 ns/op	       0 B/op	       0 allocs/op
+BenchmarkForeignResetPublication/2-10  	  695778	       322.9 ns/op	     608 B/op	       5 allocs/op
+BenchmarkForeignResetPublication/2-10  	  765772	       328.3 ns/op	     608 B/op	       5 allocs/op
+BenchmarkForeignResetPublication/2-10  	  774026	       323.5 ns/op	     608 B/op	       5 allocs/op
+BenchmarkForeignResetPublication/2-10  	  778630	       346.9 ns/op	     608 B/op	       5 allocs/op
+BenchmarkForeignResetPublication/2-10  	  661939	       356.9 ns/op	     608 B/op	       5 allocs/op
+BenchmarkForeignResetPublication/8-10  	  295676	       804.9 ns/op	     608 B/op	       5 allocs/op
+BenchmarkForeignResetPublication/8-10  	  301633	       805.4 ns/op	     608 B/op	       5 allocs/op
+BenchmarkForeignResetPublication/8-10  	  305164	       807.3 ns/op	     608 B/op	       5 allocs/op
+BenchmarkForeignResetPublication/8-10  	  303234	       859.9 ns/op	     608 B/op	       5 allocs/op
+BenchmarkForeignResetPublication/8-10  	  297603	       810.9 ns/op	     608 B/op	       5 allocs/op
+PASS
+ok  	github.com/getlantern/photon/internal/transport	7.654s

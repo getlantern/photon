@@ -1,0 +1,41 @@
+--- a/stream.go
++++ b/stream.go
+@@ -200,25 +200,8 @@
+ 					}
+ 					return true, engineStream.ErrSendClosed
+ 				}
+-				// Bound each owner turn so packet processing, cancellation and
+-				// other streams can run between batches. Report any committed
+-				// bytes as progress even when the next fragment would block.
+-				limit := min(len(p)-total, 32*1024)
+-				for n < limit {
+-					var wrote int
+-					wrote, err = s.conn.raw.WriteStream(s.id, p[total+n:total+limit], false)
+-					n += wrote
+-					if errors.Is(err, engineStream.ErrWouldBlock) {
+-						return n > 0, nil
+-					}
+-					if err != nil {
+-						return true, err
+-					}
+-					if wrote == 0 {
+-						return n > 0, nil
+-					}
+-				}
+-				return true, nil
++				n, err = s.conn.raw.WriteStream(s.id, p[total:], false)
++				return !errors.Is(err, engineStream.ErrWouldBlock), errUnlessBlocked(err)
+ 			})
+ 			total += n
+ 			if err != nil {
+--- a/internal/transport/send_buffer.go
++++ b/internal/transport/send_buffer.go
+@@ -4,7 +4,7 @@
+ 
+ // Bound retained idle payload capacity to 32 KiB per active connection. This cache is
+ // owned by the serialized engine; buffers never cross connection boundaries.
+-const maxCachedSendBuffers = 32
++const maxCachedSendBuffers = 16
+ const maxCachedSendBufferBytes = 32 * 1024
+ const maxCachedSendBufferSize = 2048
+ 

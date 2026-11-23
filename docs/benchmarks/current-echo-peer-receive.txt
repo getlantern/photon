@@ -1,0 +1,59 @@
+File: quic-current-echo.test
+Type: alloc_objects
+Time: 2026-09-29 18:08:03 MDT
+Active filters:
+   focus=socket.*recvMsg
+Showing nodes accounting for 3991253, 39.76% of 10039438 total
+----------------------------------------------------------+-------------
+      flat  flat%   sum%        cum   cum%   calls calls% + context 	 	 
+----------------------------------------------------------+-------------
+                                           3991253   100% |   golang.org/x/net/internal/socket.(*Conn).RecvMsg
+   2713256 27.03% 27.03%    3991253 39.76%                | golang.org/x/net/internal/socket.(*Conn).recvMsg
+                                           1277997 32.02% |   net.(*rawConn).Read
+----------------------------------------------------------+-------------
+                                            786462   100% |   golang.org/x/net/internal/socket.recvmsg
+    786462  7.83% 34.86%     786462  7.83%                | golang.org/x/net/internal/socket.sockaddrToAddr
+----------------------------------------------------------+-------------
+                                            491535   100% |   golang.org/x/sys/unix.RecvmsgBuffers
+    491535  4.90% 39.76%     491535  4.90%                | golang.org/x/sys/unix.anyToSockaddr
+----------------------------------------------------------+-------------
+         0     0% 39.76%    3991253 39.76%                | github.com/quic-go/quic-go.(*Transport).init.func1.1
+                                           3991253   100% |   github.com/quic-go/quic-go.(*Transport).listen
+----------------------------------------------------------+-------------
+                                           3991253   100% |   github.com/quic-go/quic-go.(*Transport).init.func1.1
+         0     0% 39.76%    3991253 39.76%                | github.com/quic-go/quic-go.(*Transport).listen
+                                           3991253   100% |   github.com/quic-go/quic-go.(*oobConn).ReadPacket
+----------------------------------------------------------+-------------
+                                           3991253   100% |   github.com/quic-go/quic-go.(*Transport).listen
+         0     0% 39.76%    3991253 39.76%                | github.com/quic-go/quic-go.(*oobConn).ReadPacket
+                                           3991253   100% |   golang.org/x/net/ipv4.(*payloadHandler).ReadBatch
+----------------------------------------------------------+-------------
+                                           3991253   100% |   golang.org/x/net/ipv4.(*payloadHandler).ReadBatch (inline)
+         0     0% 39.76%    3991253 39.76%                | golang.org/x/net/internal/socket.(*Conn).RecvMsg
+                                           3991253   100% |   golang.org/x/net/internal/socket.(*Conn).recvMsg
+----------------------------------------------------------+-------------
+                                           1277997   100% |   internal/poll.(*FD).RawRead
+         0     0% 39.76%    1277997 12.73%                | golang.org/x/net/internal/socket.(*Conn).recvMsg.func1
+                                           1277997   100% |   golang.org/x/net/internal/socket.recvmsg
+----------------------------------------------------------+-------------
+                                           1277997   100% |   golang.org/x/net/internal/socket.(*Conn).recvMsg.func1
+         0     0% 39.76%    1277997 12.73%                | golang.org/x/net/internal/socket.recvmsg
+                                            786462 61.54% |   golang.org/x/net/internal/socket.sockaddrToAddr
+                                            491535 38.46% |   golang.org/x/sys/unix.RecvmsgBuffers
+----------------------------------------------------------+-------------
+                                           3991253   100% |   github.com/quic-go/quic-go.(*oobConn).ReadPacket
+         0     0% 39.76%    3991253 39.76%                | golang.org/x/net/ipv4.(*payloadHandler).ReadBatch
+                                           3991253   100% |   golang.org/x/net/internal/socket.(*Conn).RecvMsg (inline)
+----------------------------------------------------------+-------------
+                                            491535   100% |   golang.org/x/net/internal/socket.recvmsg
+         0     0% 39.76%     491535  4.90%                | golang.org/x/sys/unix.RecvmsgBuffers
+                                            491535   100% |   golang.org/x/sys/unix.anyToSockaddr
+----------------------------------------------------------+-------------
+                                           1277997   100% |   net.(*rawConn).Read
+         0     0% 39.76%    1277997 12.73%                | internal/poll.(*FD).RawRead
+                                           1277997   100% |   golang.org/x/net/internal/socket.(*Conn).recvMsg.func1
+----------------------------------------------------------+-------------
+                                           1277997   100% |   golang.org/x/net/internal/socket.(*Conn).recvMsg
+         0     0% 39.76%    1277997 12.73%                | net.(*rawConn).Read
+                                           1277997   100% |   internal/poll.(*FD).RawRead
+----------------------------------------------------------+-------------

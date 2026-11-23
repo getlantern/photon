@@ -1,0 +1,84 @@
+File: quic.test
+Type: alloc_space
+Time: 2026-09-20 17:30:45 MDT
+Showing nodes accounting for 197.62MB, 97.28% of 203.15MB total
+Dropped 20 nodes (cum <= 1.02MB)
+      flat  flat%   sum%        cum   cum%
+   31.04MB 15.28% 15.28%    32.04MB 15.77%  github.com/getlantern/photon/internal/packet.(*Keys).seal
+   29.04MB 14.29% 29.57%    29.04MB 14.29%  github.com/getlantern/photon/internal/stream.(*Send).Write
+   26.60MB 13.09% 42.66%    26.60MB 13.09%  github.com/getlantern/photon/internal/transport.init.func1
+   21.03MB 10.35% 53.01%    21.03MB 10.35%  crypto/internal/fips140/aes/gcm.sliceForAppend (inline)
+   10.64MB  5.24% 58.25%    10.64MB  5.24%  github.com/getlantern/photon/internal/stream.NewReceive (inline)
+    9.50MB  4.68% 62.93%     9.50MB  4.68%  github.com/getlantern/photon/internal/transport.(*UDPServer).run.func2 (inline)
+    6.50MB  3.20% 66.13%    49.54MB 24.39%  github.com/getlantern/photon/internal/transport.(*ServerEndpoint).NextDatagram
+    6.01MB  2.96% 69.08%     8.01MB  3.94%  github.com/getlantern/photon/internal/recovery.(*Sent).OnACK
+       6MB  2.95% 72.04%    11.50MB  5.66%  github.com/getlantern/photon/internal/transport.(*UDPServer).invoke
+    5.50MB  2.71% 74.74%     5.50MB  2.71%  context.(*cancelCtx).Done
+       5MB  2.46% 77.20%        9MB  4.43%  context.WithDeadlineCause
+    4.50MB  2.22% 79.42%    32.53MB 16.01%  github.com/getlantern/photon/internal/transport.(*Conn).authenticateMultipathPacket
+       4MB  1.97% 81.39%        4MB  1.97%  time.newTimer
+       3MB  1.48% 82.87%     3.50MB  1.72%  github.com/getlantern/photon/internal/wire.ConsumeFrame
+       3MB  1.48% 84.34%    41.54MB 20.45%  github.com/getlantern/photon/internal/transport.(*Conn).nextPacketOnPathSelection
+    2.50MB  1.23% 85.57%    54.67MB 26.91%  github.com/getlantern/photon/internal/transport.(*Conn).handleBoundMultipathData
+    2.50MB  1.23% 86.80%     2.50MB  1.23%  container/list.(*List).insertValue (inline)
+    2.50MB  1.23% 88.03%        4MB  1.97%  github.com/getlantern/photon/internal/recovery.(*congestionHistory).sent
+    2.50MB  1.23% 89.27%    23.53MB 11.58%  github.com/getlantern/photon/internal/packet.(*Keys).open
+       2MB  0.99% 90.25%        2MB  0.99%  runtime.mallocgc
+       2MB  0.98% 91.24%        2MB  0.98%  github.com/getlantern/photon/internal/recovery.(*congestionHistory).ack
+       2MB  0.98% 92.22%    13.50MB  6.65%  github.com/getlantern/photon/internal/transport.(*UDPServer).Wait
+    1.50MB  0.74% 92.96%     1.50MB  0.74%  github.com/getlantern/photon/internal/transport.(*Conn).outboundLargeStream
+    1.50MB  0.74% 93.70%    10.50MB  5.17%  github.com/getlantern/photon.(*SendStream).Write.func1
+    1.50MB  0.74% 94.44%       19MB  9.35%  github.com/getlantern/photon.(*SendStream).Write
+    1.27MB  0.63% 95.06%    20.77MB 10.23%  github.com/getlantern/photon.benchmarkPublicTransfer
+       1MB  0.49% 95.55%        5MB  2.46%  github.com/getlantern/photon.(*ReceiveStream).Read.func1
+       1MB  0.49% 96.05%    31.54MB 15.52%  github.com/getlantern/photon/internal/transport.(*Conn).WriteStream
+       1MB  0.49% 96.54%     1.50MB  0.74%  github.com/getlantern/photon/internal/transport.(*Conn).enqueue
+    0.50MB  0.25% 96.78%     7.50MB  3.69%  github.com/getlantern/photon.(*ReceiveStream).Read
+    0.50MB  0.25% 97.03%     5.50MB  2.71%  github.com/getlantern/photon/internal/recovery.(*Sent).OnSent
+    0.50MB  0.25% 97.28%        4MB  1.97%  github.com/getlantern/photon/internal/transport.parsePacketFrames
+         0     0% 97.28%     2.50MB  1.23%  container/list.(*List).PushBack (inline)
+         0     0% 97.28%        9MB  4.43%  context.WithDeadline (inline)
+         0     0% 97.28%    21.03MB 10.35%  crypto/internal/fips140/aes/gcm.(*GCM).Open
+         0     0% 97.28%    31.54MB 15.52%  github.com/getlantern/photon.(*SendStream).Write.func1.1
+         0     0% 97.28%    24.50MB 12.06%  github.com/getlantern/photon.(*streamDeadline).run
+         0     0% 97.28%    20.77MB 10.23%  github.com/getlantern/photon.BenchmarkPublicMTUTransfer.func1
+         0     0% 97.28%     7.50MB  3.69%  github.com/getlantern/photon.benchmarkPublicTransfer.func1
+         0     0% 97.28%    23.53MB 11.58%  github.com/getlantern/photon/internal/packet.(*Keys).Open
+         0     0% 97.28%    32.04MB 15.77%  github.com/getlantern/photon/internal/packet.(*Keys).SealPath
+         0     0% 97.28%    33.53MB 16.50%  github.com/getlantern/photon/internal/transport.(*Conn).decodeMultipathPacket
+         0     0% 97.28%    18.64MB  9.18%  github.com/getlantern/photon/internal/transport.(*Conn).dispatchMultipathPacket (inline)
+         0     0% 97.28%    18.64MB  9.18%  github.com/getlantern/photon/internal/transport.(*Conn).dispatchMultipathPacketFrames
+         0     0% 97.28%    10.64MB  5.24%  github.com/getlantern/photon/internal/transport.(*Conn).getStream
+         0     0% 97.28%    54.67MB 26.91%  github.com/getlantern/photon/internal/transport.(*Conn).handleBoundMultipathPacket
+         0     0% 97.28%    10.64MB  5.24%  github.com/getlantern/photon/internal/transport.(*Conn).handleStreamFrame
+         0     0% 97.28%    41.54MB 20.45%  github.com/getlantern/photon/internal/transport.(*Conn).nextBoundMultipathPacket
+         0     0% 97.28%    41.54MB 20.45%  github.com/getlantern/photon/internal/transport.(*Conn).nextMultipathPacket
+         0     0% 97.28%    41.54MB 20.45%  github.com/getlantern/photon/internal/transport.(*Conn).nextPacketOnPath (inline)
+         0     0% 97.28%    41.54MB 20.45%  github.com/getlantern/photon/internal/transport.(*Conn).nextPacketOnPathACK
+         0     0% 97.28%    41.54MB 20.45%  github.com/getlantern/photon/internal/transport.(*Conn).nextPacketOnPathMode (inline)
+         0     0% 97.28%    23.53MB 11.58%  github.com/getlantern/photon/internal/transport.(*Conn).openApplicationPath
+         0     0% 97.28%    23.53MB 11.58%  github.com/getlantern/photon/internal/transport.(*Conn).openApplicationPath.func1
+         0     0% 97.28%    55.20MB 27.17%  github.com/getlantern/photon/internal/transport.(*ServerEndpoint).handleNetworkDatagram
+         0     0% 97.28%    31.54MB 15.52%  github.com/getlantern/photon/internal/transport.(*UDPServer).Wait.func1
+         0     0% 97.28%    27.10MB 13.34%  github.com/getlantern/photon/internal/transport.(*UDPServer).readSocket
+         0     0% 97.28%   145.78MB 71.76%  github.com/getlantern/photon/internal/transport.(*UDPServer).run
+         0     0% 97.28%    41.54MB 20.45%  github.com/getlantern/photon/internal/transport.(*networkOwner).next
+         0     0% 97.28%    41.54MB 20.45%  github.com/getlantern/photon/internal/transport.(*networkOwner).nextRouted
+         0     0% 97.28%    55.20MB 27.17%  github.com/getlantern/photon/internal/transport.(*networkOwner).receive
+         0     0% 97.28%     5.50MB  2.71%  github.com/getlantern/photon/internal/transport.(*pathApplication).recordSent
+         0     0% 97.28%     8.01MB  3.94%  github.com/getlantern/photon/internal/transport.(*pathCIDs).receiveACK
+         0     0% 97.28%     8.01MB  3.94%  github.com/getlantern/photon/internal/transport.(*pathCIDs).receiveReliableACK
+         0     0% 97.28%     7.50MB  3.69%  io.ReadAtLeast
+         0     0% 97.28%     7.50MB  3.69%  io.ReadFull (inline)
+         0     0% 97.28%        2MB  0.99%  runtime.allocm
+         0     0% 97.28%        2MB  0.99%  runtime.newm
+         0     0% 97.28%        2MB  0.99%  runtime.newobject
+         0     0% 97.28%     1.50MB  0.74%  runtime.resetspinning
+         0     0% 97.28%        2MB  0.99%  runtime.schedule
+         0     0% 97.28%        2MB  0.99%  runtime.startm
+         0     0% 97.28%        2MB  0.99%  runtime.wakep
+         0     0% 97.28%    27.10MB 13.34%  sync.(*Pool).Get
+         0     0% 97.28%    19.14MB  9.42%  testing.(*B).launch
+         0     0% 97.28%     1.64MB  0.81%  testing.(*B).run1.func1
+         0     0% 97.28%    20.77MB 10.23%  testing.(*B).runN
+         0     0% 97.28%        4MB  1.97%  time.AfterFunc

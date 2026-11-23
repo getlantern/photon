@@ -1,0 +1,80 @@
+Total: 862.30MB
+ROUTINE ======================== github.com/getlantern/photon/internal/recovery.(*congestionHistory).ack in /Users/afisk/go/src/github.com/getlantern/quic-go/internal/recovery/persistent.go
+         0       42MB (flat, cum)  4.87% of Total
+         .          .     51:func (h *congestionHistory) ack(space Space, f wire.AckFrame) {
+         .          .     52:	defer h.trimAcknowledged()
+         .          .     53:	mark := func(e *list.Element) {
+         .          .     54:		if e == nil {
+         .          .     55:			return
+         .          .     56:		}
+         .          .     57:		p := e.Value.(congestionRecord)
+         .          .     58:		p.state = 2
+         .          .     59:		e.Value = p
+         .          .     60:	}
+         .          .     61:	if useACKLookup(f, len(h.index)) {
+         .          .     62:		for _, span := range f.Ranges {
+         .          .     63:			for pn := span.Smallest; pn <= span.Largest; pn++ {
+         .    20.50MB     64:				mark(h.index[transmissionID{space, pn}])
+         .          .     65:			}
+         .          .     66:		}
+         .          .     67:	} else {
+         .          .     68:		for id, e := range h.index {
+         .          .     69:			if id.space == space && f.Acknowledges(id.number) {
+         .    21.50MB     70:				mark(e)
+         .          .     71:			}
+         .          .     72:		}
+         .          .     73:	}
+         .          .     74:}
+         .          .     75:func (h *congestionHistory) discard(space Space) {
+ROUTINE ======================== github.com/getlantern/photon/internal/recovery.(*congestionHistory).ack.func1 in /Users/afisk/go/src/github.com/getlantern/quic-go/internal/recovery/persistent.go
+      42MB       42MB (flat, cum)  4.87% of Total
+         .          .     53:	mark := func(e *list.Element) {
+         .          .     54:		if e == nil {
+         .          .     55:			return
+         .          .     56:		}
+         .          .     57:		p := e.Value.(congestionRecord)
+         .          .     58:		p.state = 2
+      42MB       42MB     59:		e.Value = p
+         .          .     60:	}
+         .          .     61:	if useACKLookup(f, len(h.index)) {
+         .          .     62:		for _, span := range f.Ranges {
+         .          .     63:			for pn := span.Smallest; pn <= span.Largest; pn++ {
+         .          .     64:				mark(h.index[transmissionID{space, pn}])
+ROUTINE ======================== github.com/getlantern/photon/internal/recovery.(*congestionHistory).sent in /Users/afisk/go/src/github.com/getlantern/quic-go/internal/recovery/persistent.go
+      39MB       75MB (flat, cum)  8.70% of Total
+         .          .     31:func (h *congestionHistory) sent(space Space, p Packet, sampled bool) {
+         .          .     32:	if h.index == nil {
+         .          .     33:		h.index = make(map[transmissionID]*list.Element)
+         .          .     34:	}
+         .          .     35:	for h.order.Len() >= h.capacity {
+         .          .     36:		h.removeFront()
+         .          .     37:	}
+         .          .     38:	id := transmissionID{space, p.Number}
+      39MB       75MB     39:	h.index[id] = h.order.PushBack(congestionRecord{id: id, sent: p.SentAt, eliciting: p.AckEliciting && !p.MTUProbe, sampled: sampled})
+         .          .     40:}
+         .          .     41:func (h *congestionHistory) removeFront() {
+         .          .     42:	e := h.order.Front()
+         .          .     43:	delete(h.index, e.Value.(congestionRecord).id)
+         .          .     44:	h.order.Remove(e)
+ROUTINE ======================== github.com/getlantern/photon/internal/stream.(*Send).WriteBuffer in /Users/afisk/go/src/github.com/getlantern/quic-go/internal/stream/send.go
+   84.10MB    84.10MB (flat, cum)  9.75% of Total
+         .          .     69:func (s *Send) WriteBuffer(data []byte, fin bool, maxPayload int, storage []byte) (wire.StreamFrame, int, error) {
+         .          .     70:	if s.fin || s.reset != nil || s.resetAt != nil || s.complete {
+         .          .     71:		return wire.StreamFrame{}, 0, ErrSendClosed
+         .          .     72:	}
+         .          .     73:	if maxPayload < 1 {
+         .          .     74:		return wire.StreamFrame{}, 0, ErrWouldBlock
+         .          .     75:	}
+         .          .     76:	n := min(uint64(len(data)), uint64(maxPayload), s.limit-s.offset, s.flow.limit-s.flow.used)
+         .          .     77:	if n == 0 && len(data) > 0 {
+         .          .     78:		return wire.StreamFrame{}, 0, ErrWouldBlock
+         .          .     79:	}
+         .          .     80:	if n == 0 && !fin {
+         .          .     81:		return wire.StreamFrame{}, 0, ErrWouldBlock
+         .          .     82:	}
+   84.10MB    84.10MB     83:	frame := wire.StreamFrame{StreamID: s.id, Offset: s.offset, Data: append(storage[:0], data[:n]...), Fin: fin && n == uint64(len(data))}
+         .          .     84:	s.offset += n
+         .          .     85:	s.flow.used += n
+         .          .     86:	s.fin = frame.Fin
+         .          .     87:	return frame, int(n), nil
+         .          .     88:}

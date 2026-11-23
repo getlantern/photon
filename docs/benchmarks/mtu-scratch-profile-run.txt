@@ -1,0 +1,7 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/getlantern/photon
+cpu: Apple M4
+BenchmarkPublicMTUTransfer/v1/disabled=false-10         	     100	   2697240 ns/op	  97.19 MB/s	 1883796 B/op	   15156 allocs/op
+PASS
+ok  	github.com/getlantern/photon	0.540s

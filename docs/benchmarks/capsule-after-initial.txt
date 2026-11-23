@@ -1,0 +1,42 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/getlantern/photon/interop
+cpu: Apple M4
+BenchmarkCapsuleCodec/parse/independent/0-10         	  114672	      3449 ns/op	  37.11 MB/s	     112 B/op	       2 allocs/op
+BenchmarkCapsuleCodec/parse/independent/0-10         	  137096	      1714 ns/op	  74.66 MB/s	     112 B/op	       2 allocs/op
+BenchmarkCapsuleCodec/parse/independent/0-10         	  153091	      1622 ns/op	  78.93 MB/s	     112 B/op	       2 allocs/op
+BenchmarkCapsuleCodec/write/independent/0-10         	  286232	       881.7 ns/op	 145.17 MB/s	    1024 B/op	      64 allocs/op
+BenchmarkCapsuleCodec/write/independent/0-10         	  278486	      1493 ns/op	  85.72 MB/s	    1024 B/op	      64 allocs/op
+BenchmarkCapsuleCodec/write/independent/0-10         	  242144	       921.5 ns/op	 138.91 MB/s	    1024 B/op	      64 allocs/op
+BenchmarkCapsuleCodec/parse/upstream/0-10            	   90525	      2775 ns/op	  46.12 MB/s	    2646 B/op	     130 allocs/op
+BenchmarkCapsuleCodec/parse/upstream/0-10            	   93418	      2562 ns/op	  49.97 MB/s	    2645 B/op	     130 allocs/op
+BenchmarkCapsuleCodec/parse/upstream/0-10            	   95299	      2529 ns/op	  50.61 MB/s	    2646 B/op	     130 allocs/op
+BenchmarkCapsuleCodec/write/upstream/0-10            	  278824	       859.3 ns/op	 148.97 MB/s	    1024 B/op	      64 allocs/op
+BenchmarkCapsuleCodec/write/upstream/0-10            	  282927	       885.0 ns/op	 144.64 MB/s	    1024 B/op	      64 allocs/op
+BenchmarkCapsuleCodec/write/upstream/0-10            	  275004	       884.3 ns/op	 144.75 MB/s	    1024 B/op	      64 allocs/op
+BenchmarkCapsuleCodec/parse/independent/64-10        	  100629	      2279 ns/op	1881.62 MB/s	     112 B/op	       2 allocs/op
+BenchmarkCapsuleCodec/parse/independent/64-10        	  103440	      2265 ns/op	1893.00 MB/s	     112 B/op	       2 allocs/op
+BenchmarkCapsuleCodec/parse/independent/64-10        	  105590	      2260 ns/op	1897.18 MB/s	     112 B/op	       2 allocs/op
+BenchmarkCapsuleCodec/write/independent/64-10        	  247024	       971.9 ns/op	4412.19 MB/s	    1024 B/op	      64 allocs/op
+BenchmarkCapsuleCodec/write/independent/64-10        	  243765	       969.1 ns/op	4424.51 MB/s	    1024 B/op	      64 allocs/op
+BenchmarkCapsuleCodec/write/independent/64-10        	  247976	       977.5 ns/op	4386.62 MB/s	    1024 B/op	      64 allocs/op
+BenchmarkCapsuleCodec/parse/upstream/64-10           	   75171	      3188 ns/op	1344.94 MB/s	    2646 B/op	     130 allocs/op
+BenchmarkCapsuleCodec/parse/upstream/64-10           	   75997	      3159 ns/op	1357.35 MB/s	    2645 B/op	     130 allocs/op
+BenchmarkCapsuleCodec/parse/upstream/64-10           	   76321	      3159 ns/op	1357.42 MB/s	    2646 B/op	     130 allocs/op
+BenchmarkCapsuleCodec/write/upstream/64-10           	  267319	       919.3 ns/op	4664.18 MB/s	    1024 B/op	      64 allocs/op
+BenchmarkCapsuleCodec/write/upstream/64-10           	  264446	       917.2 ns/op	4675.10 MB/s	    1024 B/op	      64 allocs/op
+BenchmarkCapsuleCodec/write/upstream/64-10           	  260157	       925.7 ns/op	4632.26 MB/s	    1024 B/op	      64 allocs/op
+BenchmarkCapsuleCodec/parse/independent/1200-10      	   81825	      2963 ns/op	25982.58 MB/s	     112 B/op	       2 allocs/op
+BenchmarkCapsuleCodec/parse/independent/1200-10      	   81871	      2952 ns/op	26080.35 MB/s	     112 B/op	       2 allocs/op
+BenchmarkCapsuleCodec/parse/independent/1200-10      	   80772	      2956 ns/op	26047.07 MB/s	     112 B/op	       2 allocs/op
+BenchmarkCapsuleCodec/write/independent/1200-10      	  141879	      1719 ns/op	44793.42 MB/s	    1024 B/op	      64 allocs/op
+BenchmarkCapsuleCodec/write/independent/1200-10      	  142243	      1690 ns/op	45551.65 MB/s	    1024 B/op	      64 allocs/op
+BenchmarkCapsuleCodec/write/independent/1200-10      	  140804	      1695 ns/op	45432.51 MB/s	    1024 B/op	      64 allocs/op
+BenchmarkCapsuleCodec/parse/upstream/1200-10         	   62048	      3823 ns/op	20139.62 MB/s	    2645 B/op	     130 allocs/op
+BenchmarkCapsuleCodec/parse/upstream/1200-10         	   62598	      3816 ns/op	20174.24 MB/s	    2644 B/op	     130 allocs/op
+BenchmarkCapsuleCodec/parse/upstream/1200-10         	   63490	      3863 ns/op	19929.36 MB/s	    2644 B/op	     130 allocs/op
+BenchmarkCapsuleCodec/write/upstream/1200-10         	  152649	      1603 ns/op	48028.90 MB/s	    1024 B/op	      64 allocs/op
+BenchmarkCapsuleCodec/write/upstream/1200-10         	  152887	      1610 ns/op	47810.65 MB/s	    1024 B/op	      64 allocs/op
+BenchmarkCapsuleCodec/write/upstream/1200-10         	  145130	      1603 ns/op	48044.71 MB/s	    1024 B/op	      64 allocs/op
+PASS
+ok  	github.com/getlantern/photon/interop	10.515s

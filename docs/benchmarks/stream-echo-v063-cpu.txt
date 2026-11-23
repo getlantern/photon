@@ -1,0 +1,33 @@
+File: interop.test
+Type: cpu
+Time: 2026-09-28 14:52:20 MDT
+Duration: 3.60s, Total samples = 11.74s (325.66%)
+Showing nodes accounting for 11.02s, 93.87% of 11.74s total
+Dropped 202 nodes (cum <= 0.06s)
+Showing top 25 nodes out of 126
+      flat  flat%   sum%        cum   cum%
+     6.47s 55.11% 55.11%      6.47s 55.11%  syscall.rawsyscalln
+     1.52s 12.95% 68.06%      1.52s 12.95%  runtime.kevent
+     1.42s 12.10% 80.15%      1.42s 12.10%  runtime.usleep
+     0.74s  6.30% 86.46%      0.74s  6.30%  runtime.pthread_cond_wait
+     0.37s  3.15% 89.61%      0.37s  3.15%  runtime.pthread_cond_signal
+     0.08s  0.68% 90.29%      0.08s  0.68%  crypto/internal/fips140/aes/gcm.gcmAesEnc
+     0.08s  0.68% 90.97%      1.27s 10.82%  runtime.stealWork
+     0.07s   0.6% 91.57%      0.26s  2.21%  runtime.selectgo
+     0.06s  0.51% 92.08%      0.06s  0.51%  runtime.nanotime1
+     0.03s  0.26% 92.33%      1.17s  9.97%  runtime.runqgrab
+     0.03s  0.26% 92.59%      0.09s  0.77%  runtime.sellock
+     0.02s  0.17% 92.76%      0.06s  0.51%  runtime.mallocgcSmallScanNoHeader
+     0.01s 0.085% 92.84%      0.10s  0.85%  crypto/internal/fips140/aes/gcm.(*GCM).sealAfterIndicator
+     0.01s 0.085% 92.93%      0.07s   0.6%  crypto/internal/fips140/aes/gcm.open
+     0.01s 0.085% 93.02%      0.06s  0.51%  github.com/getlantern/photon.(*SendStream).Write.func1
+     0.01s 0.085% 93.10%      0.06s  0.51%  github.com/quic-go/quic-go.(*Conn).handleFrames
+     0.01s 0.085% 93.19%      0.18s  1.53%  github.com/quic-go/quic-go.(*Conn).handlePackets
+     0.01s 0.085% 93.27%      0.08s  0.68%  github.com/quic-go/quic-go.(*Conn).handleUnpackedShortHeaderPacket
+     0.01s 0.085% 93.36%      0.49s  4.17%  github.com/quic-go/quic-go.(*Conn).run
+     0.01s 0.085% 93.44%      0.16s  1.36%  github.com/quic-go/quic-go.(*packetPacker).appendPacket
+     0.01s 0.085% 93.53%      0.06s  0.51%  github.com/quic-go/quic-go.(*packetPacker).maybeGetShortHeaderPacket
+     0.01s 0.085% 93.61%      3.80s 32.37%  runtime.findRunnable
+     0.01s 0.085% 93.70%      0.31s  2.64%  runtime.lock2
+     0.01s 0.085% 93.78%      4.02s 34.24%  runtime.schedule
+     0.01s 0.085% 93.87%      6.48s 55.20%  syscall.syscall

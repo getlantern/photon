@@ -1,0 +1,32 @@
+File: quic-api-refresh.test
+Type: alloc_space
+Time: 2026-09-29 12:24:24 MDT
+Showing nodes accounting for 784.23MB, 90.95% of 862.30MB total
+Dropped 106 nodes (cum <= 4.31MB)
+Showing top 25 nodes out of 118
+      flat  flat%   sum%        cum   cum%
+   96.51MB 11.19% 11.19%   170.51MB 19.77%  golang.org/x/net/internal/socket.(*Conn).recvMsg
+   84.10MB  9.75% 20.94%    84.10MB  9.75%  github.com/getlantern/photon/internal/stream.(*Send).WriteBuffer
+   53.50MB  6.20% 27.15%    53.50MB  6.20%  container/list.(*List).insertValue (inline)
+      45MB  5.22% 32.37%       45MB  5.22%  golang.org/x/net/internal/socket.sockaddrToAddr
+      42MB  4.87% 37.24%       42MB  4.87%  github.com/getlantern/photon/internal/recovery.(*congestionHistory).ack.func1 (inline)
+   40.02MB  4.64% 41.88%    82.02MB  9.51%  github.com/getlantern/photon/internal/recovery.(*Sent).OnACK
+      39MB  4.52% 46.40%       75MB  8.70%  github.com/getlantern/photon/internal/recovery.(*congestionHistory).sent
+   31.67MB  3.67% 50.08%    31.67MB  3.67%  github.com/getlantern/photon/internal/stream.(*Receive).ensureStorage
+   29.50MB  3.42% 53.50%    29.50MB  3.42%  time.newTimer
+      29MB  3.36% 56.86%       29MB  3.36%  golang.org/x/sys/unix.anyToSockaddr
+      27MB  3.13% 59.99%    36.50MB  4.23%  github.com/getlantern/photon/internal/wire.ConsumeFrame
+      26MB  3.02% 63.01%       26MB  3.02%  github.com/getlantern/photon/internal/transport.reserveStreamItem
+      26MB  3.02% 66.02%       26MB  3.02%  github.com/getlantern/photon/internal/packet.(*Keys).seal
+   23.50MB  2.73% 68.75%    49.50MB  5.74%  github.com/getlantern/photon/internal/transport.(*Conn).enqueue
+   23.50MB  2.73% 71.47%   156.60MB 18.16%  github.com/getlantern/photon/internal/transport.(*Conn).writeStream
+   23.40MB  2.71% 74.19%    23.40MB  2.71%  github.com/getlantern/photon/internal/transport.init.func1
+      23MB  2.67% 76.86%    36.50MB  4.23%  context.WithDeadlineCause
+      20MB  2.32% 79.17%   152.01MB 17.63%  github.com/getlantern/photon/internal/transport.(*Conn).NextDatagram
+      18MB  2.09% 81.26%       35MB  4.06%  github.com/getlantern/photon/internal/transport.(*UDPServer).invoke
+      17MB  1.97% 83.23%       17MB  1.97%  context.(*cancelCtx).Done
+      17MB  1.97% 85.21%       33MB  3.83%  time.NewTimer
+   14.50MB  1.68% 86.89%    15.50MB  1.80%  github.com/quic-go/quic-go.(*framer).Append
+   13.50MB  1.57% 88.45%    13.50MB  1.57%  github.com/getlantern/photon/internal/packet.(*Keys).open
+      12MB  1.39% 89.84%       12MB  1.39%  net.ipToSockaddr
+    9.50MB  1.10% 90.95%     9.50MB  1.10%  github.com/getlantern/photon/internal/wire.consumeAckBody

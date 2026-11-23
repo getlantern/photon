@@ -1,0 +1,32 @@
+File: quic.test
+Type: alloc_space
+Time: 2026-09-20 17:33:15 MDT
+Showing nodes accounting for 1.76GB, 93.41% of 1.88GB total
+Dropped 117 nodes (cum <= 0.01GB)
+Showing top 25 nodes out of 98
+      flat  flat%   sum%        cum   cum%
+    0.35GB 18.56% 18.56%     0.36GB 18.95%  github.com/getlantern/photon/internal/packet.(*Keys).seal
+    0.32GB 16.93% 35.50%     0.32GB 16.93%  crypto/internal/fips140/aes/gcm.sliceForAppend
+    0.29GB 15.21% 50.70%     0.29GB 15.21%  github.com/getlantern/photon/internal/stream.(*Send).Write
+    0.10GB  5.28% 55.98%     0.10GB  5.28%  github.com/getlantern/photon/internal/transport.init.func1
+    0.06GB  3.38% 59.36%     0.12GB  6.21%  golang.org/x/net/internal/socket.(*Conn).recvMsg
+    0.06GB  3.07% 62.42%     0.10GB  5.20%  github.com/getlantern/photon/internal/recovery.(*Sent).OnACK
+    0.06GB  3.04% 65.46%     0.06GB  3.04%  github.com/getlantern/photon/internal/transport.(*UDPServer).run.func2
+    0.06GB  2.93% 68.40%     0.53GB 28.36%  github.com/getlantern/photon/internal/transport.(*ServerEndpoint).NextDatagram
+    0.05GB  2.62% 71.02%     0.08GB  4.26%  context.WithDeadlineCause
+    0.05GB  2.47% 73.49%     0.05GB  2.47%  time.newTimer
+    0.04GB  2.29% 75.77%     0.08GB  4.10%  github.com/getlantern/photon/internal/transport.(*UDPServer).invoke
+    0.04GB  2.03% 77.80%     0.04GB  2.03%  container/list.(*List).insertValue (inline)
+    0.03GB  1.82% 79.62%     0.03GB  1.82%  github.com/getlantern/photon/internal/transport.(*Received).Ack
+    0.03GB  1.82% 81.44%     0.03GB  1.82%  context.(*cancelCtx).Done
+    0.03GB  1.74% 83.18%     0.03GB  1.74%  github.com/getlantern/photon/internal/stream.NewReceive
+    0.03GB  1.58% 84.76%     0.03GB  1.58%  golang.org/x/sys/unix.anyToSockaddr
+    0.02GB  1.25% 86.01%     0.02GB  1.25%  github.com/getlantern/photon/internal/recovery.(*congestionHistory).ack
+    0.02GB  1.25% 87.25%     0.02GB  1.25%  golang.org/x/net/internal/socket.sockaddrToAddr
+    0.02GB  1.12% 88.37%     0.02GB  1.12%  net.ipToSockaddr
+    0.02GB  1.09% 89.46%     0.04GB  2.36%  github.com/getlantern/photon/internal/recovery.(*congestionHistory).sent
+    0.02GB  0.99% 90.45%     0.03GB  1.82%  time.NewTimer
+    0.02GB  0.83% 91.28%     0.09GB  5.04%  github.com/getlantern/photon.(*SendStream).Write.func1
+    0.02GB  0.81% 92.08%     0.02GB  0.93%  github.com/getlantern/photon/internal/wire.ConsumeFrame
+    0.01GB  0.68% 92.76%     0.01GB  0.68%  github.com/getlantern/photon/internal/packet.(*Keys).mask
+    0.01GB  0.65% 93.41%     0.01GB  0.65%  encoding/binary.bigEndian.AppendUint32 (inline)

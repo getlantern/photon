@@ -1,0 +1,43 @@
+--- a/internal/transport/udp_server.go
++++ b/internal/transport/udp_server.go
+@@ -296,13 +296,9 @@
+ }
+ func (s *UDPServer) invoke(ctx context.Context, run func(*ServerEndpoint) error, notify bool) (serverResult, error) {
+ 	cmd := serverCommand{ctx: ctx, run: run, notify: notify, reply: make(chan serverResult, 1)}
+-	return s.submit(cmd)
+-}
+-
+-func (s *UDPServer) submit(cmd serverCommand) (serverResult, error) {
+ 	select {
+-	case <-cmd.ctx.Done():
+-		return serverResult{}, cmd.ctx.Err()
++	case <-ctx.Done():
++		return serverResult{}, ctx.Err()
+ 	case <-s.done:
+ 		return serverResult{}, ErrEndpointClosed
+ 	case s.commands <- cmd:
+@@ -330,8 +326,8 @@
+ // buffers for later use. Failed readiness checks do not wake other waiters,
+ // preventing blocked operations from repeatedly waking each other.
+ func (s *UDPServer) Wait(ctx context.Context, run func(*ServerEndpoint) (ready bool, err error)) error {
+-	cmd := serverCommand{ctx: ctx, notify: true, reply: make(chan serverResult, 1),
+-		run: func(e *ServerEndpoint) error {
++	for {
++		result, err := s.invoke(ctx, func(e *ServerEndpoint) error {
+ 			ready, err := run(e)
+ 			if err != nil {
+ 				return err
+@@ -340,12 +336,7 @@
+ 				return errOperationWouldBlock
+ 			}
+ 			return nil
+-		},
+-	}
+-	for {
+-		// Each retry follows receipt of the previous reply. A closed endpoint
+-		// ends this Wait, so its private channel cannot reach another operation.
+-		result, err := s.submit(cmd)
++		}, true)
+ 		if !errors.Is(err, errOperationWouldBlock) {
+ 			return err
+ 		}

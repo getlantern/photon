@@ -1,0 +1,33 @@
+File: quic.test
+Type: cpu
+Time: 2026-09-20 17:33:11 MDT
+Duration: 4.41s, Total samples = 12.98s (294.65%)
+Showing nodes accounting for 12.02s, 92.60% of 12.98s total
+Dropped 225 nodes (cum <= 0.06s)
+Showing top 25 nodes out of 109
+      flat  flat%   sum%        cum   cum%
+     7.05s 54.31% 54.31%      7.05s 54.31%  syscall.rawsyscalln
+     1.62s 12.48% 66.80%      1.62s 12.48%  runtime.kevent
+     1.32s 10.17% 76.96%      1.32s 10.17%  runtime.usleep
+     1.05s  8.09% 85.05%      1.05s  8.09%  runtime.pthread_cond_wait
+     0.71s  5.47% 90.52%      0.71s  5.47%  runtime.pthread_cond_signal
+     0.07s  0.54% 91.06%      1.11s  8.55%  runtime.stealWork
+     0.06s  0.46% 91.53%      0.21s  1.62%  runtime.selectgo
+     0.04s  0.31% 91.83%      0.07s  0.54%  sync.(*Pool).Get
+     0.01s 0.077% 91.91%      0.16s  1.23%  github.com/getlantern/photon.(*streamDeadline).run
+     0.01s 0.077% 91.99%      0.17s  1.31%  github.com/quic-go/quic-go.(*Conn).handlePackets
+     0.01s 0.077% 92.06%      0.14s  1.08%  github.com/quic-go/quic-go.(*Conn).triggerSending
+     0.01s 0.077% 92.14%      1.30s 10.02%  github.com/quic-go/quic-go.(*Transport).listen
+     0.01s 0.077% 92.22%      0.08s  0.62%  runtime.mallocgcSmallScanNoHeader
+     0.01s 0.077% 92.30%      4.35s 33.51%  runtime.park_m
+     0.01s 0.077% 92.37%      1.03s  7.94%  runtime.runqsteal
+     0.01s 0.077% 92.45%      0.07s  0.54%  runtime.sellock
+     0.01s 0.077% 92.53%      0.83s  6.39%  syscall.recvfrom
+     0.01s 0.077% 92.60%      7.06s 54.39%  syscall.syscalln
+         0     0% 92.60%      0.07s  0.54%  crypto/internal/fips140/aes/gcm.(*GCM).Open
+         0     0% 92.60%      0.07s  0.54%  crypto/internal/fips140/aes/gcm.open
+         0     0% 92.60%      0.15s  1.16%  github.com/getlantern/photon.(*SendStream).Write
+         0     0% 92.60%      0.09s  0.69%  github.com/getlantern/photon.(*SendStream).Write.func1
+         0     0% 92.60%      0.07s  0.54%  github.com/getlantern/photon/internal/transport.(*Conn).HandleDatagram
+         0     0% 92.60%      0.07s  0.54%  github.com/getlantern/photon/internal/transport.(*Conn).receive
+         0     0% 92.60%      0.07s  0.54%  github.com/getlantern/photon/internal/transport.(*ServerEndpoint).handleNetworkDatagram

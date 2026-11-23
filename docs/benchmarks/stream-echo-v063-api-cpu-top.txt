@@ -1,0 +1,33 @@
+File: quic-api-refresh.test
+Type: cpu
+Time: 2026-09-29 12:24:19 MDT
+Duration: 5.51s, Total samples = 17.99s (326.77%)
+Showing nodes accounting for 16.72s, 92.94% of 17.99s total
+Dropped 283 nodes (cum <= 0.09s)
+Showing top 25 nodes out of 103
+      flat  flat%   sum%        cum   cum%
+    10.95s 60.87% 60.87%     10.95s 60.87%  syscall.rawsyscalln
+     2.12s 11.78% 72.65%      2.12s 11.78%  runtime.kevent
+     1.50s  8.34% 80.99%      1.50s  8.34%  runtime.usleep
+     1.21s  6.73% 87.72%      1.21s  6.73%  runtime.pthread_cond_wait
+     0.54s  3.00% 90.72%      0.54s  3.00%  runtime.pthread_cond_signal
+     0.13s  0.72% 91.44%      1.44s  8.00%  runtime.stealWork
+     0.06s  0.33% 91.77%      0.22s  1.22%  runtime.selectgo
+     0.03s  0.17% 91.94%      1.24s  6.89%  runtime.runqgrab
+     0.02s  0.11% 92.05%      0.44s  2.45%  github.com/quic-go/quic-go.(*Conn).handlePackets
+     0.02s  0.11% 92.16%      0.25s  1.39%  github.com/quic-go/quic-go.(*Conn).handleUnpackedShortHeaderPacket
+     0.02s  0.11% 92.27%      0.11s  0.61%  github.com/quic-go/quic-go.(*packetPacker).appendPacket
+     0.02s  0.11% 92.38%      5.11s 28.40%  runtime.findRunnable
+     0.02s  0.11% 92.50%      2.14s 11.90%  runtime.netpoll
+     0.01s 0.056% 92.55%      0.23s  1.28%  github.com/quic-go/quic-go.(*Conn).handleFrames
+     0.01s 0.056% 92.61%      0.38s  2.11%  github.com/quic-go/quic-go.(*Conn).handleOnePacket
+     0.01s 0.056% 92.66%      2.43s 13.51%  github.com/quic-go/quic-go.(*oobConn).ReadPacket
+     0.01s 0.056% 92.72%      0.09s   0.5%  github.com/quic-go/quic-go/internal/ackhandler.(*sentPacketHandler).SentPacket
+     0.01s 0.056% 92.77%      2.39s 13.29%  golang.org/x/net/internal/socket.(*Conn).recvMsg
+     0.01s 0.056% 92.83%      2.32s 12.90%  golang.org/x/sys/unix.RecvmsgBuffers
+     0.01s 0.056% 92.88%      2.31s 12.84%  golang.org/x/sys/unix.recvmsgRaw
+     0.01s 0.056% 92.94%      0.12s  0.67%  io.copyBuffer
+         0     0% 92.94%      0.10s  0.56%  github.com/getlantern/photon.(*streamDeadline).run
+         0     0% 92.94%      1.43s  7.95%  github.com/getlantern/photon/internal/transport.(*UDPServer).readSocket
+         0     0% 92.94%      4.43s 24.62%  github.com/getlantern/photon/internal/transport.(*UDPServer).run
+         0     0% 92.94%      4.35s 24.18%  github.com/getlantern/photon/internal/transport.(*UDPServer).writeOutbound

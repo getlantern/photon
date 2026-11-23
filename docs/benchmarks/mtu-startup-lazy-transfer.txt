@@ -1,0 +1,26 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/getlantern/photon
+cpu: Apple M4
+BenchmarkPublicMTUTransfer/v1/disabled=false-10         	      10	   3544179 ns/op	  73.96 MB/s	 2468896 B/op	   15486 allocs/op
+BenchmarkPublicMTUTransfer/v1/disabled=false-10         	      10	   2853283 ns/op	  91.87 MB/s	 2456852 B/op	   15462 allocs/op
+BenchmarkPublicMTUTransfer/v1/disabled=false-10         	      10	   2774971 ns/op	  94.47 MB/s	 2417371 B/op	   15441 allocs/op
+BenchmarkPublicMTUTransfer/v1/disabled=false-10         	      10	   2751612 ns/op	  95.27 MB/s	 2472816 B/op	   15454 allocs/op
+BenchmarkPublicMTUTransfer/v1/disabled=false-10         	      10	   2871012 ns/op	  91.31 MB/s	 2424470 B/op	   15422 allocs/op
+BenchmarkPublicMTUTransfer/v1/disabled=true-10          	      10	   2897454 ns/op	  90.47 MB/s	 1979953 B/op	   16306 allocs/op
+BenchmarkPublicMTUTransfer/v1/disabled=true-10          	      10	   2918392 ns/op	  89.82 MB/s	 2211317 B/op	   16338 allocs/op
+BenchmarkPublicMTUTransfer/v1/disabled=true-10          	      10	   2871650 ns/op	  91.29 MB/s	 1959396 B/op	   16299 allocs/op
+BenchmarkPublicMTUTransfer/v1/disabled=true-10          	      10	   3168404 ns/op	  82.74 MB/s	 2121212 B/op	   16364 allocs/op
+BenchmarkPublicMTUTransfer/v1/disabled=true-10          	      10	   2864354 ns/op	  91.52 MB/s	 2145420 B/op	   16342 allocs/op
+BenchmarkPublicMTUTransfer/v6b3343cf/disabled=false-10  	      10	   2814579 ns/op	  93.14 MB/s	 2570833 B/op	   15501 allocs/op
+BenchmarkPublicMTUTransfer/v6b3343cf/disabled=false-10  	      10	   2818183 ns/op	  93.02 MB/s	 2415556 B/op	   15472 allocs/op
+BenchmarkPublicMTUTransfer/v6b3343cf/disabled=false-10  	      10	   2718971 ns/op	  96.41 MB/s	 2380946 B/op	   15427 allocs/op
+BenchmarkPublicMTUTransfer/v6b3343cf/disabled=false-10  	      10	   2757829 ns/op	  95.05 MB/s	 2454003 B/op	   15481 allocs/op
+BenchmarkPublicMTUTransfer/v6b3343cf/disabled=false-10  	      10	   2724025 ns/op	  96.23 MB/s	 2402096 B/op	   15463 allocs/op
+BenchmarkPublicMTUTransfer/v6b3343cf/disabled=true-10   	      10	   2930000 ns/op	  89.47 MB/s	 2110813 B/op	   16312 allocs/op
+BenchmarkPublicMTUTransfer/v6b3343cf/disabled=true-10   	      10	   2896104 ns/op	  90.52 MB/s	 2165308 B/op	   16337 allocs/op
+BenchmarkPublicMTUTransfer/v6b3343cf/disabled=true-10   	      10	   2902262 ns/op	  90.32 MB/s	 2145992 B/op	   16340 allocs/op
+BenchmarkPublicMTUTransfer/v6b3343cf/disabled=true-10   	      10	   2853988 ns/op	  91.85 MB/s	 2092843 B/op	   16319 allocs/op
+BenchmarkPublicMTUTransfer/v6b3343cf/disabled=true-10   	      10	   2874183 ns/op	  91.21 MB/s	 2071289 B/op	   16308 allocs/op
+PASS
+ok  	github.com/getlantern/photon	1.030s

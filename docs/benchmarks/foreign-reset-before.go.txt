@@ -1,0 +1,127 @@
+package transport
+
+import (
+	"crypto/subtle"
+	"net/netip"
+)
+
+// forwardResetSnapshot is an immutable routing hint published by the connection
+// owner. The source never reads Conn state. The destination must recheck current
+// tuple/token eligibility and attempt authentication before accepting a reset.
+type forwardResetSnapshot struct {
+	peers  map[netip.AddrPort]struct{}
+	tokens map[[16]byte]struct{}
+}
+
+func (route *handoffRoute) publishResetHints(c *Conn) {
+	old := route.resetHints.Load()
+	unchanged := old != nil
+	peers, tokens := 0, 0
+	visit := func(addPeer func(netip.AddrPort), addToken func([16]byte)) {
+		if c.multipath == nil {
+			return
+		}
+		for id, state := range c.multipath.paths {
+			if c.multipath.abandoned[id] != nil {
+				continue
+			}
+			app := state.application
+			if app != nil && app.network != nil && app.network.local == route.local {
+				addPeer(app.network.remote)
+			}
+			if !c.config.Server {
+				if candidate := state.resetCandidate(); candidate != nil && candidate.tuple.local == route.local {
+					addPeer(candidate.tuple.remote)
+				}
+			}
+			for _, peer := range state.peer.active {
+				// Only used, active tokens can be published. Foreign output
+				// refreshes this snapshot before exposing a first-use packet.
+				if peer.used && peer.hasToken {
+					addToken(peer.token)
+				}
+			}
+		}
+	}
+	visit(func(peer netip.AddrPort) {
+		peers++
+		if old != nil {
+			if _, ok := old.peers[peer]; !ok {
+				unchanged = false
+			}
+		}
+	}, func(token [16]byte) {
+		tokens++
+		if old != nil {
+			if _, ok := old.tokens[token]; !ok {
+				unchanged = false
+			}
+		}
+	})
+	if unchanged && peers == len(old.peers) && tokens == len(old.tokens) {
+		return
+	}
+	next := &forwardResetSnapshot{peers: make(map[netip.AddrPort]struct{}, peers), tokens: make(map[[16]byte]struct{}, tokens)}
+	visit(func(peer netip.AddrPort) { next.peers[peer] = struct{}{} }, func(token [16]byte) { next.tokens[token] = struct{}{} })
+	route.resetHints.Store(next)
+}
+
+// forwardResetRoute is only a fallback for otherwise unroutable packets.
+// Exact tuple and token hints avoid broadcasting unauthenticated input to owners.
+func (r *Router) forwardResetRoute(data []byte, local, peer netip.AddrPort) *handoffRoute {
+	if len(data) < 21 || len(r.forwardRegistrations) == 0 {
+		return nil
+	}
+	if _, known := r.RouteNetwork(data, local, peer); known {
+		return nil
+	}
+	return r.foreignResetMatch(data, local, peer)
+}
+
+// foreignResetMatch can also run after the local CID owner fails authentication.
+// It carries no authority to bypass final tuple/token checks at the destination.
+func (r *Router) foreignResetMatch(data []byte, local, peer netip.AddrPort) *handoffRoute {
+	route, ambiguous := r.foreignResetSelection(data, local, peer)
+	if ambiguous {
+		return nil
+	}
+	return route
+}
+
+func (r *Router) foreignResetSelection(data []byte, local, peer netip.AddrPort) (*handoffRoute, bool) {
+	if len(data) < 21 || len(r.forwardRegistrations) == 0 {
+		return nil, false
+	}
+	tuple, err := canonicalPathTuple(local, peer)
+	if err != nil {
+		return nil, false
+	}
+	var token [16]byte
+	copy(token[:], data[len(data)-16:])
+	var found *handoffRoute
+	for route := range r.forwardRegistrations {
+		if route.local != tuple.local || route.revoked.Load() {
+			continue
+		}
+		hint := route.resetHints.Load()
+		if hint == nil {
+			continue
+		}
+		if _, ok := hint.peers[tuple.remote]; !ok {
+			continue
+		}
+		match := 0
+		for expected := range hint.tokens {
+			match |= subtle.ConstantTimeCompare(token[:], expected[:])
+		}
+		if match == 0 {
+			continue
+		}
+		// Ambiguous token publication cannot select an arbitrary connection.
+		if found != nil {
+			return nil, true
+		}
+		found = route
+	}
+	return found, false
+}

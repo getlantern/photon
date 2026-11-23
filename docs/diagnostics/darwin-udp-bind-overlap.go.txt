@@ -1,0 +1,13 @@
+package main
+import("fmt";"net";"time")
+func main(){
+ v4,e:=net.ListenUDP("udp4",&net.UDPAddr{IP:net.IPv4zero});if e!=nil{panic(e)};defer v4.Close()
+ port:=v4.LocalAddr().(*net.UDPAddr).Port
+ dual,e:=net.ListenUDP("udp",&net.UDPAddr{IP:net.IPv4zero,Port:port});if e!=nil{fmt.Println("dual-stack overlap rejected:",e);return};defer dual.Close()
+ fmt.Println("IPv4 listener:",v4.LocalAddr(),"second wildcard listener:",dual.LocalAddr())
+ out,e:=net.ListenUDP("udp4",&net.UDPAddr{IP:net.IPv4(127,0,0,1)});if e!=nil{panic(e)};defer out.Close()
+ if _,e=out.WriteToUDP([]byte("probe"),&net.UDPAddr{IP:net.IPv4(127,0,0,1),Port:port});e!=nil{panic(e)}
+ b:=make([]byte,16);v4.SetReadDeadline(time.Now().Add(time.Second));n,_,e:=v4.ReadFromUDP(b);fmt.Printf("IPv4 received %q err=%v\n",b[:n],e)
+ dual.SetReadDeadline(time.Now().Add(50*time.Millisecond));n,_,e=dual.ReadFromUDP(b);fmt.Printf("second wildcard received %d bytes err=%v\n",n,e)
+ explicit,e:=net.ListenUDP("udp4",&net.UDPAddr{IP:net.IPv4zero,Port:port});if explicit!=nil{explicit.Close()};fmt.Println("second explicit IPv4 bind:",e)
+}

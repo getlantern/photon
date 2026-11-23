@@ -1,0 +1,36 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/getlantern/photon/internal/transport
+cpu: Apple M4
+BenchmarkResetTokenIndexBootstrap/1-10  	  208010	       978.8 ns/op	    2288 B/op	      19 allocs/op
+BenchmarkResetTokenIndexBootstrap/1-10  	  291118	       827.1 ns/op	    2288 B/op	      19 allocs/op
+BenchmarkResetTokenIndexBootstrap/1-10  	  289408	       828.2 ns/op	    2288 B/op	      19 allocs/op
+BenchmarkResetTokenIndexBootstrap/1-10  	  292971	       824.9 ns/op	    2288 B/op	      19 allocs/op
+BenchmarkResetTokenIndexBootstrap/1-10  	  291408	       821.6 ns/op	    2288 B/op	      19 allocs/op
+BenchmarkResetTokenIndexBootstrap/256-10         	    2292	    113422 ns/op	  198807 B/op	    1065 allocs/op
+BenchmarkResetTokenIndexBootstrap/256-10         	    2148	    106957 ns/op	  198806 B/op	    1065 allocs/op
+BenchmarkResetTokenIndexBootstrap/256-10         	    2306	    105920 ns/op	  198803 B/op	    1065 allocs/op
+BenchmarkResetTokenIndexBootstrap/256-10         	    2277	    106534 ns/op	  198803 B/op	    1065 allocs/op
+BenchmarkResetTokenIndexBootstrap/256-10         	    2258	    105685 ns/op	  198803 B/op	    1065 allocs/op
+BenchmarkResetTokenIndexBootstrap/4096-10        	     135	   1751192 ns/op	 3241271 B/op	   16491 allocs/op
+BenchmarkResetTokenIndexBootstrap/4096-10        	     134	   1767459 ns/op	 3241267 B/op	   16491 allocs/op
+BenchmarkResetTokenIndexBootstrap/4096-10        	     135	   1750737 ns/op	 3241266 B/op	   16491 allocs/op
+BenchmarkResetTokenIndexBootstrap/4096-10        	     134	   1764539 ns/op	 3241269 B/op	   16491 allocs/op
+BenchmarkResetTokenIndexBootstrap/4096-10        	     135	   1749177 ns/op	 3241266 B/op	   16491 allocs/op
+BenchmarkResetTokenIndexHit/1-10                 	 1000000	       227.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkResetTokenIndexHit/1-10                 	 1000000	       229.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkResetTokenIndexHit/1-10                 	 1000000	       228.7 ns/op	       0 B/op	       0 allocs/op
+BenchmarkResetTokenIndexHit/1-10                 	 1000000	       231.6 ns/op	       0 B/op	       0 allocs/op
+BenchmarkResetTokenIndexHit/1-10                 	 1000000	       229.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkResetTokenIndexHit/256-10               	 1000000	       229.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkResetTokenIndexHit/256-10               	 1000000	       233.4 ns/op	       0 B/op	       0 allocs/op
+BenchmarkResetTokenIndexHit/256-10               	 1000000	       234.7 ns/op	       0 B/op	       0 allocs/op
+BenchmarkResetTokenIndexHit/256-10               	 1000000	       234.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkResetTokenIndexHit/256-10               	 1000000	       232.7 ns/op	       0 B/op	       0 allocs/op
+BenchmarkResetTokenIndexHit/4096-10              	 1000000	       237.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkResetTokenIndexHit/4096-10              	 1000000	       243.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkResetTokenIndexHit/4096-10              	 1000000	       234.7 ns/op	       0 B/op	       0 allocs/op
+BenchmarkResetTokenIndexHit/4096-10              	 1000000	       235.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkResetTokenIndexHit/4096-10              	 1000000	       234.0 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/getlantern/photon/internal/transport	7.494s

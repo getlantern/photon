@@ -1,0 +1,9 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/getlantern/photon/internal/recovery
+cpu: Apple M4
+BenchmarkCongestionHistoryACK-10    	  100000	       126.9 ns/op	      96 B/op	       2 allocs/op
+BenchmarkCongestionHistoryACK-10    	  100000	        95.83 ns/op	      96 B/op	       2 allocs/op
+BenchmarkCongestionHistoryACK-10    	  100000	        86.03 ns/op	      96 B/op	       2 allocs/op
+PASS
+ok  	github.com/getlantern/photon/internal/recovery	0.238s
