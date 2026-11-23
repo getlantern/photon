@@ -83,6 +83,8 @@ func (s *Session) openRequestStream(parent context.Context, stream ClientExchang
 	raw.datagrams = config.Datagrams
 	raw.noWriter = fmt.Errorf("http3: invalid use of RequestStream.Write before SendRequestHeader")
 	raw.noBody = fmt.Errorf("http3: invalid use of RequestStream.Read before ReadResponse")
+	// A raw request stream is the application's from the start.
+	_ = task.takeOver(raw)
 	c := &ClientStream{RawStream: raw, session: s, config: config, ctx: ctx}
 	// As for ExchangeRequest: after a validated end of response every section
 	// was decoded and acknowledged, so there is no QPACK work to cancel.

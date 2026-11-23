@@ -36,9 +36,8 @@ type RawStream struct {
 	writer   *MessageWriter // nil while this side has sent no header
 	noWriter error
 
-	received     chan struct{} // closed when the application is done receiving
-	receivedOnce sync.Once
-	completed    func() // reports a validated end of message, before received closes
+	received  chan struct{} // closed, by the task and once, when receiving is over
+	completed func()        // reports a validated end of message, before received closes
 
 	canceledRead atomic.Pointer[quic.StreamError] // set by the first CancelRead
 
@@ -113,17 +112,10 @@ func (s *RawStream) Read(p []byte) (n int, err error) {
 // malformed message fails the request; any other terminal result, a peer reset
 // among them, ends receiving and nothing else. An expired deadline ends nothing.
 func (s *RawStream) readEnded(err error) error {
-	if err != nil && !h3.IsDeadline(err) {
-		var protocol *h3.Error
-		var message *MessageError
-		if errors.As(err, &protocol) || errors.As(err, &message) {
-			s.task.fail(err, 0x10e)
-		}
-		if err == io.EOF && s.completed != nil {
-			s.completed()
-		}
-		s.receiveEnded()
+	if err == io.EOF && s.completed != nil {
+		s.completed()
 	}
+	s.task.readOutcome(err, false)
 	return s.mapError.apply(s.ended(err))
 }
 
@@ -261,7 +253,7 @@ func (s *RawStream) ended(err error) error {
 	return err
 }
 
-func (s *RawStream) receiveEnded() { s.receivedOnce.Do(func() { close(s.received) }) }
+func (s *RawStream) receiveEnded() { s.task.receiveEnded() }
 
 // wait returns once the application has finished both directions, or ctx ends.
 // The send context alone covers sending. Receiving needs the application's own

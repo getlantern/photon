@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	h3 "github.com/getlantern/photon/internal/http3wire"
@@ -98,14 +99,22 @@ func TestFieldEncoderLimits(t *testing.T) {
 	}
 }
 
+// failedEncoderWriter is also written by a decoder's feedback goroutine, so its
+// fields are safe to set and read while one runs.
 type failedEncoderWriter struct {
-	fail   bool
-	writes int
+	fail   atomic.Bool
+	writes atomic.Int32
+}
+
+func failingEncoderWriter() *failedEncoderWriter {
+	w := &failedEncoderWriter{}
+	w.fail.Store(true)
+	return w
 }
 
 func (w *failedEncoderWriter) Write(b []byte) (int, error) {
-	w.writes++
-	if w.fail {
+	w.writes.Add(1)
+	if w.fail.Load() {
 		return len(b) / 2, nil
 	}
 	return len(b), nil
@@ -116,18 +125,18 @@ func TestFieldEncoderTerminalFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writer.fail = true
+	writer.fail.Store(true)
 	if _, err = e.Insert(fs("x", "value")); err != io.ErrShortWrite {
 		t.Fatal(err)
 	}
-	writes := writer.writes
+	writes := writer.writes.Load()
 	if _, next := e.Encode(0, nil); next != err {
 		t.Fatal(next)
 	}
 	if _, next := e.Insert(fs("y", "v")); next != err {
 		t.Fatal(next)
 	}
-	if e.Feedback(qpack.DecoderInstruction{}) != err || writer.writes != writes {
+	if e.Feedback(qpack.DecoderInstruction{}) != err || writer.writes.Load() != writes {
 		t.Fatal("retried failed writer")
 	}
 	e, _ = NewFieldEncoder(SettingsSnapshot{MaxFieldSectionSize: 4096}, encoderLimits(), io.Discard)
@@ -163,14 +172,14 @@ func TestFieldEncoderConcurrent(t *testing.T) {
 func TestSettingsConstructFieldEncoder(t *testing.T) {
 	s, _ := NewSettingsState(false, nil)
 	writer := &failedEncoderWriter{}
-	if _, err := s.NewFieldEncoder(encoderLimits(), writer); err == nil || writer.writes != 0 {
+	if _, err := s.NewFieldEncoder(encoderLimits(), writer); err == nil || writer.writes.Load() != 0 {
 		t.Fatal("constructed before settings")
 	}
 	if err := s.ApplyPeer([]h3.Setting{{ID: h3.QPACKMaxTableCapacity, Value: 64}, {ID: h3.MaxFieldSectionSize, Value: 0}}); err != nil {
 		t.Fatal(err)
 	}
 	e, err := s.NewFieldEncoder(encoderLimits(), writer)
-	if err != nil || writer.writes != 1 {
+	if err != nil || writer.writes.Load() != 1 {
 		t.Fatal(err)
 	}
 	if _, err := e.Encode(0, []qpack.DecodedField{fs(":status", "200")}); !errors.Is(err, qpack.ErrSectionLimit) {
@@ -180,7 +189,7 @@ func TestSettingsConstructFieldEncoder(t *testing.T) {
 		t.Fatal(err)
 	}
 	failure := s.ApplyPeer(nil)
-	if _, err := s.NewFieldEncoder(encoderLimits(), writer); err != failure || writer.writes != 1 {
+	if _, err := s.NewFieldEncoder(encoderLimits(), writer); err != failure || writer.writes.Load() != 1 {
 		t.Fatal("constructed after error", err)
 	}
 }

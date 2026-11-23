@@ -46,11 +46,24 @@ peer has already stopped the direction with H3_NO_ERROR, which a server may do
 once it has responded. Until then the request
 context stays live. Peer resets no longer abort the other direction; they are
 returned from `Read`/`Write`. Protocol violations still close the connection
-and malformed messages still reset the request. A request-body read that was
-already waiting when the handler called `HTTPStream` follows the same rules
-when it returns. When the request ended first
+and malformed messages still reset the request. When the request ended first
 (connection closed, handler panic), calls return that cause rather than the
 local reset it produced.
+
+Who owns a request's failure handling is one piece of state on its task,
+guarded by one lock: an ordinary request, or a stream the application owns,
+plus whether the request has failed and whether receiving is over. Every
+decision that depends on it is made and recorded under that lock: `HTTPStream`
+taking the stream over, a body read acting on its result, the observers of a
+peer reset or STOP_SENDING, and the report that receiving is over. So a
+takeover is either before such an event, which then gets raw-stream treatment
+(only that direction is affected), or after it, and then sees its effect: a
+request that already failed refuses the takeover, and a receive direction
+that already finished is carried into the new stream. This holds for a body
+read that is waiting when `HTTPStream` is called. Protocol violations and
+malformed messages fail the request whoever owns it. The lock is not held
+across I/O or application code; resets and cancellation follow a recorded
+decision.
 
 `ServerTunnel` (`AcceptTunnel`) is unchanged and remains handler-scoped and
 CONNECT-only. The two are exclusive per request.

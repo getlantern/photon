@@ -49,7 +49,7 @@ func TestSessionRequestFeedbackFailureStopsSession(t *testing.T) {
 			// The peer stops the decoder stream; only feedback for a request
 			// notices. The request-side call has queued it and succeeds.
 			session.Decoder().Flushed()
-			feedback.fail = tc.cause
+			feedback.setFail(tc.cause)
 			if tc.submit {
 				_, err = session.Decoder().Submit(0, []byte{2, 0, 0x80})
 			} else {

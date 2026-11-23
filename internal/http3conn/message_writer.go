@@ -12,13 +12,23 @@ import (
 
 // MessageWriter sends one message direction. Calls must be serialized, including
 // all other writes on the same transport stream. The shared FieldEncoder may
-// serve other streams concurrently. Every error is terminal for this writer,
-// except a stream deadline that expires inside a DATA frame: the next Write or
-// TryWrite finishes that frame first. The owner must reset/close as appropriate,
-// including disposing of outstanding QPACK references through the connection
-// lifecycle. No write is retried.
-// The owner supplies interruptible stream writes/deadlines. Close sends FIN only
-// after successful message validation; it does not close the connection.
+// serve other streams concurrently. The owner supplies interruptible stream
+// writes/deadlines. Close sends FIN only after successful message validation;
+// it does not close the connection. No write is retried.
+//
+// Some outcomes leave the writer usable and the call repeatable:
+//   - an expired stream deadline in Write: the next Write or TryWrite first
+//     finishes the interrupted DATA frame;
+//   - an expired stream deadline in TryWrite or Close: nothing was queued;
+//   - quic.ErrWouldBlock from TryWrite: nothing was queued;
+//   - Headers or Close while a DATA frame is unfinished (errUnfinishedData).
+//
+// Every other error is cached and terminal for this writer: a failed stream
+// write, failed message validation, and any failure, an expired deadline
+// included, while a HEADERS frame is being written, whose block is tied to
+// QPACK state already committed. The owner must then reset/close as
+// appropriate, including disposing of outstanding QPACK references through the
+// connection lifecycle.
 type MessageWriter struct {
 	stream         io.WriteCloser
 	encoder        *FieldEncoder

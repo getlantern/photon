@@ -68,7 +68,7 @@ func TestSessionGracefulCloseDecodesBufferedTrailers(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("session did not stop")
 	}
-	feedback.fail = peerClose
+	feedback.setFail(peerClose)
 	body, err := io.ReadAll(response.Body)
 	if err != nil || string(body) != "accepted" || response.Trailer.Get("X-Drained") != "complete" {
 		t.Fatalf("buffered response lost after graceful close: %q %v %v", body, response.Trailer, err)
@@ -93,7 +93,7 @@ func TestFieldDecoderDetach(t *testing.T) {
 		t.Fatal(err)
 	}
 	d.Flushed()
-	writes := writer.writes
+	writes := writer.writes.Load()
 	cause := errors.New("peer drained")
 	d.Detach(cause)
 	if readySection(t, blocked).Err != cause {
@@ -113,7 +113,7 @@ func TestFieldDecoderDetach(t *testing.T) {
 		t.Fatal("lost detach cause")
 	}
 	d.Flushed()
-	if writer.writes != writes {
+	if writer.writes.Load() != writes {
 		t.Fatal("feedback written after detach")
 	}
 	terminal := errors.New("stopped")

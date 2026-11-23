@@ -105,7 +105,7 @@ func TestSessionGracefulCloseDecodesTrailersBeforeDetach(t *testing.T) {
 					f.session.controlMu.Unlock()
 				}
 			}()
-			f.feedback.fail = peerClose
+			f.feedback.setFail(peerClose)
 			if observed {
 				f.stop(peerClose)
 				<-f.feedback.interrupt
@@ -213,7 +213,7 @@ func TestFieldDecoderUndeliverableFeedbackDetaches(t *testing.T) {
 			// Each operation succeeds; its feedback fails afterwards, and that
 			// detaches the decoder.
 			d.Flushed()
-			writer.fail = true
+			writer.fail.Store(true)
 			switch operation {
 			case "submit":
 				ready, err := d.Submit(8, []byte{2, 0, 0x80})
@@ -243,7 +243,7 @@ func TestFieldDecoderUndeliverableFeedbackDetaches(t *testing.T) {
 			if reports != 1 {
 				t.Fatal("owner reports", reports)
 			}
-			writes := writer.writes
+			writes := writer.writes.Load()
 			ready, err := d.Submit(12, []byte{2, 0, 0x80})
 			if err != nil {
 				t.Fatal("table discarded:", err)
@@ -252,7 +252,7 @@ func TestFieldDecoderUndeliverableFeedbackDetaches(t *testing.T) {
 				t.Fatal(result)
 			}
 			d.Flushed()
-			if writer.writes != writes {
+			if writer.writes.Load() != writes {
 				t.Fatal("feedback written after detach")
 			}
 		})

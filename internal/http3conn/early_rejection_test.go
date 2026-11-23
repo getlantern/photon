@@ -93,7 +93,7 @@ func TestOpenLocalRejectionDoesNotAbort(t *testing.T) {
 			if opening {
 				transport = rejectedOpenTransport{fakeTransport: base, at: i + 1}
 			} else {
-				base.streams[i].fail = quic.Err0RTTRejected
+				base.streams[i].setFail(quic.Err0RTTRejected)
 			}
 			local, err := OpenLocal(context.Background(), transport, nil)
 			if local != nil || !errors.Is(err, quic.Err0RTTRejected) || base.aborted != 0 {

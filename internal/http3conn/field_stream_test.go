@@ -81,7 +81,7 @@ func TestFieldStreamSequential(t *testing.T) {
 }
 
 func TestFieldStreamCancellationWriteFailure(t *testing.T) {
-	writer := &failedEncoderWriter{fail: true}
+	writer := failingEncoderWriter()
 	decoder, err := NewFieldDecoder(decoderLimits(), writer)
 	if err != nil {
 		t.Fatal(err)
@@ -139,7 +139,7 @@ func TestFieldStreamCancellationWriteFailure(t *testing.T) {
 		t.Fatal("lost terminal failure on later cancellation", err)
 	}
 	decoder.Flushed()
-	if writer.writes != 1 {
-		t.Fatal("retried failed feedback", writer.writes)
+	if writer.writes.Load() != 1 {
+		t.Fatal("retried failed feedback", writer.writes.Load())
 	}
 }

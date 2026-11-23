@@ -1109,7 +1109,7 @@ func TestServerBodyReadAcrossTakeover(t *testing.T) {
 		{"malformed frame", "", func(_ *RawStream, _ *serverRequestBody, peer *io.PipeWriter) {
 			peer.Write(readerFrame(t, h3.Settings, nil))
 		}, func(err error) bool { var protocol *h3.Error; return errors.As(err, &protocol) },
-			expectation{ended: true, failed: true, aborted: h3.FrameUnexpected, reset: 0x10e}},
+			expectation{ended: true, failed: true, aborted: h3.FrameUnexpected, reset: 0x10d}},
 		{"malformed message", "5", func(_ *RawStream, _ *serverRequestBody, peer *io.PipeWriter) { peer.Close() },
 			func(err error) bool { var message *MessageError; return errors.As(err, &message) },
 			expectation{ended: true, failed: true, reset: 0x10e}},
@@ -1159,7 +1159,9 @@ func TestServerBodyReadAcrossTakeover(t *testing.T) {
 			}
 			raw := newRawStream(transport, nil, task, nil)
 			raw.body = message
-			body.handOff(raw)
+			if err := task.takeOver(raw); err != nil {
+				t.Fatal(err)
+			}
 			select {
 			case <-raw.received:
 				t.Fatal("receiving over while a read is still waiting")
@@ -1270,5 +1272,132 @@ func TestMessageWriterTryWriteAfterDeadline(t *testing.T) {
 	}
 	if err := writer.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// outcomeBody is a request body whose only Read returns err.
+type outcomeBody struct{ err error }
+
+func (b outcomeBody) Read([]byte) (int, error) { return 0, b.err }
+func (b outcomeBody) Close() error             { return nil }
+
+func takeoverFixture(t *testing.T, outcome error) (*requestTask, *serverRequestBody, *RawStream, *exchangeStream, context.Context) {
+	t.Helper()
+	transport, _, _ := exchangeFixture(t, bytes.NewReader(nil))
+	ctx, cancel := context.WithCancelCause(context.Background())
+	t.Cleanup(func() { cancel(nil) })
+	task := &requestTask{ctx: ctx, stream: transport, cancel: cancel, abort: func(uint64, string) {}}
+	body := &serverRequestBody{ReadCloser: outcomeBody{outcome}, task: task}
+	raw := newRawStream(transport, nil, task, nil)
+	raw.body = body.ReadCloser
+	return task, body, raw, transport, ctx
+}
+
+// Round 5's interleaving, in both orders. A read returns a peer reset and the
+// handler takes the stream over at the same moment. Whichever is decided first
+// under the task's lock, the two agree on who owns the stream.
+func TestTakeoverRacesReadOutcome(t *testing.T) {
+	reset := &quic.StreamError{ErrorCode: 0x10c, Remote: true}
+	t.Run("takeover first", func(t *testing.T) {
+		task, body, raw, transport, ctx := takeoverFixture(t, reset)
+		// The read has its result; the takeover completes before the result is
+		// acted on. It is then a raw stream's read.
+		task.beforeDecision = func() {
+			if err := task.takeOver(raw); err != nil {
+				t.Error(err)
+			}
+		}
+		if _, err := body.Read(make([]byte, 1)); err != reset {
+			t.Fatal(err)
+		}
+		if _, writes := (&rawTestStream{transport}).codes(); len(writes) != 0 || ctx.Err() != nil || task.result() != nil {
+			t.Fatal("read reset a taken-over stream:", writes, context.Cause(ctx), task.result())
+		}
+		select {
+		case <-raw.received:
+		default:
+			t.Fatal("raw stream not told that receiving is over")
+		}
+		if _, err := transport.Write([]byte("still writable")); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("read first", func(t *testing.T) {
+		task, body, raw, transport, ctx := takeoverFixture(t, reset)
+		// The read has failed the request but not yet reset anything. A takeover
+		// attempted now must be refused: there is no stream left to take.
+		var refused error
+		task.afterDecision = func() { refused = task.takeOver(raw) }
+		if _, err := body.Read(make([]byte, 1)); err != reset {
+			t.Fatal(err)
+		}
+		if refused != reset || task.owner() != nil {
+			t.Fatal("failed request was taken over:", refused)
+		}
+		if _, writes := (&rawTestStream{transport}).codes(); len(writes) != 1 || ctx.Err() == nil {
+			t.Fatal("ordinary request survived its reset:", writes)
+		}
+	})
+}
+
+// Takeover and a terminal read outcome, concurrently and many times. Whatever
+// the order, a successful takeover leaves sending alone unless the error was a
+// connection or message error, the end of receiving reaches the raw stream
+// exactly once (a second close of its channel would panic), and the stream's
+// wait can finish, so its slot is not leaked.
+func TestTakeoverConcurrentWithReadOutcome(t *testing.T) {
+	outcomes := map[string]error{
+		"FIN":        io.EOF,
+		"reset":      &quic.StreamError{ErrorCode: 0x10c, Remote: true},
+		"connection": &quic.PeerCloseError{Application: true, Code: 0x100},
+		"protocol":   &h3.Error{Code: h3.FrameUnexpected, Reason: "test"},
+		"message":    &MessageError{"test"},
+	}
+	for name, outcome := range outcomes {
+		t.Run(name, func(t *testing.T) {
+			var protocol *h3.Error
+			var message *MessageError
+			fatal := errors.As(outcome, &protocol) || errors.As(outcome, &message)
+			for i := 0; i < 500; i++ {
+				task, body, raw, transport, ctx := takeoverFixture(t, outcome)
+				start := make(chan struct{})
+				var taken error
+				var wg sync.WaitGroup
+				wg.Add(3)
+				go func() { defer wg.Done(); <-start; body.Read(make([]byte, 1)) }()
+				go func() { defer wg.Done(); <-start; taken = task.takeOver(raw) }()
+				// A second report of the same end must not reach the stream twice.
+				go func() { defer wg.Done(); <-start; body.Close() }()
+				close(start)
+				wg.Wait()
+				_, writes := (&rawTestStream{transport}).codes()
+				failed := task.result() != nil
+				if taken != nil {
+					if !failed {
+						t.Fatal("takeover refused on a healthy request:", taken)
+					}
+					continue
+				}
+				if failed != fatal || (len(writes) != 0) != fatal || (ctx.Err() != nil) != fatal {
+					t.Fatal("after takeover:", failed, writes, context.Cause(ctx))
+				}
+				select {
+				case <-raw.received:
+				default:
+					t.Fatal("end of receiving never reached the raw stream")
+				}
+				// With sending finished too, the stream's wait is over.
+				if !fatal {
+					transport.sendCancel(context.Canceled)
+				}
+				done := make(chan struct{})
+				go func() { defer close(done); raw.wait(ctx) }()
+				select {
+				case <-done:
+				case <-time.After(3 * time.Second):
+					t.Fatal("stream still waiting: its slot would leak")
+				}
+			}
+		})
 	}
 }

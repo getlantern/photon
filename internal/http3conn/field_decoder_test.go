@@ -130,7 +130,7 @@ func TestFieldDecoderFailures(t *testing.T) {
 			t.Fatal("mapping", err, code)
 		}
 	}
-	writer := &failedEncoderWriter{fail: true}
+	writer := failingEncoderWriter()
 	d, _ := NewFieldDecoder(decoderLimits(), writer)
 	a, _ := d.Submit(0, []byte{2, 0, 0x80})
 	decoderUpdate(t, d, qpack.EncoderInstruction{Type: qpack.SetDynamicCapacity, Index: 128})
@@ -141,12 +141,12 @@ func TestFieldDecoderFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 	d.Flushed()
-	writes := writer.writes
+	writes := writer.writes.Load()
 	if err := d.Cancel(0); err != io.ErrShortWrite {
 		t.Fatal("failed feedback write did not fail the decoder:", err)
 	}
 	d.Flushed()
-	if writer.writes != writes {
+	if writer.writes.Load() != writes {
 		t.Fatal("retried uncertain feedback")
 	}
 }

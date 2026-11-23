@@ -21,6 +21,7 @@ type fakeStream struct {
 	entered   chan struct{}
 	interrupt chan struct{}
 	once      sync.Once
+	failMu    sync.Mutex // a session's feedback writer reads fail while tests set it
 	fail      error
 	short     bool
 	cleared   bool
@@ -40,14 +41,16 @@ func (s *fakeStream) Write(p []byte) (int, error) {
 		<-s.interrupt
 		return 0, context.DeadlineExceeded
 	}
-	if s.fail != nil {
-		return 0, s.fail
+	if err := s.failure(); err != nil {
+		return 0, err
 	}
 	if s.short {
 		return 0, nil
 	}
 	return s.Buffer.Write(p)
 }
+func (s *fakeStream) setFail(err error) { s.failMu.Lock(); s.fail = err; s.failMu.Unlock() }
+func (s *fakeStream) failure() error    { s.failMu.Lock(); defer s.failMu.Unlock(); return s.fail }
 func (s *fakeStream) SetWriteDeadline(at time.Time) error {
 	if !at.IsZero() {
 		s.once.Do(func() { close(s.interrupt) })
@@ -103,7 +106,7 @@ func TestOpenLocalFailures(t *testing.T) {
 		transport := fixture()
 		transport.streams[1].short = short
 		if !short {
-			transport.streams[1].fail = io.ErrClosedPipe
+			transport.streams[1].setFail(io.ErrClosedPipe)
 		}
 		if local, err := OpenLocal(context.Background(), transport, nil); err == nil || local != nil || transport.aborted != InternalError {
 			t.Fatal(err)
