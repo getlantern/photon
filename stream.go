@@ -126,7 +126,8 @@ func (h *streamHandle) StreamID() StreamID { return StreamID(h.id) }
 
 // Release waits until received data has been consumed and all sent data or reset
 // has been acknowledged, then relinquishes engine storage and stream credit.
-// Cleanup is automatic; this optional method waits for it to finish.
+// Cleanup is automatic; this optional method waits for it to finish. It does
+// not wait for credit withheld by Config.RequireStreamCreditRelease.
 // Finish or cancel both directions before calling Release.
 func (h *streamHandle) Release(ctx context.Context) error {
 	if h.rejected.Load() {
@@ -207,6 +208,20 @@ func (s *ReceiveStream) CancelRead(code StreamErrorCode) {
 	})
 }
 
+// ReleaseStreamCredit allows the peer to open a new stream in place of this one.
+// It only has an effect if Config.RequireStreamCreditRelease is set. The peer
+// receives the credit once the stream's storage has been reclaimed (see Release)
+// and ReleaseStreamCredit has been called, in either order. Repeated calls do
+// nothing.
+func (s *ReceiveStream) ReleaseStreamCredit() {
+	if s.rejected.Load() {
+		return
+	}
+	_ = s.conn.server.Do(context.Background(), func(*transport.ServerEndpoint) error {
+		return s.conn.raw.ReleaseStreamCredit(s.id)
+	})
+}
+
 // SendStream serializes writes, retaining byte order across blocked flow control.
 // Close queues FIN after previous writes; it does not close the receive side.
 type SendStream struct {
@@ -264,14 +279,14 @@ func (s *SendStream) TryWriteAll(p []byte) error {
 		return Err0RTTRejected
 	}
 	if s.closed {
-		return engineStream.ErrSendClosed
+		return ErrStreamClosed
 	}
 	err := s.conn.server.Do(context.Background(), func(*transport.ServerEndpoint) error {
 		if s.released {
 			if s.sendTerminal != nil && s.sendTerminal != context.Canceled {
 				return s.sendTerminal
 			}
-			return engineStream.ErrSendClosed
+			return ErrStreamClosed
 		}
 		return s.conn.raw.TryWriteStreamAll(s.id, p)
 	})
@@ -296,7 +311,7 @@ func (s *SendStream) WriteWithLimit(p []byte, limiter func(int) int) (int, error
 		return 0, Err0RTTRejected
 	}
 	if s.closed {
-		return 0, engineStream.ErrSendClosed
+		return 0, ErrStreamClosed
 	}
 	total := 0
 	if len(p) == 0 {
@@ -313,7 +328,7 @@ func (s *SendStream) WriteWithLimit(p []byte, limiter func(int) int) (int, error
 					if s.sendTerminal != nil && s.sendTerminal != context.Canceled {
 						return true, s.sendTerminal
 					}
-					return true, engineStream.ErrSendClosed
+					return true, ErrStreamClosed
 				}
 				// Bound each owner turn so packet processing, cancellation and
 				// other streams can run between batches. Report any committed
@@ -361,7 +376,7 @@ func (s *SendStream) Close() error {
 				if s.sendTerminal != nil && s.sendTerminal != context.Canceled {
 					return true, s.sendTerminal
 				}
-				return true, engineStream.ErrSendClosed
+				return true, ErrStreamClosed
 			}
 			_, err := s.conn.raw.WriteStream(s.id, nil, true)
 			return !errors.Is(err, engineStream.ErrWouldBlock), errUnlessBlocked(err)
@@ -436,13 +451,18 @@ func (s *SendStream) CancelWrite(code StreamErrorCode) {
 
 // Stream is a bidirectional stream. One reader and one writer can progress
 // concurrently. Engine storage and peer credit are reclaimed automatically once
-// received data is consumed and sent data or reset is acknowledged.
+// received data is consumed and sent data or reset is acknowledged; with
+// Config.RequireStreamCreditRelease the credit also waits for ReleaseStreamCredit.
 type Stream struct {
 	*ReceiveStream
 	*SendStream
 }
 
-func (s *Stream) StreamID() StreamID                { return s.ReceiveStream.StreamID() }
+func (s *Stream) StreamID() StreamID { return s.ReceiveStream.StreamID() }
+
+// ReleaseStreamCredit behaves as ReceiveStream.ReleaseStreamCredit, once both
+// directions have completed. For streams opened locally it does nothing.
+func (s *Stream) ReleaseStreamCredit()              { s.ReceiveStream.ReleaseStreamCredit() }
 func (s *Stream) Release(ctx context.Context) error { return s.ReceiveStream.Release(ctx) }
 func (s *Stream) SetDeadline(t time.Time) error {
 	s.ReceiveStream.SetReadDeadline(t)
@@ -496,7 +516,15 @@ func (c *Conn) stream(ctx context.Context, uni, accept, wait bool) (*streamHandl
 			}
 			if !uni || !accept {
 				handle.sendContext, cancel = context.WithCancelCause(c.ctx)
-				err = c.raw.WatchSendClose(id, func(cause error) { handle.sendTerminal = cause; cancel(cause) })
+				err = c.raw.WatchSendClose(id, func(cause error) {
+					handle.sendTerminal = cause
+					// The handle keeps the engine's normal-close marker; the
+					// public Context reports the quic-go cause.
+					if cause == context.Canceled {
+						cause = ErrStreamClosed
+					}
+					cancel(cause)
+				})
 				if err != nil {
 					cancel(err)
 					if cancelReceive != nil {
@@ -573,7 +601,7 @@ func (c *Conn) OpenUniStreamSync(ctx context.Context) (*SendStream, error) {
 
 // Context is canceled when Close queues FIN, CancelWrite resets the stream,
 // the peer stops receiving, or the connection terminates. Normal Close uses
-// context.Canceled as its cause. This does not wait for delivery or peer EOF.
+// ErrStreamClosed as its cause. This does not wait for delivery or peer EOF.
 func (s *SendStream) Context() context.Context { return s.sendContext }
 
 // Completed receive storage outlives the socket owner. Ownership transfers only

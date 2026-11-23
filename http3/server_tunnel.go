@@ -11,7 +11,8 @@ import (
 // retains ownership and must join its I/O workers before returning. Read and Write
 // may run concurrently. CloseWrite ends sending while reads remain possible;
 // Close interrupts both directions. Handler return finishes sending and closes
-// receiving. There is no connection hijack or transfer beyond handler lifetime.
+// receiving. A tunnel cannot outlive its handler; HTTPStreamer provides a stream
+// that can.
 type ServerTunnel = http3conn.ServerTunnel
 
 // AcceptTunnel sends a successful CONNECT response and transfers DATA

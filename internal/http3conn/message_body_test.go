@@ -232,6 +232,7 @@ func TestMessageBodyPreservesCancellationCause(t *testing.T) {
 			if err = body.Close(); err != nil {
 				t.Fatal(err)
 			}
+			decoder.Flushed()
 			if !bytes.Equal(feedback.Bytes(), []byte{0x40}) {
 				t.Fatalf("cancellation count: %x", feedback.Bytes())
 			}

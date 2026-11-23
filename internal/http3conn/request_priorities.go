@@ -13,11 +13,15 @@ import (
 // and not-yet-accepted state are bounded; completed requests require no tombstone
 // allocation because their IDs are below the acceptance watermark.
 type RequestPriorities struct {
-	mu      sync.Mutex
-	limit   int
-	nextID  uint64
-	active  map[uint64]*requestPriorityState
-	pending map[uint64]h3.Priority
+	// Unordered accepts registration out of ID order, for streams an
+	// application hands over from its own goroutines. An update that arrived
+	// before a stream registered late is not applied to it.
+	Unordered bool
+	mu        sync.Mutex
+	limit     int
+	nextID    uint64
+	active    map[uint64]*requestPriorityState
+	pending   map[uint64]h3.Priority
 }
 type requestPriorityState struct {
 	stream  ServerRequestStream
@@ -62,13 +66,17 @@ func (p *RequestPriorities) register(stream ServerRequestStream) error {
 	id := uint64(stream.StreamID())
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if id%4 != 0 || id > wire.MaxVarint || id < p.nextID {
+	if id%4 != 0 || id > wire.MaxVarint || id < p.nextID && !p.Unordered || p.active[id] != nil {
 		return fmt.Errorf("http3: priority registration requires increasing request IDs")
 	}
 	if len(p.active) >= p.limit {
 		return &h3.Error{Code: h3.ExcessiveLoad, Reason: "active priority state limit"}
 	}
 	state := &requestPriorityState{stream: stream}
+	if id < p.nextID {
+		p.active[id] = state
+		return nil
+	}
 	if priority, ok := p.pending[id]; ok {
 		state.updated = true
 		applyRequestPriority(stream, priority)

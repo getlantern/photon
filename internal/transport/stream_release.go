@@ -64,7 +64,17 @@ func (c *Conn) ReleaseStream(id uint64) error {
 	if local {
 		return nil
 	}
-	uni := id&2 != 0
+	if c.config.RequireStreamCreditRelease && !s.creditReleased {
+		if c.streams.creditWithheld == nil {
+			c.streams.creditWithheld = make(map[uint64]struct{})
+		}
+		c.streams.creditWithheld[id] = struct{}{}
+		return nil
+	}
+	return c.grantStreamCredit(id&2 != 0)
+}
+
+func (c *Conn) grantStreamCredit(uni bool) error {
 	limit := c.streams.ids.ReceiveLimit(uni)
 	if limit < stream.MaxStreams {
 		limit++
@@ -76,6 +86,31 @@ func (c *Conn) ReleaseStream(id uint64) error {
 		}
 	}
 	return nil
+}
+
+// RequireStreamCreditRelease reports the immutable per-connection setting.
+func (c *Conn) RequireStreamCreditRelease() bool { return c.config.RequireStreamCreditRelease }
+
+// ReleaseStreamCredit records application consent to replace a peer-initiated
+// stream. Credit is returned once the stream is also released, in either
+// order. It does nothing unless Config.RequireStreamCreditRelease is set, for
+// locally initiated streams, and when repeated.
+func (c *Conn) ReleaseStreamCredit(id uint64) error {
+	if err := c.check(); err != nil {
+		return err
+	}
+	if !c.config.RequireStreamCreditRelease || (id&1 == 0) != c.config.Server {
+		return nil
+	}
+	if s := c.streams.objects[id]; s != nil {
+		s.creditReleased = true
+		return nil
+	}
+	if _, ok := c.streams.creditWithheld[id]; !ok {
+		return nil
+	}
+	delete(c.streams.creditWithheld, id)
+	return c.grantStreamCredit(id&2 != 0)
 }
 
 // AutoReleaseStream enables cleanup after acceptance, receive consumption (or

@@ -81,5 +81,10 @@ type DatagramTooLargeError = transport.DatagramTooLargeError
 // The returned byte count identifies the prefix already committed to the stream.
 var ErrWriteLimitReached = transport.ErrWriteLimitReached
 
+// ErrStreamClosed is returned by Write, WriteWithLimit and TryWriteAll after
+// Close on the same stream, and is the cause of the stream's Context after a
+// normal Close.
+var ErrStreamClosed = engineStream.ErrSendClosed
+
 // ErrWouldBlock reports that TryWriteAll cannot immediately admit the whole slice.
 var ErrWouldBlock = errors.New("operation would block")

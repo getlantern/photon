@@ -30,12 +30,13 @@ type BodyConfig struct {
 // The endpoint's Close callback/deadlines must interrupt transport reads. Callers
 // must Close even after EOF or error. This adapter does not choose reset codes,
 // merge trailers into headers, perform retries, or close the QUIC connection.
+// A Read that hits an expired stream deadline can be repeated.
 type MessageBody struct {
 	reader           *MessageReader
 	ctx              context.Context
 	cancel           context.CancelFunc
 	config           BodyConfig
-	data             bool
+	data, skipping   bool
 	err              error // reading goroutine only
 	complete, closed atomic.Bool
 	closeOnce        sync.Once
@@ -71,6 +72,9 @@ func (b *MessageBody) Read(p []byte) (int, error) {
 					return n, nil
 				}
 			} else {
+				if h3.IsDeadline(err) {
+					return n, err
+				}
 				if err != nil {
 					return n, b.fail(err)
 				}
@@ -81,7 +85,19 @@ func (b *MessageBody) Read(p []byte) (int, error) {
 				return 0, nil
 			}
 		}
+		if b.skipping {
+			if _, err := io.Copy(io.Discard, b.reader); err != nil {
+				if h3.IsDeadline(err) {
+					return 0, err
+				}
+				return 0, b.fail(err)
+			}
+			b.skipping = false
+		}
 		event, err := b.reader.Next(b.ctx)
+		if h3.IsDeadline(err) {
+			return 0, err
+		}
 		if err != nil {
 			if err == io.EOF {
 				b.complete.Store(true)
@@ -108,9 +124,7 @@ func (b *MessageBody) Read(p []byte) (int, error) {
 				return 0, b.fail(err)
 			}
 		default:
-			if _, err := io.Copy(io.Discard, b.reader); err != nil {
-				return 0, b.fail(err)
-			}
+			b.skipping = true
 		}
 	}
 }

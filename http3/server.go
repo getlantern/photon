@@ -6,9 +6,12 @@ package http3
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sync"
+	"time"
 
 	quic "github.com/getlantern/photon"
 	"github.com/getlantern/photon/internal/http3conn"
@@ -83,6 +86,19 @@ type Server struct {
 	// It must not synchronously call Shutdown, which would join itself.
 	ErrorHandler func(ctx context.Context, streamID uint64, err error)
 
+	// IdleTimeout closes a connection with H3_NO_ERROR once it has had no
+	// request stream open for that long. The period also bounds opening the
+	// control and QPACK streams, which the peer's credit can delay, and starts
+	// again when request serving begins.
+	// Only HTTP/3 requests count: QUIC activity such as PING does not, and a
+	// stream taken over with HTTPStreamer does until it is finished. Zero or
+	// negative means no timeout.
+	IdleTimeout time.Duration
+
+	// Logger, if set, receives handler panics at error level, and request and
+	// connection failures at debug level. Nil logs nothing.
+	Logger *slog.Logger
+
 	mu            sync.Mutex
 	stopping      bool
 	connections   map[*quic.Conn]*serverConnection
@@ -105,21 +121,46 @@ type serverConnection struct {
 // AllowEarlyData approves the resource. Otherwise direct requests wait for TLS,
 // and forwarded Early-Data requests receive 425. Request.TLS snapshots dispatch.
 func (s *Server) ServeQUICConn(parent context.Context, conn *quic.Conn) (err error) {
-	requests, headers, connections, err := s.limits()
+	admitted, err := s.admit(parent, conn)
 	if err != nil {
 		return err
 	}
+	return admitted.serve()
+}
+
+// servedConn is a connection the Server admitted and now owns.
+type servedConn struct {
+	server              *Server
+	conn                *quic.Conn
+	entry               *serverConnection
+	ctx                 context.Context
+	cancel              context.CancelCauseFunc
+	requests, headers   int
+	handler             http.Handler
+	closed, peerDone    chan struct{}
+	stopClose, stopPeer func() bool
+	cleanupContext      func()
+	raw                 *RawServerConn // nil when the server accepts the streams itself
+}
+
+// admit validates conn, charges it to the Server and builds its context. It
+// performs no I/O. After success the caller must run serve.
+func (s *Server) admit(parent context.Context, conn *quic.Conn) (admitted *servedConn, err error) {
+	requests, headers, connections, err := s.limits()
+	if err != nil {
+		return nil, err
+	}
 	if parent == nil || conn == nil {
-		return fmt.Errorf("http3: nil serving context or connection")
+		return nil, fmt.Errorf("http3: nil serving context or connection")
 	}
 	if parent.Err() != nil {
-		return context.Cause(parent)
+		return nil, context.Cause(parent)
 	}
 	if (s.EnableDatagrams || len(s.DatagramHandlers) != 0) && !conn.DatagramsEnabled() {
-		return fmt.Errorf("http3: QUIC datagram reception is disabled")
+		return nil, fmt.Errorf("http3: QUIC datagram reception is disabled")
 	}
 	if conn.ConnectionState().TLS.NegotiatedProtocol != "h3" {
-		return fmt.Errorf("http3: connection did not negotiate h3")
+		return nil, fmt.Errorf("http3: connection did not negotiate h3")
 	}
 	handler := s.Handler
 	if handler == nil {
@@ -131,45 +172,70 @@ func (s *Server) ServeQUICConn(parent context.Context, conn *quic.Conn) (err err
 	if s.stopping {
 		s.mu.Unlock()
 		cancel(ErrServerClosed)
-		return ErrServerClosed
+		return nil, ErrServerClosed
 	}
 	if len(s.connections) >= connections {
 		s.mu.Unlock()
 		cancel(nil)
-		return fmt.Errorf("http3: server connection limit reached")
+		return nil, fmt.Errorf("http3: server connection limit reached")
 	}
 	if _, exists := s.connections[conn]; exists {
 		s.mu.Unlock()
 		cancel(nil)
-		return fmt.Errorf("http3: connection already served")
+		return nil, fmt.Errorf("http3: connection already served")
 	}
 	if s.connections == nil {
 		s.connections = make(map[*quic.Conn]*serverConnection)
 	}
 	s.connections[conn] = entry
 	s.mu.Unlock()
-	defer func() { cancel(err); s.mu.Lock(); delete(s.connections, conn); close(entry.done); s.mu.Unlock() }()
+	c := &servedConn{server: s, conn: conn, entry: entry, cancel: cancel, requests: requests, headers: headers, handler: handler, closed: make(chan struct{}), peerDone: make(chan struct{})}
 	// Startup stream writes must also be interruptible, before Session exists.
-	closed := make(chan struct{})
-	stopClose := context.AfterFunc(ctx, func() { defer close(closed); conn.CloseWithError(0x100, "HTTP3 server stopped") })
-	peerDone := make(chan struct{})
-	stopPeer := context.AfterFunc(conn.Context(), func() { defer close(peerDone); cancel(context.Cause(conn.Context())) })
+	c.stopClose = context.AfterFunc(ctx, func() { defer close(c.closed); conn.CloseWithError(0x100, "HTTP3 server stopped") })
+	c.stopPeer = context.AfterFunc(conn.Context(), func() { defer close(c.peerDone); cancel(context.Cause(conn.Context())) })
+	// Also covers a ConnContext callback that panics.
 	defer func() {
-		if !stopPeer() {
-			<-peerDone
+		if admitted == nil {
+			c.finish(err)
 		}
-		if !stopClose() {
-			<-closed
-		}
-		conn.CloseWithError(0x100, "HTTP3 server finished")
 	}()
-	ctx, cleanupContext := s.connectionContext(ctx, conn)
-	defer cleanupContext()
-	if ctx.Err() != nil {
-		return context.Cause(ctx)
+	c.ctx, c.cleanupContext = s.connectionContext(ctx, conn)
+	if c.ctx.Err() != nil {
+		return nil, context.Cause(c.ctx)
 	}
+	return c, nil
+}
+
+// finish releases what admit acquired and closes the connection.
+func (c *servedConn) finish(err error) {
+	if c.cleanupContext != nil {
+		c.cleanupContext()
+	}
+	if !c.stopPeer() {
+		<-c.peerDone
+	}
+	if !c.stopClose() {
+		<-c.closed
+	}
+	c.conn.CloseWithError(0x100, "HTTP3 server finished")
+	c.cancel(err)
+	c.server.mu.Lock()
+	delete(c.server.connections, c.conn)
+	close(c.entry.done)
+	c.server.mu.Unlock()
+}
+
+// serve initializes HTTP/3 and runs the request loop until the connection ends.
+func (c *servedConn) serve() (err error) {
+	defer func() { c.finish(err) }()
+	s, conn, ctx, entry, requests, headers, handler := c.server, c.conn, c.ctx, c.entry, c.requests, c.headers, c.handler
 	settings := s.settings(headers)
 	transport := http3conn.QUICTransport{Conn: conn}
+	var incoming http3conn.IncomingTransport = transport
+	var acceptor http3conn.RequestAcceptor = transport
+	if c.raw != nil {
+		incoming, acceptor = handedServerTransport{QUICTransport: transport, streams: c.raw.uni}, c.raw
+	}
 	var datagramConfig *http3conn.DatagramSessionConfig
 	if s.EnableDatagrams || len(s.DatagramHandlers) != 0 {
 		queue, payload, _ := datagramLimits(s.MaxDatagramQueue, s.MaxDatagramPayload)
@@ -179,15 +245,39 @@ func (s *Server) ServeQUICConn(parent context.Context, conn *quic.Conn) (err err
 		}
 		datagramConfig = &http3conn.DatagramSessionConfig{Dispatch: dispatch, Source: transport, Sender: transport, AbortRequest: dispatch.AbortRequest}
 	}
+	// The peer's stream and flow-control credit can hold setup up indefinitely
+	// while its PINGs keep QUIC alive. No request can exist yet, so that is
+	// idle time. The request loop takes over with a period of its own.
+	setupExpired := func() bool { return false }
+	if s.IdleTimeout > 0 {
+		fired, stopped := make(chan struct{}), false
+		timer := time.AfterFunc(s.IdleTimeout, func() {
+			defer close(fired)
+			conn.CloseWithError(0x100, "idle timeout")
+		})
+		defer timer.Stop()
+		setupExpired = func() bool {
+			if stopped || timer.Stop() {
+				stopped = true
+				return false
+			}
+			<-fired
+			return true
+		}
+	}
 	local, err := http3conn.OpenLocal(ctx, transport, settings)
 	if err != nil {
+		if setupExpired() {
+			return nil
+		}
 		return err
 	}
 	priorities, err := http3conn.NewRequestPriorities(requests)
 	if err != nil {
 		return err
 	}
-	session, err := http3conn.StartSession(ctx, transport, local, http3conn.SessionConfig{
+	priorities.Unordered = c.raw != nil
+	session, err := http3conn.StartSession(ctx, incoming, local, http3conn.SessionConfig{
 		Datagrams: datagramConfig, LocalSettings: settings,
 		Decoder:          qpack.DecoderLimits{MaxTableCapacity: 4096, MaxBlockedStreams: 8, MaxBufferedBytes: headers * 8, MaxEncodedSection: headers, MaxDecodedSection: uint64(headers), MaxFields: 1024, MaxInstructionLiteralBytes: headers},
 		Encoder:          http3conn.EncoderLimits{Capacity: 4096, MaxBlocked: 8, MaxSections: 1024, MaxReferences: 4096, MaxEncodedSection: headers, MaxFields: 1024, MaxInstruction: headers, MaxFieldSection: uint64(headers)},
@@ -208,8 +298,11 @@ func (s *Server) ServeQUICConn(parent context.Context, conn *quic.Conn) (err err
 		return err
 	}
 	defer func() { session.Stop(err) }()
-	return session.ServeRequests(ctx, transport, http3conn.ServeRequestsConfig{
-		MaxActive: requests, Drain: entry.drain, Report: s.ErrorHandler,
+	if setupExpired() {
+		return nil
+	}
+	return session.ServeRequests(ctx, acceptor, http3conn.ServeRequestsConfig{
+		MaxActive: requests, Drain: entry.drain, IdleTimeout: s.IdleTimeout, Report: s.requestReport(),
 		Request: http3conn.ServeRequestConfig{Priorities: priorities, HandlerError: httpError, HandlerPolicy: func(next http.Handler) http.Handler {
 			withSettings := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				next.ServeHTTP(&settingsResponseWriter{HTTPResponseWriter: w.(*http3conn.HTTPResponseWriter), settingsView: settingsFrom(sessionSettings{session})}, r)
@@ -318,4 +411,23 @@ func (s *Server) limits() (requests, headers, connections int, err error) {
 	}
 
 	return requests, headers, connections, nil
+}
+
+// requestReport combines Logger and ErrorHandler for the request loop.
+func (s *Server) requestReport() func(context.Context, uint64, error) {
+	logger, handler := s.Logger, s.ErrorHandler
+	if logger == nil {
+		return handler
+	}
+	return func(ctx context.Context, id uint64, err error) {
+		var panicked *http3conn.HandlerPanicError
+		if errors.As(err, &panicked) {
+			logger.Error("http3: panic serving", "stream", id, "panic", panicked.Value)
+		} else {
+			logger.Debug("http3: request failed", "stream", id, "error", err)
+		}
+		if handler != nil {
+			handler(ctx, id, err)
+		}
+	}
 }

@@ -125,7 +125,7 @@ func ServeRequest(parent context.Context, stream ServerRequestStream, config Ser
 			defer close(ended)
 			var reset *quic.StreamError
 			if cause := context.Cause(completion); errors.As(cause, &reset) && reset.Remote {
-				task.fail(cause, code)
+				task.failOrdinary(cause, code)
 			}
 		})
 		return func() {
@@ -190,8 +190,9 @@ func ServeRequest(parent context.Context, stream ServerRequestStream, config Ser
 	}
 	response.mapError = config.HandlerError
 	var tunnel *ServerTunnel
+	var raw *RawStream
 	response.acceptTunnel = func() (*ServerTunnel, error) {
-		if request.Method != "CONNECT" || tunnel != nil || response.sent || response.finished || response.err != nil {
+		if request.Method != "CONNECT" || tunnel != nil || raw != nil || response.sent || response.finished || response.err != nil {
 			return nil, fmt.Errorf("http3: tunnel requires an uncommitted CONNECT response")
 		}
 		if response.status != 0 && (response.status < 200 || response.status >= 300) {
@@ -223,6 +224,56 @@ func ServeRequest(parent context.Context, stream ServerRequestStream, config Ser
 		}
 		return tunnel, nil
 	}
+	response.takeOver = func() (*RawStream, error) {
+		if raw != nil {
+			return raw, nil
+		}
+		if response.wrote {
+			return nil, fmt.Errorf("http3: invalid use of HTTPStream after writing the response body")
+		}
+		if tunnel != nil || response.finished {
+			return nil, fmt.Errorf("http3: response is already complete or a tunnel")
+		}
+		if response.err != nil {
+			return nil, response.err
+		}
+		transport, ok := stream.(ClientExchangeStream)
+		underlying := quicStreamOf(stream)
+		if !ok || underlying == nil {
+			return nil, fmt.Errorf("http3: stream takeover requires a QUIC stream")
+		}
+		if task.ctx.Err() != nil {
+			return nil, context.Cause(task.ctx)
+		}
+		taken := newRawStream(transport, underlying, task, config.HandlerError)
+		taken.body = body.ReadCloser
+		taken.attachFields(fields)
+		taken.noWriter = fmt.Errorf("http3: invalid use of Stream.Write before sending the response header")
+		// Without a final status no response is ever sent: WriteHeader is
+		// unavailable from here on, so the stream stays unwritable.
+		if response.status != 0 {
+			if request.Method == "CONNECT" && response.status >= 200 && response.status < 300 {
+				if err := reader.EstablishTunnel(); err != nil {
+					return nil, err
+				}
+			}
+			if err := response.commit(nil); err != nil {
+				task.fail(err, InternalError)
+				return nil, err
+			}
+			taken.writer = writer
+		}
+		if datagramHandler != nil {
+			taken.datagrams = datagrams
+		}
+		// The request may have failed meanwhile, under a read or an observer.
+		if err := task.takeOver(taken); err != nil {
+			return nil, err
+		}
+		response.hijacked = true
+		raw = taken
+		return raw, nil
+	}
 	if ctx.Err() != nil {
 		task.fail(context.Cause(ctx), 0x10c)
 	}
@@ -245,6 +296,15 @@ func ServeRequest(parent context.Context, stream ServerRequestStream, config Ser
 		if err := invokeHandler(handler, response, request); err != nil {
 			task.fail(err, InternalError)
 		}
+	}
+	if raw != nil {
+		// The application owns the stream beyond the handler. Its request slot
+		// and context last until it finishes both directions.
+		raw.wait(ctx)
+		if ctx.Err() != nil {
+			task.fail(context.Cause(ctx), 0x10c)
+		}
+		return task.result()
 	}
 	if tunnel != nil {
 		if task.result() == nil && !tunnel.closed.Load() {
@@ -279,33 +339,157 @@ func ServeRequest(parent context.Context, stream ServerRequestStream, config Ser
 	return task.result()
 }
 
+// requestTask is one request's failure handling. Its owner decides what a
+// stream-level event means: an ordinary request fails as a whole, while a
+// stream handed to the application (raw) keeps its directions independent and
+// only learns that receiving is over. mu guards that decision. Every site
+// that depends on the owner decides and records its decision under mu, so a
+// takeover is either before an event, which then gets raw-stream treatment, or
+// after it, and then sees its effect: a failed request refuses the takeover, a
+// finished receive direction is carried into it. mu is never held across I/O
+// or application code; resets and cancellation follow a recorded decision.
 type requestTask struct {
 	ctx       context.Context
 	stream    ServerRequestStream
 	abort     func(uint64, string)
 	cancel    context.CancelCauseFunc
-	mu        sync.Mutex
-	err       error
 	abortOnce sync.Once
+
+	mu       sync.Mutex
+	err      error      // the request failed
+	raw      *RawStream // the application owns the stream
+	received bool       // receiving is over; reported to raw once
+
+	// Test seams at the two sides of a read's decision. Nil outside tests.
+	beforeDecision, afterDecision func()
 }
 
 func (t *requestTask) result() error { t.mu.Lock(); defer t.mu.Unlock(); return t.err }
+
+// owner returns the raw stream that has taken the request over, if any.
+func (t *requestTask) owner() *RawStream { t.mu.Lock(); defer t.mu.Unlock(); return t.raw }
+
+// fail fails the whole request, whoever owns the stream: for connection and
+// message errors, the handler, the request's context and datagram violations.
 func (t *requestTask) fail(err error, fallback uint64) {
 	if err == nil {
 		return
 	}
-	if t.ctx.Err() != nil && (errors.Is(err, t.ctx.Err()) || errors.Is(err, context.Cause(t.ctx))) {
-		fallback = 0x10c
-		err = context.Cause(t.ctx)
-	}
-	// Publish the original failure before Abort can cancel the parent and wake
-	// the cancellation callback; that callback must not replace protocol evidence.
+	err, fallback = t.cause(err, fallback)
 	t.mu.Lock()
-	first := t.err == nil
-	if first {
-		t.err = err
-	}
+	first := t.record(err)
 	t.mu.Unlock()
+	t.apply(err, fallback, first)
+}
+
+// failOrdinary fails the request for a stream-level event (the peer reset or
+// stopped a direction, a read failed) unless the application owns the stream,
+// in which case the event is the application's to see and nothing happens.
+func (t *requestTask) failOrdinary(err error, fallback uint64) {
+	if err == nil {
+		return
+	}
+	err, fallback = t.cause(err, fallback)
+	t.mu.Lock()
+	if t.raw != nil {
+		t.mu.Unlock()
+		return
+	}
+	first := t.record(err)
+	t.mu.Unlock()
+	t.apply(err, fallback, first)
+}
+
+// readOutcome is the one place the result of a read of the body is acted on,
+// for the request body, a raw stream's Read and a read that spans a takeover
+// alike. closed says the reader itself closed the body, so the error is its
+// own doing. It returns the raw stream that owned the request at the decision.
+//
+//	deadline                      nothing: the read can be repeated
+//	protocol or message error     the request fails, whoever owns it
+//	end of body, closed body      receiving is over
+//	anything else (peer reset)    ordinary request: it fails; raw: receiving is over
+func (t *requestTask) readOutcome(err error, closed bool) *RawStream {
+	if err == nil || h3.IsDeadline(err) {
+		return t.owner()
+	}
+	if t.beforeDecision != nil {
+		t.beforeDecision()
+	}
+	var protocol *h3.Error
+	var message *MessageError
+	fatal := errors.As(err, &protocol) || errors.As(err, &message)
+	cause, fallback := t.cause(err, 0x10d)
+	t.mu.Lock()
+	raw := t.raw
+	failing := fatal || raw == nil && err != io.EOF && err != io.ErrClosedPipe && !closed
+	first := failing && t.record(cause)
+	notify := !t.received
+	t.received = true
+	t.mu.Unlock()
+	if t.afterDecision != nil {
+		t.afterDecision()
+	}
+	if failing {
+		t.apply(cause, fallback, first)
+	}
+	if notify && raw != nil {
+		close(raw.received)
+	}
+	return raw
+}
+
+// receiveEnded records that receiving is over for a reason other than a read:
+// the body was closed, or reading was canceled.
+func (t *requestTask) receiveEnded() {
+	t.mu.Lock()
+	raw, notify := t.raw, !t.received
+	t.received = true
+	t.mu.Unlock()
+	if notify && raw != nil {
+		close(raw.received)
+	}
+}
+
+// takeOver makes raw the owner. It refuses a request that has already failed,
+// and tells raw at once if receiving is already over.
+func (t *requestTask) takeOver(raw *RawStream) error {
+	t.mu.Lock()
+	if t.err != nil {
+		err := t.err
+		t.mu.Unlock()
+		return err
+	}
+	t.raw = raw
+	received := t.received
+	t.mu.Unlock()
+	if received {
+		close(raw.received)
+	}
+	return nil
+}
+
+// cause prefers the reason the request's context ended to the error it produced.
+func (t *requestTask) cause(err error, fallback uint64) (error, uint64) {
+	if t.ctx.Err() != nil && (errors.Is(err, t.ctx.Err()) || errors.Is(err, context.Cause(t.ctx))) {
+		return context.Cause(t.ctx), 0x10c
+	}
+	return err, fallback
+}
+
+// record publishes the first failure. The caller holds mu.
+func (t *requestTask) record(err error) bool {
+	if t.err != nil {
+		return false
+	}
+	t.err = err
+	return true
+}
+
+// apply carries out a recorded failure. The failure is published first so that
+// Abort, which cancels the parent and wakes the cancellation callback, cannot
+// replace protocol evidence.
+func (t *requestTask) apply(err error, fallback uint64, first bool) {
 	var connError *h3.Error
 	if errors.As(err, &connError) {
 		t.abortOnce.Do(func() { t.abort(connError.Code, connError.Reason) })
@@ -334,16 +518,19 @@ type serverRequestBody struct {
 }
 
 func (b *serverRequestBody) Read(p []byte) (int, error) {
+	// Once the stream is taken over its reads are the raw stream's, which
+	// serializes them.
+	if raw := b.task.owner(); raw != nil {
+		return raw.Read(p)
+	}
 	n, err := b.ReadCloser.Read(p)
-	if err != nil && err != io.EOF && err != io.ErrClosedPipe {
-		var connError *h3.Error
-		var messageError *MessageError
-		if !b.closed.Load() || errors.As(err, &connError) || errors.As(err, &messageError) {
-			b.task.fail(err, 0x10d)
-		}
+	// The takeover may have happened while this read waited.
+	if raw := b.task.readOutcome(err, b.closed.Load()); raw != nil {
+		return n, raw.mapError.apply(raw.ended(err))
 	}
 	return n, b.mapError.apply(err)
 }
+
 func invokeHandler(handler http.Handler, writer http.ResponseWriter, request *http.Request) (err error) {
 	defer func() {
 		if value := recover(); value != nil {
@@ -360,5 +547,6 @@ func invokeHandler(handler http.Handler, writer http.ResponseWriter, request *ht
 
 func (b *serverRequestBody) Close() error {
 	b.closed.Store(true)
+	defer b.task.receiveEnded()
 	return b.mapError.apply(b.ReadCloser.Close())
 }

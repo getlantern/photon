@@ -72,6 +72,7 @@ func TestFieldDecoderResume(t *testing.T) {
 			t.Fatal(result)
 		}
 	}
+	d.Flushed()
 	if !bytes.Equal(feedback.Bytes(), []byte{0x80, 0x84}) {
 		t.Fatalf("feedback %x", feedback.Bytes())
 	}
@@ -94,6 +95,8 @@ func TestFieldDecoderCancelClose(t *testing.T) {
 	if readySection(t, a).Err != ErrFieldSectionCanceled {
 		t.Fatal("cancel did not release")
 	}
+	// Close discards feedback not yet written.
+	d.Flushed()
 	cause := errors.New("connection stopped")
 	d.Close(cause)
 	if readySection(t, b).Err != cause {
@@ -127,17 +130,23 @@ func TestFieldDecoderFailures(t *testing.T) {
 			t.Fatal("mapping", err, code)
 		}
 	}
-	writer := &failedEncoderWriter{fail: true}
+	writer := failingEncoderWriter()
 	d, _ := NewFieldDecoder(decoderLimits(), writer)
 	a, _ := d.Submit(0, []byte{2, 0, 0x80})
 	decoderUpdate(t, d, qpack.EncoderInstruction{Type: qpack.SetDynamicCapacity, Index: 128})
+	// The section is decoded whether or not its acknowledgment can be sent;
+	// the failed write then fails the decoder.
 	err := decoderUpdate(t, d, qpack.EncoderInstruction{Type: qpack.InsertLiteralName, Name: "x", Value: "v"})
-	if err != io.ErrShortWrite || readySection(t, a).Err != err {
+	if err != nil || readySection(t, a).Err != nil {
 		t.Fatal(err)
 	}
-	writes := writer.writes
-	d.Cancel(0)
-	if writer.writes != writes {
+	d.Flushed()
+	writes := writer.writes.Load()
+	if err := d.Cancel(0); err != io.ErrShortWrite {
+		t.Fatal("failed feedback write did not fail the decoder:", err)
+	}
+	d.Flushed()
+	if writer.writes.Load() != writes {
 		t.Fatal("retried uncertain feedback")
 	}
 }

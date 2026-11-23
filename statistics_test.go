@@ -102,3 +102,86 @@ func TestConnectionStatisticsTrafficAndShutdown(t *testing.T) {
 		})
 	}
 }
+
+func TestConnectionStatisticsCongestionWindow(t *testing.T) {
+	for _, version := range []Version{Version1, Version2} {
+		t.Run(fmt.Sprintf("%x", version), func(t *testing.T) {
+			clientTLS, serverTLS := dialTLS(t)
+			listener, err := ListenAddr("127.0.0.1:0", serverTLS, &Config{Versions: []Version{version}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer listener.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			client, err := DialAddr(ctx, listener.Addr().String(), clientTLS, &Config{Versions: []Version{version}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer client.server.Close()
+			server, err := listener.Accept(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The window changes only inside network and timer events, each of
+			// which republishes, so on the owner the snapshot equals the engine.
+			window := func(c *Conn) uint64 {
+				t.Helper()
+				var published uint64
+				if err := c.server.Do(ctx, func(*transport.ServerEndpoint) error {
+					published = c.ConnectionStats().CongestionWindow
+					if engine, _ := c.raw.CongestionStats(); published != engine {
+						return fmt.Errorf("published window %d, engine %d", published, engine)
+					}
+					return nil
+				}); err != nil {
+					t.Fatal(err)
+				}
+				return published
+			}
+			initial, idle := window(client), window(server)
+			// RFC 9002 section 7.2 bounds the initial window for any datagram size.
+			if initial < 2*1200 || initial > 10*1452 || idle < 2*1200 || idle > 10*1452 {
+				t.Fatal("initial windows", initial, idle)
+			}
+			payload := bytes.Repeat([]byte("statistics"), 20000)
+			sent := make(chan error, 1)
+			go func() {
+				s, err := client.OpenUniStreamSync(ctx)
+				if err == nil {
+					s.SetWriteDeadline(time.Now().Add(4 * time.Second))
+					if _, err = s.Write(payload); err == nil {
+						if err = s.Close(); err == nil {
+							err = s.WaitAcknowledged(ctx)
+						}
+					}
+				}
+				sent <- err
+			}()
+			rx, err := server.AcceptUniStream(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rx.SetReadDeadline(time.Now().Add(4 * time.Second))
+			if got, err := io.ReadAll(rx); err != nil || !bytes.Equal(got, payload) {
+				t.Fatal("receive", len(got), err)
+			}
+			if err := <-sent; err != nil {
+				t.Fatal(err)
+			}
+			// Slow start grows the sender's window; the receiver sent only ACKs.
+			if grown := window(client); grown <= initial {
+				t.Fatal("sender window did not grow", initial, grown)
+			}
+			if got := window(server); got != idle {
+				t.Fatal("receiver window changed", idle, got)
+			}
+			final := client.ConnectionStats().CongestionWindow
+			listener.Close()
+			client.server.Close()
+			if got := client.ConnectionStats().CongestionWindow; got != final || got == 0 {
+				t.Fatal("final window lost", final, got)
+			}
+		})
+	}
+}

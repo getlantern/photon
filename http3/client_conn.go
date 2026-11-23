@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -46,10 +47,15 @@ type ClientConfig struct {
 	Information           func(status int, header http.Header) error // may run concurrently across requests
 }
 
-// ClientConn implements RoundTripper for one explicitly bound HTTPS origin.
-// It does not dial, pool, retry, decompress or coalesce origins. Close cancels
-// active work; callers must still close every returned response Body. Construct
-// it exactly once on a connection before opening any HTTP/3 streams.
+// ClientConn implements RoundTripper on one QUIC connection. It does not dial,
+// pool, retry or coalesce origins. One made by NewClientConn, Dial or DialEarly
+// is bound to its HTTPS origin and does not decompress: RoundTrip, the tunnel
+// methods and RequestStream.SendRequestHeader all reject a request for any
+// other origin before sending anything. One made by Transport.NewClientConn or NewRawClientConn is not
+// bound to an origin, and negotiates and decodes gzip unless the Transport's
+// DisableCompression is set. Close cancels active work; callers must still
+// close every returned response Body. Construct it exactly once on a
+// connection before opening any HTTP/3 streams.
 type ClientConn struct {
 	earlySession       bool
 	recoveryLock       chan struct{}
@@ -70,6 +76,17 @@ type ClientConn struct {
 	requestsMu         sync.Mutex
 	requests           map[*clientRequestLifetime]struct{}
 	requestsClosed     bool
+
+	// The Transport constructors set up the session in the background. ready is
+	// nil for a connection that was set up before it was returned.
+	ready     chan struct{} // closed once session is set or setupErr says why not
+	setupDone chan struct{}
+	setupErr  error
+	settings  chan struct{}            // ReceivedSettings before the session exists
+	uni       chan *quic.ReceiveStream // raw: streams handed over by the application
+	autoGzip  bool
+	logger    *slog.Logger
+	streams   sync.WaitGroup // raw request streams still releasing their state
 }
 
 var _ http.RoundTripper = (*ClientConn)(nil)
@@ -111,12 +128,35 @@ func newClientConn(ctx context.Context, conn *quic.Conn, origin string, config *
 	if ctx.Err() != nil {
 		return nil, context.Cause(ctx)
 	}
-	lifetime := ctx
-	ctx, cancel := context.WithCancelCause(ctx)
-	client = &ClientConn{recoveryLock: make(chan struct{}, 1), earlySession: remembered != nil, conn: conn, ctx: ctx, lifetime: lifetime, cancel: cancel, origin: key, config: cfg, slots: make(chan struct{}, cfg.MaxConcurrentRequests), monitorDone: make(chan struct{})}
+	client = newClientShell(ctx, conn, key, cfg, remembered != nil, false)
+	cancel, ownership, monitorDone := client.cancel, client.ownership, client.monitorDone
+	defer func() {
+		if err != nil {
+			if remembered != nil && errors.Is(err, quic.Err0RTTRejected) {
+				_ = ownership.release()
+			}
+			cancel(err)
+			ownership.close("HTTP3 client initialization failed")
+			<-monitorDone
+		}
+	}()
+	if err = client.start(remembered); err != nil {
+		return nil, err
+	}
+	return client, nil
+}
+
+// newClientShell builds a client without a session and starts its monitor. A
+// raw client leaves every accept loop to the application.
+func newClientShell(lifetime context.Context, conn *quic.Conn, origin string, cfg ClientConfig, early, raw bool) *ClientConn {
+	ctx, cancel := context.WithCancelCause(lifetime)
+	client := &ClientConn{recoveryLock: make(chan struct{}, 1), earlySession: early, conn: conn, ctx: ctx, lifetime: lifetime, cancel: cancel, origin: origin, config: cfg, slots: make(chan struct{}, cfg.MaxConcurrentRequests), monitorDone: make(chan struct{})}
 	client.ownership = &clientOwnership{closeConn: func(code uint64, reason string) error {
 		return conn.CloseWithError(quic.ApplicationErrorCode(code), reason)
 	}}
+	if raw {
+		client.uni = make(chan *quic.ReceiveStream)
+	}
 	// Connection loss cancels settings waits and request allocation. Parent
 	// cancellation also closes transport, including during critical-stream setup.
 	monitorDone := client.monitorDone
@@ -125,9 +165,13 @@ func newClientConn(ctx context.Context, conn *quic.Conn, origin string, config *
 		defer close(monitorDone)
 		// No supported extension lets a server open bidirectional streams
 		// (RFC 9114 section 6.1); unread, they would pin connection credit.
-		accepted := make(chan error, 1)
-		go func() { _, err := conn.AcceptStream(ctx); accepted <- err }()
-		defer func() { <-accepted }()
+		// A raw client's application accepts them and decides instead.
+		var accepted chan error
+		if !raw {
+			accepted = make(chan error, 1)
+			go func() { _, err := conn.AcceptStream(ctx); accepted <- err }()
+			defer func() { <-accepted }()
+		}
 		select {
 		case <-conn.Context().Done():
 			cancel(context.Cause(conn.Context()))
@@ -151,35 +195,36 @@ func newClientConn(ctx context.Context, conn *quic.Conn, origin string, config *
 		}
 		ownership.close("HTTP3 client stopped")
 	}()
-	defer func() {
-		if err != nil {
-			if remembered != nil && errors.Is(err, quic.Err0RTTRejected) {
-				_ = ownership.release()
-			}
-			cancel(err)
-			ownership.close("HTTP3 client initialization failed")
-			<-monitorDone
-		}
-	}()
+	return client
+}
+
+// start opens the critical streams and the session. remembered is supplied
+// only by DialEarly's per-connection TLS cache.
+func (c *ClientConn) start(remembered *[]h3.Setting) error {
+	cfg, ctx := c.config, c.ctx
 	headers := cfg.MaxHeaderBytes
 	receiveHeaders := cfg.responseHeaderLimit()
 	settings := []h3.Setting{{ID: h3.QPACKMaxTableCapacity, Value: 4096}, {ID: h3.QPACKBlockedStreams, Value: 8}, {ID: h3.MaxFieldSectionSize, Value: uint64(receiveHeaders)}}
-	transport := ownedClientTransport{QUICTransport: http3conn.QUICTransport{Conn: conn}, ownership: ownership}
+	owned := ownedClientTransport{QUICTransport: http3conn.QUICTransport{Conn: c.conn}, ownership: c.ownership}
+	var transport clientTransport = owned
+	if c.uni != nil {
+		transport = handedClientTransport{ownedClientTransport: owned, streams: c.uni}
+	}
 	var datagramConfig *http3conn.DatagramSessionConfig
 	if cfg.EnableDatagrams {
 		dispatch, e := http3conn.NewDatagramDispatch(cfg.MaxConcurrentRequests, cfg.MaxDatagramQueue, cfg.MaxDatagramPayload)
 		if e != nil {
-			return nil, e
+			return e
 		}
-		datagramConfig = &http3conn.DatagramSessionConfig{Dispatch: dispatch, Sender: transport, Source: transport, AbortRequest: dispatch.AbortRequest}
+		datagramConfig = &http3conn.DatagramSessionConfig{Dispatch: dispatch, Sender: owned, Source: owned, AbortRequest: dispatch.AbortRequest}
 		settings = append(settings, h3.Setting{ID: h3.H3Datagram, Value: 1})
 	}
 	settings = appendAdditionalSettings(settings, cfg.AdditionalSettings)
 	local, err := http3conn.OpenLocal(ctx, transport, settings)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	client.session, err = http3conn.StartSession(ctx, transport, local, http3conn.SessionConfig{
+	session, err := http3conn.StartSession(ctx, transport, local, http3conn.SessionConfig{
 		EarlyPeerSettings: remembered, PeerSettings: cfg.peerSettings, Datagrams: datagramConfig, PeerIsServer: true, MaxRequests: cfg.MaxConcurrentRequests, LocalSettings: settings,
 		Decoder:          qpack.DecoderLimits{MaxTableCapacity: 4096, MaxBlockedStreams: 8, MaxBufferedBytes: receiveHeaders * 8, MaxEncodedSection: receiveHeaders, MaxDecodedSection: uint64(receiveHeaders), MaxFields: 1024, MaxInstructionLiteralBytes: receiveHeaders},
 		Encoder:          http3conn.EncoderLimits{Capacity: 4096, MaxBlocked: 8, MaxSections: 1024, MaxReferences: 4096, MaxEncodedSection: headers, MaxFields: 1024, MaxInstruction: headers, MaxFieldSection: uint64(headers)},
@@ -189,16 +234,26 @@ func newClientConn(ctx context.Context, conn *quic.Conn, origin string, config *
 		Control: func(context.Context, h3.ControlEvent) error { return nil },
 	})
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return client, nil
+	c.session = session
+	return nil
 }
 
 // RoundTrip closes request.Body on every outcome. The response Body owns the
 // request reservation until Close, even after EOF. Concurrent calls are safe;
 // request objects themselves must not be mutated except for EOF trailer values.
-func (c *ClientConn) RoundTrip(request *http.Request) (*http.Response, error) {
-	return c.roundTrip(request, nil)
+func (c *ClientConn) RoundTrip(req *http.Request) (*http.Response, error) {
+	if !c.autoGzip || req == nil || !requestsGzip(req) {
+		return c.roundTrip(req, nil)
+	}
+	response, err := c.roundTrip(acceptGzip(req), nil)
+	if err != nil {
+		return nil, err
+	}
+	response.Request = req
+	decodeGzipResponse(response)
+	return response, nil
 }
 
 // rejected records protocol evidence, separately from errors a caller-supplied
@@ -234,8 +289,12 @@ func (c *ClientConn) roundTripOwned(request *http.Request, rejected *bool, tunne
 	if err != nil {
 		return nil, err
 	}
-	if key != c.origin {
+	// Only a connection created for an origin is pinned to it.
+	if c.origin != "" && key != c.origin {
 		return nil, fmt.Errorf("http3: request origin differs from connection origin")
+	}
+	if err := c.await(request.Context()); err != nil {
+		return nil, err
 	}
 	// Closing the transport and cancellation of an in-flight exchange can
 	// race. Preserve the explicit client-close cause at this API boundary,
@@ -380,10 +439,33 @@ func (c *ClientConn) Close() error {
 		c.stopRequests(ErrClientClosed)
 		c.cancel(ErrClientClosed)
 		c.ownership.close("HTTP3 client closed")
-		c.session.Stop(ErrClientClosed)
+		if c.ready != nil {
+			<-c.ready
+		}
+		if c.session != nil {
+			c.session.Stop(ErrClientClosed)
+		}
+		if c.ready != nil {
+			<-c.setupDone
+		}
 		<-c.monitorDone
+		c.streams.Wait()
 	})
 	return nil
+}
+
+// await waits for background setup. A connection set up before it was returned
+// never waits.
+func (c *ClientConn) await(ctx context.Context) error {
+	if c.ready == nil {
+		return nil
+	}
+	select {
+	case <-c.ready:
+		return c.setupErr
+	case <-ctx.Done():
+		return context.Cause(ctx)
+	}
 }
 
 type reservedResponseBody struct {

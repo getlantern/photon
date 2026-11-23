@@ -37,8 +37,8 @@ func TestPublicStreamContexts(t *testing.T) {
 		if err := s.Close(); err != nil {
 			t.Fatal(err)
 		}
-		if context.Cause(s.Context()) != context.Canceled {
-			t.Fatal("normal close cause", context.Cause(s.Context()))
+		if context.Cause(s.Context()) != ErrStreamClosed || s.Context().Err() != context.Canceled {
+			t.Fatal("normal close cause", context.Cause(s.Context()), s.Context().Err())
 		}
 		ps, err := peer.AcceptStream(ctx)
 		if err != nil {

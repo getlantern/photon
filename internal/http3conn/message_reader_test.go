@@ -210,6 +210,7 @@ func TestMessageReaderBlockedQPACK(t *testing.T) {
 				if got.err != nil || got.event.Section != InitialSection || got.event.Control.Status != 200 {
 					t.Fatal(got)
 				}
+				decoder.Flushed()
 				if !bytes.Equal(feedback.Bytes(), []byte{0x80}) {
 					t.Fatalf("ACK: %x", feedback.Bytes())
 				}
@@ -229,6 +230,7 @@ func TestMessageReaderBlockedQPACK(t *testing.T) {
 			want := failure
 			if outcome == "cancel" {
 				want = context.Canceled
+				decoder.Flushed()
 				if !bytes.Equal(feedback.Bytes(), []byte{0x40}) {
 					t.Fatalf("cancel: %x", feedback.Bytes())
 				}
@@ -259,6 +261,7 @@ func TestMessageReaderBlockedQPACK(t *testing.T) {
 				if err := decoderUpdate(t, decoder, qpack.EncoderInstruction{Type: qpack.InsertLiteralName, Name: ":status", Value: "200"}); err != nil {
 					t.Fatal(err)
 				}
+				decoder.Flushed()
 				if !bytes.Equal(feedback.Bytes(), []byte{0x40, 1}) {
 					t.Fatalf("late feedback: %x", feedback.Bytes())
 				}

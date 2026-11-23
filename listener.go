@@ -110,6 +110,10 @@ type Config struct {
 	MaxIncomingStreams int64
 	// MaxIncomingUniStreams applies the same policy to unidirectional streams.
 	MaxIncomingUniStreams int64
+	// RequireStreamCreditRelease keeps a finished peer-initiated stream counted
+	// against MaxIncomingStreams or MaxIncomingUniStreams until the application
+	// calls ReleaseStreamCredit on it. By default the credit returns on cleanup.
+	RequireStreamCreditRelease bool
 	// InitialPacketSize sets the original path's starting UDP payload limit.
 	// Zero selects 1280. Nonzero values are clipped to 1200 through 1452.
 	// Peer limits can reduce it. New or reset paths start again at 1200.
@@ -239,7 +243,7 @@ func makeServerConfig(tlsConfig *tls.Config, cfg Config, params wire.TransportPa
 		return transport.Config{}, nil, err
 	}
 
-	engineConfig := transport.Config{MaxStreamReceiveWindow: cfg.MaxStreamReceiveWindow, MaxConnectionReceiveWindow: cfg.MaxConnectionReceiveWindow, AcceptEarly: early, EnableEarlyData: cfg.Allow0RTT, CompatibleVersions: compatibleVersions(cfg), PreferredAddresses: cfg.PreferredAddresses, AddressTokens: addressTokens, DisablePathMTUDiscovery: cfg.DisablePathMTUDiscovery, InitialPacketSize: cfg.InitialPacketSize, EnableMigration: true, EnableMultipath: cfg.EnableMultipath, Version: version, TLS: tlsConfig, Parameters: params, HandshakeTimeout: cfg.HandshakeTimeout, HandshakeIdleTimeout: cfg.HandshakeIdleTimeout, KeepAlivePeriod: cfg.KeepAlivePeriod}
+	engineConfig := transport.Config{MaxStreamReceiveWindow: cfg.MaxStreamReceiveWindow, MaxConnectionReceiveWindow: cfg.MaxConnectionReceiveWindow, AcceptEarly: early, EnableEarlyData: cfg.Allow0RTT, CompatibleVersions: compatibleVersions(cfg), PreferredAddresses: cfg.PreferredAddresses, AddressTokens: addressTokens, DisablePathMTUDiscovery: cfg.DisablePathMTUDiscovery, InitialPacketSize: cfg.InitialPacketSize, EnableMigration: true, EnableMultipath: cfg.EnableMultipath, RequireStreamCreditRelease: cfg.RequireStreamCreditRelease, Version: version, TLS: tlsConfig, Parameters: params, HandshakeTimeout: cfg.HandshakeTimeout, HandshakeIdleTimeout: cfg.HandshakeIdleTimeout, KeepAlivePeriod: cfg.KeepAlivePeriod}
 	engineConfig.AdapterData = acceptedConfig{cfg.EnableDatagrams, cfg.AllowConnectionWindowIncrease}
 	if cfg.GetConfigForClient != nil {
 		engineConfig.ConfigureClient = serverConfigSelector(cfg)
@@ -325,6 +329,8 @@ type ConnectionState struct {
 	SupportsDatagrams                  bool
 	SupportsMultipath                  bool
 	SupportsStreamResetPartialDelivery struct{ Remote, Local bool }
+	// RequireStreamCreditRelease is true if Config.RequireStreamCreditRelease was set.
+	RequireStreamCreditRelease bool
 }
 
 func (c *Conn) Context() context.Context { return c.ctx }
@@ -384,7 +390,7 @@ func (c *Conn) observeHandshake() error {
 }
 func (c *Conn) publishConnectionState() {
 	raw := c.raw
-	state := &ConnectionState{TLS: raw.ConnectionState(), Version: raw.Version(), SupportsDatagrams: raw.SupportsDatagrams(), SupportsMultipath: raw.SupportsMultipath(), Used0RTT: raw.EarlyDataAccepted()}
+	state := &ConnectionState{TLS: raw.ConnectionState(), Version: raw.Version(), SupportsDatagrams: raw.SupportsDatagrams(), SupportsMultipath: raw.SupportsMultipath(), Used0RTT: raw.EarlyDataAccepted(), RequireStreamCreditRelease: raw.RequireStreamCreditRelease()}
 	state.SupportsStreamResetPartialDelivery.Local, state.SupportsStreamResetPartialDelivery.Remote = raw.PartialResetCapabilities()
 	c.state.Store(state)
 }

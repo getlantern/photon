@@ -12,7 +12,7 @@ records contracts; production implementation remains independent.
 
 The export-data audits, regenerated against v0.65.0 on 2026-11-22, supply reproducible symbol-level baselines:
 [root package](API_ROOT_INVENTORY.md) and [HTTP/3](API_HTTP3_INVENTORY.md).
-The root has 11 missing entries out of 253 reference entries; HTTP/3 has 62 out
+The root has 4 missing entries out of 253 reference entries; HTTP/3 has 2 out
 of 163. Entries include types, fields, methods and functions, so these counts are
 not counts of independent features. Matching declarations do not establish
 behavior. Differences also include harmless parameter names, internal alias
@@ -28,8 +28,23 @@ Direct v0.63.0 contract checks cover nested selection, clone isolation and callb
 fallback/error behavior. Live upstream clients require the helper to fix a selected
 configuration's deliberately non-h3 ALPN in both v1/v2. Disabling that wrapping
 fails both handshakes; omitting ticket initialization fails cross-clone decryption.
-HTTP/3 inventory totals are 62 missing, 8 review differences and 93 identical
-entries out of 163. No full HTTP/3 feature parity is claimed.
+HTTP/3 inventory totals are 2 missing, 7 review differences and 154 identical
+entries out of 163. No full HTTP/3 feature parity is claimed. The two missing
+entries are Stream.QlogTrace and RequestStream.QlogTrace, which need qlog.
+
+The raw HTTP/3 cluster is implemented with matching declarations: Stream,
+RequestStream, HTTPStreamer, RawClientConn, RawServerConn, FrameType, StreamType,
+Transport.NewClientConn/NewRawClientConn, Server.NewRawServerConn,
+ClientConn.OpenRequestStream/HandleBidirectionalStream, Server.IdleTimeout and
+the Server and Transport Logger fields. [HTTP3_RAW_STREAMS.md](HTTP3_RAW_STREAMS.md)
+records how they map onto the session internals and where behavior knowingly
+differs: extension routing stays with ExtendedConnectHandlers/DatagramHandlers,
+raw streams never use 0-RTT, ReadResponse returns the final response, a raw
+stream holds its request slot until both directions finish, and a response
+header that was sent brings message validation with it. Interop tests run a raw
+request stream against the reference server and the reference client against
+HTTPStreamer, each with DATA and HTTP datagrams, over v1 and v2, from served and
+raw connections.
 
 HTTP/3 Transport.Dial now accepts an application QUIC dialer. The callback gets
 host:port, cloned TLS/QUIC settings, h3 ALPN and an origin-derived ServerName
@@ -47,7 +62,7 @@ HTTP early data is disabled or the callback bypasses the HTTP SETTINGS cache.
 Both v1/v2 and accepting/rejecting peers must resume and serve exactly once after
 the gate opens; no early wire packet or completed HTTP setup is observed during
 the bounded gate interval. Removing the handshake wait fails all eight cases.
-Transport.NewClientConn and raw connection APIs remain missing.
+Transport.NewClientConn and the raw connection APIs are described above.
 
 HTTP/3 Server.Port, SetQUICHeaders and ErrNoAltSvcPort now support Alt-Svc
 advertisement. The cached value follows active listener registration order,
@@ -70,7 +85,7 @@ independent v1/v2 tests cover both credential methods, graceful/abortive closure
 configuration isolation and socket reuse. Independent tests also preserve an active
 response across a timed-out graceful shutdown before draining and releasing the
 socket. The package helper has missing-file coverage; simultaneous TCP/TLS+QUIC
-ListenAndServeTLS and raw-stream APIs remain missing.
+ListenAndServeTLS remains missing.
 
 StreamID.StreamNum now returns the one-based ordinal for its initiator/direction
 class. Its inferred return value also reconstructs IDs through StreamID, including
@@ -79,13 +94,27 @@ and the 62-bit boundary. The isolated v0.63.0 comparison checks 1,031 input IDs,
 signed extremes, and valid/invalid reverse-conversion arguments. These conversions
 do not authorize invalid stream IDs on the wire. The return type is an independent
 internal/transport.StreamNum, so the inventory records a declaration difference
-rather than an identical internal/protocol type. Root totals are 11 missing, 58
-review differences and 184 identical declarations. Remaining missing entries are
-Config.Tracer, Transport.Tracer, Conn.QlogTrace and ConnectionState.GSO, plus seven
-that v0.65.0 added: Config.RequireStreamCreditRelease,
-ConnectionState.RequireStreamCreditRelease, Stream.ReleaseStreamCredit,
-ReceiveStream.ReleaseStreamCredit, ConnectionID.Valid,
-ConnectionStats.CongestionWindow and ErrStreamClosed.
+rather than an identical internal/protocol type. Root totals are 4 missing, 58
+review differences and 191 identical declarations. Remaining missing entries are
+Config.Tracer, Transport.Tracer, Conn.QlogTrace and ConnectionState.GSO, which
+need qlog and GSO.
+
+The seven root symbols v0.65.0 added are implemented. With
+Config.RequireStreamCreditRelease, a peer-initiated stream's MAX_STREAMS credit
+returns only after the engine has reclaimed the stream and the application has
+called ReleaseStreamCredit, in either order; repeated calls, calls on locally
+opened streams and calls without the setting do nothing. Config.Clone copies the
+setting, GetConfigForClient can select it per connection, and
+ConnectionState.RequireStreamCreditRelease reports it. Own-peer tests cover both
+roles and stream directions; an interop test runs one script with each
+implementation withholding credit from the other, in both TLS roles.
+ConnectionID.Valid distinguishes the zero value, now printed as "(invalid)" and
+no longer equal to ConnectionIDFromBytes(nil), from a zero-length ID; a generator
+may still return either for zero-length IDs. ConnectionStats.CongestionWindow
+publishes the sender window of the path whose RTT the snapshot reports.
+ErrStreamClosed is the error Write, WriteWithLimit and TryWriteAll return after
+Close, and, as in the reference, the send Context's cancellation cause after a
+normal Close (previously context.Canceled; Context().Err() is unchanged).
 
 Conn.AddPath, Path.Probe, Path.Switch, ErrPathClosed and ErrPathNotValidated now
 have matching declarations. Handles bind a separate Transport, validate without
@@ -218,8 +247,7 @@ isolated reference-policy comparison pass. Contract checked against
 https://pkg.go.dev/github.com/quic-go/quic-go#Transport on 2026-09-29.
 
 The largest missing API groups are remaining Transport/socket capabilities, qlog,
-path operations, additional stream I/O, and HTTP/3 raw
-connection/request-stream interfaces. SetPriority now has STREAM scheduling
+path operations and additional stream I/O. SetPriority now has STREAM scheduling
 semantics and HTTP request/update integration; broader independent scheduling
 comparisons remain unfinished.
 
@@ -699,7 +727,7 @@ connection usability after an invalid close, stable context identity and causes,
 and rejected-early replacement usability after stale closure. Ownership race tests
 exercise both ordinary and explicit-code closure against transfer. Context remains
 the transport lifetime, not a per-request or per-HTTP-generation context. Complete
-closure/deadline ordering and raw connection API parity remain open.
+closure/deadline ordering remains open.
 
 `Transport.RoundTripOpt`, `RoundTripOpt.OnlyCachedConn` and `ErrNoCachedConn` now
 support cached-only requests. RoundTrip uses the same path with default options.

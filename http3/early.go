@@ -28,6 +28,9 @@ func (c *ClientConn) NextConnection(ctx context.Context) (result *ClientConn, er
 	if ctx.Err() != nil {
 		return nil, context.Cause(ctx)
 	}
+	if err := c.await(ctx); err != nil {
+		return nil, err
+	}
 	// Serialize result publication before observing transport closure: failed
 	// setup closes QUIC, but later callers must retain its original cause.
 	// Acquiring the slot is itself cancelable.

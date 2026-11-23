@@ -141,7 +141,12 @@ func StartSession(parent context.Context, transport IncomingTransport, local *Lo
 			cancel(err)
 			var peerClose *quic.PeerCloseError
 			if !errors.As(err, &peerClose) && !errors.Is(err, quic.Err0RTTRejected) {
-				transport.Abort(InternalError, "cannot write QPACK decoder feedback")
+				code, reason := InternalError, "cannot write QPACK decoder feedback"
+				var protocol *h3.Error
+				if errors.As(err, &protocol) {
+					code, reason = protocol.Code, protocol.Reason
+				}
+				transport.Abort(code, reason)
 			}
 		}
 		return s.drained()
@@ -261,6 +266,8 @@ func StartSession(parent context.Context, transport IncomingTransport, local *Lo
 		} else {
 			decoder.Close(context.Cause(ctx))
 		}
+		// The interrupted decoder stream fails any write still in progress.
+		decoder.Flushed()
 		s.requestsMu.Lock()
 		clear(s.requests) // Request contexts were canceled through their session parent.
 		s.requestsMu.Unlock()

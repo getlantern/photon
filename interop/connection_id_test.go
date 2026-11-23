@@ -9,6 +9,11 @@ import (
 )
 
 func TestConnectionIDReferenceValues(t *testing.T) {
+	var own quic.ConnectionID
+	var peer upstream.ConnectionID
+	if own.Valid() != peer.Valid() || own.Len() != peer.Len() || own.String() != peer.String() || !bytes.Equal(own.Bytes(), peer.Bytes()) {
+		t.Fatal("zero value mismatch", own.Valid(), own.Len(), own.String())
+	}
 	for size := 0; size <= 20; size++ {
 		for seed := 0; seed < 256; seed++ {
 			input := make([]byte, size)
@@ -16,6 +21,9 @@ func TestConnectionIDReferenceValues(t *testing.T) {
 				input[i] = byte(seed + i*31)
 			}
 			own, peer := quic.ConnectionIDFromBytes(input), upstream.ConnectionIDFromBytes(input)
+			if own.Valid() != peer.Valid() || (own == quic.ConnectionID{}) != (peer == upstream.ConnectionID{}) {
+				t.Fatal("validity mismatch", size, seed)
+			}
 			if own.Len() != peer.Len() || own.String() != peer.String() || !bytes.Equal(own.Bytes(), peer.Bytes()) {
 				t.Fatal("reference mismatch", size, seed)
 			}

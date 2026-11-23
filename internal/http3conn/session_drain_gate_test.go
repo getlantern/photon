@@ -105,7 +105,7 @@ func TestSessionGracefulCloseDecodesTrailersBeforeDetach(t *testing.T) {
 					f.session.controlMu.Unlock()
 				}
 			}()
-			f.feedback.fail = peerClose
+			f.feedback.setFail(peerClose)
 			if observed {
 				f.stop(peerClose)
 				<-f.feedback.interrupt
@@ -210,7 +210,10 @@ func TestFieldDecoderUndeliverableFeedbackDetaches(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			writer.fail = true
+			// Each operation succeeds; its feedback fails afterwards, and that
+			// detaches the decoder.
+			d.Flushed()
+			writer.fail.Store(true)
 			switch operation {
 			case "submit":
 				ready, err := d.Submit(8, []byte{2, 0, 0x80})
@@ -222,14 +225,15 @@ func TestFieldDecoderUndeliverableFeedbackDetaches(t *testing.T) {
 				}
 			case "instruction":
 				// The insert is applied even though its acknowledgment is lost.
-				if err := decoderUpdate(t, d, insert); err != cause {
+				if err := decoderUpdate(t, d, insert); err != nil {
 					t.Fatal(err)
 				}
 			case "cancel":
-				if err := d.Cancel(8); err != cause {
+				if err := d.Cancel(8); err != nil {
 					t.Fatal(err)
 				}
 			}
+			d.Flushed()
 			if result := readySection(t, unblocked); result.Err != nil || len(result.Fields) != 1 || result.Fields[0] != fs("x", "value") {
 				t.Fatal("section completed by the insert", result)
 			}
@@ -239,7 +243,7 @@ func TestFieldDecoderUndeliverableFeedbackDetaches(t *testing.T) {
 			if reports != 1 {
 				t.Fatal("owner reports", reports)
 			}
-			writes := writer.writes
+			writes := writer.writes.Load()
 			ready, err := d.Submit(12, []byte{2, 0, 0x80})
 			if err != nil {
 				t.Fatal("table discarded:", err)
@@ -247,7 +251,8 @@ func TestFieldDecoderUndeliverableFeedbackDetaches(t *testing.T) {
 			if result := readySection(t, ready); result.Err != nil || len(result.Fields) != 1 || result.Fields[0] != fs("x", "value") {
 				t.Fatal(result)
 			}
-			if writer.writes != writes {
+			d.Flushed()
+			if writer.writes.Load() != writes {
 				t.Fatal("feedback written after detach")
 			}
 		})
