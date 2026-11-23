@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"testing"
@@ -14,7 +15,16 @@ import (
 	"github.com/getlantern/photon/internal/qpack"
 )
 
+// A graceful close keeps a fully buffered response readable whether or not the
+// session read the peer's GOAWAY first: QUIC acknowledging the GOAWAY says
+// nothing about when the control stream reader gets to it.
 func TestSessionGracefulCloseDecodesBufferedTrailers(t *testing.T) {
+	for _, goaway := range []bool{true, false} {
+		t.Run(fmt.Sprintf("goaway-read=%v", goaway), func(t *testing.T) { gracefulCloseDecodesBufferedTrailers(t, goaway) })
+	}
+}
+
+func gracefulCloseDecodesBufferedTrailers(t *testing.T, goaway bool) {
 	transport := &dispatchTransport{streams: make(chan ReceiveStream, 2)}
 	feedback := &fakeStream{interrupt: make(chan struct{})}
 	local := &LocalStreams{Control: &fakeStream{interrupt: make(chan struct{})}, Encoder: &fakeStream{interrupt: make(chan struct{})}, Decoder: feedback}
@@ -60,7 +70,9 @@ func TestSessionGracefulCloseDecodesBufferedTrailers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	session.receiveGoaway(PeerGoaway{ID: 4, RequestIDs: true})
+	if goaway {
+		session.receiveGoaway(PeerGoaway{ID: 4, RequestIDs: true})
+	}
 	peerClose := &quic.PeerCloseError{Application: true, Code: 0x100, Reason: "drained"}
 	stop(peerClose)
 	select {

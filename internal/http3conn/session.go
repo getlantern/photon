@@ -275,15 +275,34 @@ func StartSession(parent context.Context, transport IncomingTransport, local *Lo
 	return s, nil
 }
 
-// drained returns the session's cause if it is a graceful peer close following
-// GOAWAY. ExchangeRequest keeps accepted responses readable after one; their
-// buffered field sections still need the table state received so far.
+// drained returns the session's cause if it is a graceful peer close.
+// ExchangeRequest keeps accepted responses readable after one; their buffered
+// field sections still need the table state received so far.
 func (s *Session) drained() error {
-	var closed *quic.PeerCloseError
-	if cause := context.Cause(s.ctx); errors.As(cause, &closed) && closed.Application && closed.Code == 0x100 && s.goaway.Load() != nil {
+	if cause := context.Cause(s.ctx); gracefulPeerClose(cause) {
 		return cause
 	}
 	return nil
+}
+
+// keptAfterClose reports whether a peer close leaves the response on request
+// stream id readable: a graceful close does, unless a GOAWAY the session has
+// read shows the peer did not process the request. QUIC can acknowledge the
+// peer's GOAWAY before the control stream reader gets to it, so the close may
+// be seen first. A response the transport holds complete was processed either
+// way, and the transport refuses to read an incomplete one after the close.
+func (s *Session) keptAfterClose(cause error, id uint64) bool {
+	if !gracefulPeerClose(cause) {
+		return false
+	}
+	goaway := s.goaway.Load()
+	return goaway == nil || !goaway.Rejects(id)
+}
+
+// gracefulPeerClose reports a peer CONNECTION_CLOSE with H3_NO_ERROR.
+func gracefulPeerClose(cause error) bool {
+	var closed *quic.PeerCloseError
+	return errors.As(cause, &closed) && closed.Application && closed.Code == 0x100
 }
 
 // WaitEncoder waits for successful initialization from live or remembered SETTINGS.

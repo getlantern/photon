@@ -71,10 +71,14 @@ request's concurrency slot.
 - Failure. A failed write is reported through the session's hook as before: the
   session is canceled and the connection aborted, and the decoder fails, which
   releases blocked sections and makes later calls return the error. The call
-  that produced the feedback has already returned successfully. After GOAWAY
-  and a graceful H3_NO_ERROR close the hook reports the feedback as merely
+  that produced the feedback has already returned successfully. After a
+  graceful H3_NO_ERROR close the hook reports the feedback as merely
   undeliverable, and the decoder detaches instead: table state stays so
-  buffered responses still decode, and further feedback is dropped.
+  buffered responses still decode, and further feedback is dropped. This does
+  not depend on the session having read the peer's GOAWAY: QUIC can acknowledge
+  the GOAWAY, and the peer close, before the control stream reader reaches it.
+  A GOAWAY that was read still rejects the requests it names, and the transport
+  refuses to read a response that was not complete when the connection closed.
 - Shutdown. The session interrupts the decoder stream with a write deadline,
   then closes or detaches the decoder, then waits for the writer (`Flushed`).
   `Close` and `Detach` themselves never wait. An interrupted write does not
