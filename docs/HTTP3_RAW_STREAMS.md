@@ -163,7 +163,7 @@ usable, with one exception.
 | `ReadResponse` | repeat it; the interim-response count carries over |
 | `Write` | repeat it; the next `Write` or `TryWriteAll` first finishes the interrupted DATA frame |
 | `TryWriteAll` | repeat it; nothing was queued |
-| `Close` | repeat it; FIN was not queued, the message is as open as before (`Write` still works), and datagram sending resumes. A datagram send that was in progress when `Close` was called has failed. `Close` also fails, retryably, while a DATA frame is unfinished |
+| `Close` | repeat it; FIN was not queued, the message is as open as before (`Write` still works), and datagram sending resumes unless the stream was reset while `Close` waited (a `CancelWrite` or request abort does not wait for a `Close` that is waiting for room to queue FIN, and ends datagram sending for good). A datagram send that was in progress when `Close` was called has failed. `Close` also fails, retryably, while a DATA frame is unfinished |
 | `SendRequestHeader`, and the response header sent by `HTTPStream` | terminal for the send direction: a HEADERS frame is tied to QPACK state already committed and cannot be abandoned or re-encoded |
 
 Every other error a writer caches is terminal: a failed stream write, and

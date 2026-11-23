@@ -39,8 +39,10 @@ type DatagramRequest struct {
 	cancelAbort          context.CancelCauseFunc
 	abort                func(uint64) // guarded by owner.mu; called outside the lock
 	sendGate             chan struct{}
-	sendMu               sync.Mutex // guards sendContext, cancelSend and sendEnded
-	sendEnded            error      // sending is over for good, with this cause
+	sendMu               sync.Mutex    // guards sendContext, cancelSend, sendEnded, suspended and suspending
+	sendEnded            error         // sending is over for good, with this cause
+	suspended            bool          // an attempt to end the send direction holds sendGate
+	suspending           chan struct{} // closed when an attempt takes sendGate
 	sendContext          context.Context
 	receiveContext       context.Context // guarded by owner.mu
 	cancelSend           context.CancelCauseFunc
@@ -73,7 +75,7 @@ func (d *DatagramDispatch) register(id uint64, supported, pending bool, receiveC
 	if len(d.requests) >= d.maxRequests {
 		return nil, ErrRequestLimit
 	}
-	r := &DatagramRequest{pending: pending, abort: abort, receiveContext: receiveContext, owner: d, id: id, supported: supported, sendGate: make(chan struct{}, 1)}
+	r := &DatagramRequest{pending: pending, abort: abort, receiveContext: receiveContext, owner: d, id: id, supported: supported, sendGate: make(chan struct{}, 1), suspending: make(chan struct{})}
 	r.abortContext, r.cancelAbort = context.WithCancelCause(context.Background())
 	r.sendContext, r.cancelSend = context.WithCancelCause(context.Background())
 	r.sendGate <- struct{}{}
@@ -243,9 +245,30 @@ func (d *DatagramDispatch) Close() {
 	clear(d.requests)
 }
 
-// CloseSend must precede transport FIN/RESET_STREAM. It joins an already admitted
-// send after interrupting its queue-capacity wait; receive remains independent.
-func (r *DatagramRequest) CloseSend() { r.suspendSend()(true) }
+// CloseSend ends datagram sending for good and must precede transport
+// FIN/RESET_STREAM. It joins an already admitted send after interrupting its
+// queue-capacity wait; receive remains independent. It does not wait for an
+// attempt to end the stream that holds sending off: no datagram is in flight
+// then and the attempt can no longer resume sending, and the reset that
+// follows may be what ends that attempt's wait for FIN.
+func (r *DatagramRequest) CloseSend() {
+	r.endSend(ErrDatagramSendClosed)
+	for {
+		r.sendMu.Lock()
+		suspended, suspending := r.suspended, r.suspending
+		r.sendMu.Unlock()
+		if suspended {
+			return
+		}
+		select {
+		case <-r.sendGate:
+			r.sendClosed = true
+			r.sendGate <- struct{}{}
+			return
+		case <-suspending:
+		}
+	}
+}
 
 // suspendSend stops datagram sending for an attempt to end the stream's send
 // direction: no datagram may follow FIN. It interrupts and joins an admitted
@@ -259,14 +282,20 @@ func (r *DatagramRequest) suspendSend() (finish func(ended bool)) {
 	r.sendMu.Unlock()
 	interrupt(ErrDatagramSendClosed)
 	<-r.sendGate
+	r.sendMu.Lock()
+	r.suspended = true
+	close(r.suspending)
+	r.suspending = make(chan struct{})
+	r.sendMu.Unlock()
 	return func(ended bool) {
 		r.sendMu.Lock()
-		if ended {
+		r.suspended = false
+		if ended && r.sendEnded == nil {
+			r.sendEnded = ErrDatagramSendClosed
+		}
+		if r.sendEnded != nil {
 			r.sendClosed = true
-			if r.sendEnded == nil {
-				r.sendEnded = ErrDatagramSendClosed
-			}
-		} else if r.sendEnded == nil {
+		} else {
 			r.sendContext, r.cancelSend = context.WithCancelCause(context.Background())
 		}
 		r.sendMu.Unlock()

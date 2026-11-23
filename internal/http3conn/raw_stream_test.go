@@ -1452,3 +1452,69 @@ func TestCloseDeadlineKeepsStreamUsable(t *testing.T) {
 		t.Fatal("datagram sent after FIN:", err)
 	}
 }
+
+// finBlockedStream cannot queue FIN until its send side is reset, as when the
+// send queue is full: Close waits, and a reset ends that wait.
+type finBlockedStream struct {
+	*datagramTestStream
+	entered chan struct{}
+}
+
+func (s *finBlockedStream) Close() error {
+	close(s.entered)
+	<-s.sendCtx.Done()
+	return context.Cause(s.sendCtx)
+}
+
+// Close holds datagram sending off while FIN waits for room, but a reset must
+// still reach the transport: that is what ends the wait.
+func TestResetInterruptsBlockedClose(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		reset func(*DatagramStream, *Session)
+	}{
+		{"CancelWrite", func(bound *DatagramStream, _ *Session) { bound.CancelWrite(0x10c) }},
+		{"AbortRequest", func(bound *DatagramStream, s *Session) {
+			_ = s.datagrams.AbortRequest(context.Background(), uint64(bound.StreamID()), 0x33)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, unused, _ := datagramSendSession(t, datagramSinkFunc(func(context.Context, []byte) error { return nil }))
+			unused.Remove()
+			ctx, cancel := context.WithCancelCause(context.Background())
+			defer cancel(context.Canceled)
+			receiveCtx, receiveCancel := context.WithCancel(context.Background())
+			defer receiveCancel()
+			transport := &finBlockedStream{datagramTestStream: &datagramTestStream{id: 4, exchangeStream: &exchangeStream{serveStream: &serveStream{source: bytes.NewReader(nil)}, sendCtx: ctx, sendCancel: cancel}, receiveCtx: receiveCtx, receiveCancel: receiveCancel}, entered: make(chan struct{})}
+			bound, err := s.BindDatagramStream(transport, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer bound.Release(context.Background())
+			defer cancel(context.Canceled) // a failed run must not leave Close blocked
+			closed := make(chan error, 1)
+			go func() { closed <- bound.Close() }()
+			<-transport.entered
+			reset := make(chan struct{})
+			go func() { tc.reset(bound, s); close(reset) }()
+			guard := time.NewTimer(5 * time.Second)
+			defer guard.Stop()
+			select {
+			case <-reset:
+			case <-guard.C:
+				t.Fatal("reset waited behind the blocked Close")
+			}
+			select {
+			case err := <-closed:
+				if err == nil || h3.IsDeadline(err) {
+					t.Fatal("Close after reset:", err)
+				}
+			case <-guard.C:
+				t.Fatal("Close was not interrupted by the reset")
+			}
+			if err := bound.SendDatagram(context.Background(), []byte("after reset")); err == nil {
+				t.Fatal("datagram sent after reset")
+			}
+		})
+	}
+}

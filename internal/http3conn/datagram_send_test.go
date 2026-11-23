@@ -121,3 +121,23 @@ func TestHTTPDatagramCloseSendInterruptsBackpressure(t *testing.T) {
 		t.Fatal(data, err)
 	}
 }
+
+// Ending sending for good must not wait for an attempt to end the stream that
+// holds sending off, and that attempt timing out must not bring it back.
+func TestCloseSendDuringSuspension(t *testing.T) {
+	s, r, _ := datagramSendSession(t, datagramSinkFunc(func(context.Context, []byte) error { return nil }))
+	finish := r.suspendSend()
+	ended := make(chan struct{})
+	go func() { r.CloseSend(); close(ended) }()
+	guard := time.NewTimer(5 * time.Second)
+	defer guard.Stop()
+	select {
+	case <-ended:
+	case <-guard.C:
+		t.Fatal("CloseSend waited for the suspension")
+	}
+	finish(false)
+	if err := s.SendHTTPDatagram(context.Background(), r, []byte{1}); !errors.Is(err, ErrDatagramSendClosed) {
+		t.Fatal("sending resumed after CloseSend:", err)
+	}
+}
