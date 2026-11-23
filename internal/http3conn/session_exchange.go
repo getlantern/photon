@@ -14,7 +14,7 @@ import (
 // ExchangeRequest admits one already allocated client request stream and binds
 // its exchange to request.Context and the session's GOAWAY-aware lease. A
 // graceful peer close permits buffered active responses to drain;
-// request cancellation, IDs rejected by a GOAWAY read before the close, and
+// request cancellation, IDs rejected by a GOAWAY the session has read, and
 // other session failures still abort.
 // Encoder, Decoder and Abort in config are assigned by the session. Done remains
 // an optional endpoint cleanup callback. The stream ID must never be reused.

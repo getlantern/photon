@@ -74,11 +74,13 @@ request's concurrency slot.
   that produced the feedback has already returned successfully. After a
   graceful H3_NO_ERROR close the hook reports the feedback as merely
   undeliverable, and the decoder detaches instead: table state stays so
-  buffered responses still decode, and further feedback is dropped. This does
-  not depend on the session having read the peer's GOAWAY: QUIC can acknowledge
-  the GOAWAY, and the peer close, before the control stream reader reaches it.
-  A GOAWAY read before the close still rejects the requests it names, and the transport
-  refuses to read a response that was not complete when the connection closed.
+  buffered responses still decode, and further feedback is dropped. On a
+  client this does not depend on the session having read the server's GOAWAY:
+  QUIC can acknowledge the GOAWAY, and the peer close, before the control
+  stream reader reaches it. A GOAWAY the session has read still rejects the
+  requests it names, and the transport refuses to read a response that was not
+  complete when the connection closed. A server detaches only after the
+  client's GOAWAY; otherwise its decoder fails.
 - Shutdown. The session interrupts the decoder stream with a write deadline,
   then closes or detaches the decoder, then waits for the writer (`Flushed`).
   `Close` and `Detach` themselves never wait. An interrupted write does not

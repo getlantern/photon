@@ -288,8 +288,10 @@ func (s *Session) drained() error {
 }
 
 // keptAfterClose reports whether a peer close leaves the response on request
-// stream id readable: a graceful close does, unless a GOAWAY the session read
-// before the close shows the peer did not process the request. QUIC can acknowledge the
+// stream id readable: a graceful close does, unless a GOAWAY the session has
+// read by now rejects the stream. A GOAWAY read before the close has already
+// canceled the leases it rejects; this covers one read while the close is
+// being observed. QUIC can acknowledge the
 // peer's GOAWAY before the control stream reader gets to it, so the close may
 // be seen first. A response the transport holds complete was processed either
 // way, and the transport refuses to read an incomplete one after the close.

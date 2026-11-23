@@ -134,3 +134,33 @@ func TestFieldDecoderDetach(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A client's decoder outlives any graceful close, read GOAWAY or not. A
+// server's does only after the client's GOAWAY.
+func TestSessionDrained(t *testing.T) {
+	graceful := &quic.PeerCloseError{Application: true, Code: 0x100}
+	for _, row := range []struct {
+		server, goaway bool
+		cause          error
+		drained        bool
+	}{
+		{false, false, graceful, true},
+		{false, true, graceful, true},
+		{true, false, graceful, false},
+		{true, true, graceful, true},
+		{false, true, &quic.PeerCloseError{Application: true, Code: 0x102}, false},
+		{false, true, &quic.PeerCloseError{Code: 0x100}, false},
+	} {
+		t.Run(fmt.Sprintf("server=%v/goaway=%v/%v", row.server, row.goaway, row.cause), func(t *testing.T) {
+			ctx, cancel := context.WithCancelCause(context.Background())
+			cancel(row.cause)
+			s := &Session{ctx: ctx, server: row.server}
+			if row.goaway {
+				s.goaway.Store(&PeerGoaway{ID: 4, RequestIDs: !row.server})
+			}
+			if err := s.drained(); (err != nil) != row.drained {
+				t.Fatalf("drained=%v, want %v", err, row.drained)
+			}
+		})
+	}
+}
