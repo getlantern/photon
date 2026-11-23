@@ -46,7 +46,9 @@ peer has already stopped the direction with H3_NO_ERROR, which a server may do
 once it has responded. Until then the request
 context stays live. Peer resets no longer abort the other direction; they are
 returned from `Read`/`Write`. Protocol violations still close the connection
-and malformed messages still reset the request. When the request ended first
+and malformed messages still reset the request. A request-body read that was
+already waiting when the handler called `HTTPStream` follows the same rules
+when it returns. When the request ended first
 (connection closed, handler panic), calls return that cause rather than the
 local reset it produced.
 
@@ -139,12 +141,20 @@ with H3_DATAGRAM_ERROR, as before. Sending requires the peer's SETTINGS.
 
 ## Deadlines
 
-A stream deadline that expires (`os.ErrDeadlineExceeded`) is retryable: the
-frame reader keeps a partially read frame header or HEADERS block, and the
-writer finishes a partially written DATA frame on the next `Write` or
-`TryWriteAll`. `Close` fails while a DATA frame is unfinished. `ReadResponse`
-can likewise be repeated. A deadline that expires while HEADERS are being
-written is terminal for the send direction.
+A stream deadline that expires (`os.ErrDeadlineExceeded`) leaves the stream
+usable, with one exception.
+
+| Call | After an expired deadline |
+| --- | --- |
+| `Read` | repeat it; the frame reader keeps a partial frame header, HEADERS block or skipped frame |
+| `ReadResponse` | repeat it; the interim-response count carries over |
+| `Write` | repeat it; the next `Write` or `TryWriteAll` first finishes the interrupted DATA frame |
+| `TryWriteAll` | repeat it; nothing was queued |
+| `Close` | repeat it; FIN was not queued. `Close` also fails, retryably, while a DATA frame is unfinished |
+| `SendRequestHeader`, and the response header sent by `HTTPStream` | terminal for the send direction: a HEADERS frame is tied to QPACK state already committed and cannot be abandoned or re-encoded |
+
+Every other error a writer caches is terminal: a failed stream write, and
+local message validation (a declared Content-Length, frame order, trailers).
 
 ### What a receive call can wait on
 
@@ -187,6 +197,8 @@ needs (a partial frame header, HEADERS block, skipped frame or section).
   only through `ExtendedConnectHandlers`/`DatagramHandlers`.
 - `ReadResponse` returns the final response; interim responses go to
   `ClientConfig.Information`. A second call is an error.
+- A `RequestStream` on a client pinned to an origin rejects requests for other
+  origins; upstream has no pinning.
 - `SendRequestHeader` sends Content-Length only for a positive
   `ContentLength`, where upstream announces zero for a bodiless POST, PUT or
   PATCH and then lets `Write` contradict it.

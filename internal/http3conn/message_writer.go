@@ -175,7 +175,8 @@ func (w *MessageWriter) TryWrite(p []byte) error {
 		return nil
 	}
 	if err := stream.TryWriteAll(data); err != nil {
-		if !errors.Is(err, quic.ErrWouldBlock) {
+		// Neither a full stream nor an expired deadline queued anything.
+		if !errors.Is(err, quic.ErrWouldBlock) && !h3.IsDeadline(err) {
 			return w.fail(err)
 		}
 		if len(rest) > 0 {
@@ -200,6 +201,10 @@ func (w *MessageWriter) Close() error {
 		return w.fail(err)
 	}
 	if err := w.stream.Close(); err != nil {
+		// A deadline that expired before FIN was queued sent nothing.
+		if h3.IsDeadline(err) {
+			return err
+		}
 		return w.fail(err)
 	}
 	w.closed = true

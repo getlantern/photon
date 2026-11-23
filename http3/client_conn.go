@@ -49,8 +49,9 @@ type ClientConfig struct {
 
 // ClientConn implements RoundTripper on one QUIC connection. It does not dial,
 // pool, retry or coalesce origins. One made by NewClientConn, Dial or DialEarly
-// is bound to its HTTPS origin, rejects requests for any other, and does not
-// decompress. One made by Transport.NewClientConn or NewRawClientConn is not
+// is bound to its HTTPS origin and does not decompress: RoundTrip, the tunnel
+// methods and RequestStream.SendRequestHeader all reject a request for any
+// other origin before sending anything. One made by Transport.NewClientConn or NewRawClientConn is not
 // bound to an origin, and negotiates and decodes gzip unless the Transport's
 // DisableCompression is set. Close cancels active work; callers must still
 // close every returned response Body. Construct it exactly once on a

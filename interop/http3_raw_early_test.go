@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -125,8 +126,12 @@ func TestHTTP3RawAPIsWaitForHandshake(t *testing.T) {
 							t.Fatal("request reached the server before the handshake:", path)
 						default:
 						}
-						if flight.dropped.Load() == 0 {
-							t.Fatal("server flight gate did not discard output")
+						// The server answers the resumed ClientHello on its own schedule.
+						for flight.dropped.Load() == 0 {
+							if ctx.Err() != nil {
+								t.Fatal("server flight gate did not discard output")
+							}
+							runtime.Gosched()
 						}
 						flight.held.Store(false)
 					}

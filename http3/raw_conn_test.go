@@ -296,6 +296,15 @@ func TestRawServerConnUnknownUnidirectionalStream(t *testing.T) {
 // offers the server's bidirectional streams to the test.
 func rawClient(ctx context.Context, t *testing.T, transport *Transport, address string) (*RawClientConn, <-chan *quic.Stream) {
 	t.Helper()
+	open := make(chan struct{})
+	close(open)
+	return gatedRawClient(ctx, t, transport, address, open)
+}
+
+// gatedRawClient hands HTTP/3 no unidirectional stream until gate is closed, so
+// the server's SETTINGS cannot have been processed before then.
+func gatedRawClient(ctx context.Context, t *testing.T, transport *Transport, address string, gate <-chan struct{}) (*RawClientConn, <-chan *quic.Stream) {
+	t.Helper()
 	config := &quic.Config{}
 	if transport.QUICConfig != nil {
 		config = transport.QUICConfig.Clone()
@@ -311,6 +320,11 @@ func rawClient(ctx context.Context, t *testing.T, transport *Transport, address 
 		for {
 			stream, err := conn.AcceptUniStream(ctx)
 			if err != nil {
+				return
+			}
+			select {
+			case <-gate:
+			case <-ctx.Done():
 				return
 			}
 			go raw.HandleUnidirectionalStream(stream)
@@ -337,10 +351,18 @@ func TestRawClientConn(t *testing.T) {
 		io.WriteString(w, r.Host)
 	})}
 	address := listenTestServer(ctx, t, server)
-	raw, _ := rawClient(ctx, t, &Transport{}, address)
+	gate := make(chan struct{})
+	raw, _ := gatedRawClient(ctx, t, &Transport{}, address, gate)
+	// With the control stream withheld there are no SETTINGS to have received.
+	select {
+	case <-raw.ReceivedSettings():
+		t.Fatal("SETTINGS received without the control stream")
+	default:
+	}
 	if raw.Settings() != nil {
 		t.Fatal("settings before receipt")
 	}
+	close(gate)
 	// The connection is not pinned to an origin: any authority may be requested.
 	for _, authority := range []string{address, "other.example"} {
 		request, _ := http.NewRequestWithContext(ctx, "GET", "https://"+authority+"/", nil)
@@ -367,7 +389,8 @@ func TestRawClientConn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request, _ := http.NewRequestWithContext(ctx, "GET", "https://"+address+"/", nil)
+	// Raw request streams are not pinned either.
+	request, _ := http.NewRequestWithContext(ctx, "GET", "https://other.example/", nil)
 	if err := stream.SendRequestHeader(request); err != nil {
 		t.Fatal(err)
 	}
@@ -378,7 +401,7 @@ func TestRawClientConn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if body, err := io.ReadAll(stream); err != nil || string(body) != address || response.StatusCode != 200 {
+	if body, err := io.ReadAll(stream); err != nil || string(body) != "other.example" || response.StatusCode != 200 {
 		t.Fatalf("%q %v", body, err)
 	}
 	if raw.LocalAddr() == nil || raw.RemoteAddr().String() != address {
@@ -746,4 +769,27 @@ func TestStreamCreditRelease(t *testing.T) {
 		requests(ctx, t, raw.ClientConn, app.origin())
 		openDisposable(ctx, t, await(ctx, t, "connection", app.conns), 4)
 	})
+}
+
+// SETTINGS that arrived are published even if the session has ended by the
+// time anyone looks: a select with both channels ready may pick either.
+func TestForwardSettingsAfterSessionEnded(t *testing.T) {
+	closed := make(chan struct{})
+	close(closed)
+	for i := 0; i < 1000; i++ {
+		published := make(chan struct{})
+		forwardSettings(closed, closed, published)
+		select {
+		case <-published:
+		default:
+			t.Fatal("received SETTINGS lost to the session's end")
+		}
+	}
+	published := make(chan struct{})
+	forwardSettings(nil, closed, published)
+	select {
+	case <-published:
+		t.Fatal("published SETTINGS that never arrived")
+	default:
+	}
 }

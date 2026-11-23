@@ -87,11 +87,24 @@ func (c *ClientConn) setup(err error) {
 		return
 	}
 	close(c.ready)
+	forwardSettings(c.session.ReceivedSettings(), c.session.Done(), c.settings)
+}
+
+// forwardSettings closes published once received is closed, and gives up when
+// the session is done. SETTINGS that arrived before the session ended are still
+// published: both channels can be ready at once, and responses kept after a
+// graceful close still show them.
+func forwardSettings(received, done <-chan struct{}, published chan<- struct{}) {
 	select {
-	case <-c.session.ReceivedSettings():
-		close(c.settings)
-	case <-c.session.Done():
+	case <-received:
+	case <-done:
+		select {
+		case <-received:
+		default:
+			return
+		}
 	}
+	close(published)
 }
 
 type clientTransport interface {

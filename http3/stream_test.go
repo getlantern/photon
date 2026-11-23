@@ -751,3 +751,47 @@ func TestHTTPStreamBodyReadAcrossTakeover(t *testing.T) {
 		t.Fatal("stream waits for a receive direction that a read in progress at takeover finished")
 	}
 }
+
+// A client made for one origin sends nothing to it on behalf of another, on a
+// raw request stream as in RoundTrip.
+func TestRequestStreamOriginPinning(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	hosts := make(chan string, 4)
+	client, origin := dialTestServer(ctx, t, &Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hosts <- r.Host
+	})}, nil)
+	stream, err := client.OpenRequestStream(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, other := range []string{"https://other.example/", "http://" + strings.TrimPrefix(origin, "https://") + "/"} {
+		request, _ := http.NewRequestWithContext(ctx, "GET", other, nil)
+		if err := stream.SendRequestHeader(request); err == nil {
+			t.Fatal("pinned client sent a request for", other)
+		}
+	}
+	// Nothing was written: the same stream still carries the one request the
+	// server will ever see on it.
+	request, _ := http.NewRequestWithContext(ctx, "GET", origin+"/", nil)
+	if err := stream.SendRequestHeader(request); err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if response, err := stream.ReadResponse(); err != nil || response.StatusCode != 200 {
+		t.Fatal(response, err)
+	}
+	if _, err := io.ReadAll(stream); err != nil {
+		t.Fatal(err)
+	}
+	if host := await(ctx, t, "request", hosts); host != strings.TrimPrefix(origin, "https://") {
+		t.Fatal("server saw a request for", host)
+	}
+	select {
+	case host := <-hosts:
+		t.Fatal("server saw a second request, for", host)
+	default:
+	}
+}

@@ -22,6 +22,7 @@ import (
 // may run concurrently. Stream and connection errors are returned as *Error.
 type RequestStream struct {
 	stream *http3conn.ClientStream
+	origin string // the connection's pinned origin; empty if it has none
 }
 
 // OpenRequestStream opens a request stream without sending anything on it. It
@@ -33,7 +34,7 @@ func (c *ClientConn) OpenRequestStream(ctx context.Context) (*RequestStream, err
 	if err != nil {
 		return nil, httpError(err)
 	}
-	return &RequestStream{stream: stream}, nil
+	return &RequestStream{stream: stream, origin: c.origin}, nil
 }
 
 func (c *ClientConn) openRequestStream(ctx context.Context) (_ *http3conn.ClientStream, err error) {
@@ -134,13 +135,24 @@ func (c *ClientConn) openRequestStream(ctx context.Context) (_ *http3conn.Client
 }
 
 // SendRequestHeader sends the request header. The request must not have a
-// body: write it with Write. A CONNECT request whose Proto is set to anything
+// body: write it with Write. On a connection pinned to an origin (NewClientConn,
+// Dial, DialEarly) a request for any other origin is rejected before anything
+// is sent, and the call can be repeated with a valid request. A CONNECT request whose Proto is set to anything
 // but "HTTP/1.1" is an Extended CONNECT with that :protocol. The call waits for
 // the server's SETTINGS, bounded by the request's context. It may be used once;
 // if writing the header fails, the send direction is unusable.
 func (s *RequestStream) SendRequestHeader(req *http.Request) error {
 	if req == nil {
 		return fmt.Errorf("http3: nil request")
+	}
+	// A connection made for one origin carries no other's requests, here as in
+	// RoundTrip. Nothing has been written when this fails.
+	if s.origin != "" {
+		if key, err := originKey(req.URL); err != nil {
+			return err
+		} else if key != s.origin {
+			return fmt.Errorf("http3: request origin differs from connection origin")
+		}
 	}
 	switch req.Method {
 	case MethodGet0RTT, MethodHead0RTT:

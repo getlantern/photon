@@ -99,13 +99,20 @@ func quicStreamOf(stream any) *quic.Stream {
 // Read returns DATA payload. Trailers are delivered to the message's owner and
 // unknown frames are skipped. After an expired read deadline it can be retried.
 func (s *RawStream) Read(p []byte) (n int, err error) {
-	defer func() { err = s.mapError.apply(s.ended(err)) }()
 	s.readMu.Lock()
 	defer s.readMu.Unlock()
 	if s.body == nil {
-		return 0, s.noBody
+		return 0, s.mapError.apply(s.noBody)
 	}
 	n, err = s.body.Read(p)
+	return n, s.readEnded(err)
+}
+
+// readEnded applies a raw stream's rules to the result of a read of its body,
+// and returns the error the application sees. Only a protocol violation or a
+// malformed message fails the request; any other terminal result, a peer reset
+// among them, ends receiving and nothing else. An expired deadline ends nothing.
+func (s *RawStream) readEnded(err error) error {
 	if err != nil && !h3.IsDeadline(err) {
 		var protocol *h3.Error
 		var message *MessageError
@@ -117,7 +124,7 @@ func (s *RawStream) Read(p []byte) (n int, err error) {
 		}
 		s.receiveEnded()
 	}
-	return n, err
+	return s.mapError.apply(s.ended(err))
 }
 
 // Write sends p in one DATA frame. After an expired write deadline, the next

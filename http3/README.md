@@ -107,7 +107,8 @@ defer response.Body.Close()
 ```
 
 Request URL origins are pinned, with case-insensitive ASCII hosts and normalized
-ports. Request.Host overrides still follow Go HTTP semantics. Cross-origin
+ports, for `RoundTrip`, the tunnel methods and raw request streams
+(`RequestStream.SendRequestHeader`) alike. Request.Host overrides still follow Go HTTP semantics. Cross-origin
 redirects require another connection/transport. The default concurrent-request
 bound is 64, retained until response Body.Close, including after EOF. Queued
 requests and stream allocation honor request cancellation, client closure and
@@ -681,8 +682,8 @@ direction's calls and leaves the other open. A `Write` or `Close` that fails
 for a local reason, such as a declared Content-Length, does not finish
 sending: call `CancelWrite`. `Close` succeeds if the peer already stopped the
 direction with H3_NO_ERROR. An expired deadline (`os.ErrDeadlineExceeded`)
-leaves the stream usable, and the read deadline and `CancelRead` also end a
-wait for QPACK state. `TryWriteAll` queues a
+leaves the stream usable: `Read`, `Write`, `TryWriteAll` and `Close` can be
+repeated. The read deadline and `CancelRead` also end a wait for QPACK state. `TryWriteAll` queues a
 whole DATA frame or returns `quic.ErrWouldBlock`. `QUICStream` exposes the
 QUIC stream beneath the framing.
 
@@ -710,7 +711,9 @@ response, err := stream.ReadResponse()
 `OpenRequestStream` waits for the handshake, a `MaxConcurrentRequests` slot and
 stream credit; raw streams never use 0-RTT. After a GOAWAY it returns
 `ErrPeerDraining`. `SendRequestHeader` takes a request without a body, waits
-for the server's SETTINGS and sends the header. A CONNECT request whose `Proto`
+for the server's SETTINGS and sends the header. On a client pinned to an origin
+it rejects a request for any other origin before sending anything; clients from
+the `Transport` constructors accept any origin. A CONNECT request whose `Proto`
 is not `HTTP/1.1` is an Extended CONNECT with that `:protocol`. Content-Length
 is sent only for a positive `ContentLength`, which `Write` and `Close` then
 enforce. `ReadResponse` returns the final response, without `Request` or `TLS`;

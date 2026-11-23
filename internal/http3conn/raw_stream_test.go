@@ -1067,63 +1067,208 @@ func TestClientStreamAbandonedReleasesWithoutFeedbackCredit(t *testing.T) {
 	}
 }
 
-// heldBody is a request body whose Read waits for the test to decide how it ends.
-type heldBody struct {
-	entered chan struct{}
-	outcome chan error
-}
-
-func (b *heldBody) Read([]byte) (int, error) {
-	close(b.entered)
-	return 0, <-b.outcome
-}
-func (b *heldBody) Close() error { return nil }
-
-// A request-body read in progress when the stream is taken over still decides
-// when receiving is over, whichever way it ends. An expired deadline does not
-// end it.
+// A request-body read that began before the handler took its stream over
+// returns afterwards, and must then behave as a read on the taken-over stream
+// would: directions stay independent, the end of receiving is reported once,
+// and only connection and message errors fail the request.
 func TestServerBodyReadAcrossTakeover(t *testing.T) {
-	for name, outcome := range map[string]error{
-		"FIN":        io.EOF,
-		"reset":      &quic.StreamError{ErrorCode: 0x10c, Remote: true},
-		"connection": &quic.PeerCloseError{Application: true, Code: 0x100},
-		"deadline":   os.ErrDeadlineExceeded,
-	} {
-		t.Run(name, func(t *testing.T) {
+	type expectation struct {
+		ended   bool   // receiving is over
+		failed  bool   // the request task failed
+		aborted uint64 // connection error code
+		reset   quic.StreamErrorCode
+	}
+	reset := &quic.StreamError{ErrorCode: 0x10c, Remote: true}
+	lost := &quic.PeerCloseError{Application: true, Code: 0x100}
+	rows := []struct {
+		name   string
+		length string // declared request Content-Length
+		// finish makes the waiting read return, after the takeover.
+		finish func(raw *RawStream, body *serverRequestBody, peer *io.PipeWriter)
+		want   func(error) bool
+		expect expectation
+	}{
+		{"FIN", "", func(_ *RawStream, _ *serverRequestBody, peer *io.PipeWriter) { peer.Close() },
+			func(err error) bool { return err == io.EOF }, expectation{ended: true}},
+		{"trailers", "", func(_ *RawStream, _ *serverRequestBody, peer *io.PipeWriter) {
+			peer.Write(readerHeaders(t, fs("x-end", "done")))
+			peer.Close()
+		}, func(err error) bool { return err == io.EOF }, expectation{ended: true}},
+		{"peer reset", "", func(_ *RawStream, _ *serverRequestBody, peer *io.PipeWriter) { peer.CloseWithError(reset) },
+			func(err error) bool { return err == reset }, expectation{ended: true}},
+		{"CancelRead", "", func(raw *RawStream, _ *serverRequestBody, _ *io.PipeWriter) { raw.CancelRead(0x77) },
+			func(err error) bool { var local *quic.StreamError; return errors.As(err, &local) && !local.Remote }, expectation{ended: true}},
+		{"body close", "", func(_ *RawStream, body *serverRequestBody, _ *io.PipeWriter) { body.Close() },
+			func(err error) bool { return err != nil && err != io.EOF }, expectation{ended: true}},
+		{"deadline", "", func(_ *RawStream, _ *serverRequestBody, peer *io.PipeWriter) {
+			peer.CloseWithError(os.ErrDeadlineExceeded)
+		},
+			func(err error) bool { return errors.Is(err, os.ErrDeadlineExceeded) }, expectation{}},
+		{"connection error", "", func(_ *RawStream, _ *serverRequestBody, peer *io.PipeWriter) { peer.CloseWithError(lost) },
+			func(err error) bool { return err == lost }, expectation{ended: true}},
+		{"malformed frame", "", func(_ *RawStream, _ *serverRequestBody, peer *io.PipeWriter) {
+			peer.Write(readerFrame(t, h3.Settings, nil))
+		}, func(err error) bool { var protocol *h3.Error; return errors.As(err, &protocol) },
+			expectation{ended: true, failed: true, aborted: h3.FrameUnexpected, reset: 0x10e}},
+		{"malformed message", "5", func(_ *RawStream, _ *serverRequestBody, peer *io.PipeWriter) { peer.Close() },
+			func(err error) bool { var message *MessageError; return errors.As(err, &message) },
+			expectation{ended: true, failed: true, reset: 0x10e}},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			pipe, peer := io.Pipe()
+			defer peer.Close()
+			waiting := &enteredReader{Reader: pipe, entered: make(chan struct{})}
+			fields := requestFields("/")
+			if row.length != "" {
+				fields = append(fields, fs("content-length", row.length))
+			}
+			reader := requestReader(t, nil, false)
+			reader.frames = h3.NewReader(io.MultiReader(bytes.NewReader(readerHeaders(t, fields...)), waiting))
+			if _, err := reader.Next(context.Background()); err != nil {
+				t.Fatal(err)
+			}
 			transport, _, _ := exchangeFixture(t, bytes.NewReader(nil))
+			// As a QUIC stream does, a canceled read fails with a local error.
+			transport.interrupt = func() { peer.CloseWithError(&quic.StreamError{ErrorCode: 0x77}) }
 			ctx, cancel := context.WithCancelCause(context.Background())
 			defer cancel(nil)
-			task := &requestTask{ctx: ctx, stream: transport, cancel: cancel, abort: func(uint64, string) {}}
-			source := &heldBody{entered: make(chan struct{}), outcome: make(chan error, 1)}
-			body := &serverRequestBody{ReadCloser: source, task: task}
+			var aborted atomic.Uint64
+			task := &requestTask{ctx: ctx, stream: transport, cancel: cancel, abort: func(code uint64, _ string) { aborted.Store(code) }}
+			var trailers string
+			message, err := NewMessageBody(ctx, reader, BodyConfig{
+				Trailers: func(fields []qpack.DecodedField) error { trailers = fields[0].Value; return nil },
+				// ServeRequest's rule for a body closed before its end.
+				Close: func(complete bool) error {
+					if !complete {
+						transport.CancelRead(0x100)
+					}
+					return nil
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := &serverRequestBody{ReadCloser: message, task: task}
 			result := make(chan error, 1)
 			go func() { _, err := body.Read(make([]byte, 1)); result <- err }()
 			select {
-			case <-source.entered:
+			case <-waiting.entered:
 			case <-time.After(3 * time.Second):
 				t.Fatal("read never started")
 			}
 			raw := newRawStream(transport, nil, task, nil)
+			raw.body = message
 			body.handOff(raw)
 			select {
 			case <-raw.received:
 				t.Fatal("receiving over while a read is still waiting")
 			default:
 			}
-			source.outcome <- outcome
-			if err := <-result; err != outcome {
-				t.Fatal(err)
+			row.finish(raw, body, peer)
+			select {
+			case err := <-result:
+				if !row.want(err) {
+					t.Fatal("read returned", err)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("read never returned")
 			}
 			// The read has returned, so its effect on the stream is settled.
-			ended := false
+			var got expectation
 			select {
 			case <-raw.received:
-				ended = true
+				got.ended = true
 			default:
 			}
-			if ended != (name != "deadline") {
-				t.Fatal("receive direction ended:", ended)
+			got.failed, got.aborted = task.result() != nil, aborted.Load()
+			transport.mu.Lock()
+			if len(transport.writeCodes) > 0 {
+				got.reset = transport.writeCodes[0]
+			}
+			transport.mu.Unlock()
+			if got != row.expect {
+				t.Fatalf("got %+v, want %+v", got, row.expect)
+			}
+			if !row.expect.failed && ctx.Err() != nil {
+				t.Fatal("read ended the request:", context.Cause(ctx))
+			}
+			if row.name == "trailers" && trailers != "done" {
+				t.Fatal("trailers lost:", trailers)
+			}
+			// Sending is untouched unless the request itself failed.
+			if !row.expect.failed {
+				if _, err := transport.Write([]byte("still writable")); err != nil {
+					t.Fatal(err)
+				}
 			}
 		})
+	}
+}
+
+// finSink fails to queue FIN while its deadline is expired, as a QUIC stream
+// with a full send queue does.
+type finSink struct {
+	deadlineSink
+	expired bool
+}
+
+func (s *finSink) Close() error {
+	if s.expired {
+		return os.ErrDeadlineExceeded
+	}
+	return s.deadlineSink.Close()
+}
+
+// A write deadline can expire while FIN waits for the stream. Nothing was sent,
+// so Close can be repeated once the deadline is cleared.
+func TestMessageWriterCloseRetriesAfterDeadline(t *testing.T) {
+	sink := &finSink{deadlineSink: deadlineSink{limit: -1}, expired: true}
+	writer := responseWriterOn(t, sink, "GET")
+	if err := writer.Headers(responseFields("200")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); !h3.IsDeadline(err) {
+		t.Fatal(err)
+	}
+	sink.expired = false
+	if err := writer.Close(); err != nil || sink.closes != 1 {
+		t.Fatal("FIN deadline was not retryable:", err, sink.closes)
+	}
+	if _, err := writer.Write([]byte("late")); err != io.ErrClosedPipe {
+		t.Fatal(err)
+	}
+}
+
+// expiredTry refuses its first TryWriteAll with an expired deadline.
+type expiredTry struct {
+	tryStream
+	expired bool
+}
+
+func (s *expiredTry) TryWriteAll(p []byte) error {
+	if s.expired {
+		s.expired = false
+		return os.ErrDeadlineExceeded
+	}
+	return s.tryStream.TryWriteAll(p)
+}
+
+// An expired deadline queued nothing, so it neither ends the writer nor counts
+// against the declared length.
+func TestMessageWriterTryWriteAfterDeadline(t *testing.T) {
+	stream := &expiredTry{tryStream: tryStream{deadlineSink: deadlineSink{limit: -1}, open: true}, expired: true}
+	writer := responseWriterOn(t, stream, "GET")
+	if err := writer.Headers(append(responseFields("200"), fs("content-length", "3"))); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.TryWrite([]byte("abc")); !h3.IsDeadline(err) {
+		t.Fatal(err)
+	}
+	if err := writer.TryWrite([]byte("abc")); err != nil {
+		t.Fatal("deadline was not retryable:", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
 	}
 }

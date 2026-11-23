@@ -399,6 +399,14 @@ func (b *serverRequestBody) Read(p []byte) (int, error) {
 		return raw.Read(p)
 	}
 	n, err := b.ReadCloser.Read(p)
+	// The handler may have taken the stream over while this read waited. It is
+	// then a read on the raw stream, whose directions are independent.
+	if raw := b.raw.Load(); raw != nil {
+		if err != nil && !h3.IsDeadline(err) {
+			b.ended.Store(true)
+		}
+		return n, raw.readEnded(err)
+	}
 	if err != nil && !h3.IsDeadline(err) {
 		b.end()
 	}
