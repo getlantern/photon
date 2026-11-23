@@ -81,11 +81,13 @@ func TestCombinedTLSAndQUIC(t *testing.T) {
 					response, err := client.RoundTrip(request)
 					if err != nil {
 						client.CloseIdleConnections()
+						// The request already failed. If the server stopped, its own
+						// error says why, and it may still be on its way.
 						select {
 						case serveErr := <-done:
 							done <- serveErr
 							t.Fatal(err, "; server stopped:", serveErr)
-						default:
+						case <-time.After(time.Second):
 							t.Fatal(err)
 						}
 					}
