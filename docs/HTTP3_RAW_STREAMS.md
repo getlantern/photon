@@ -39,7 +39,9 @@ state, the datagram registration and the request slot. The QUIC receive
 context cannot stand in for the second condition: it ends when FIN arrives,
 before the application has read what is buffered. A `Write` or `Close` that
 fails local validation, such as a declared Content-Length, does not end
-sending: the application must call `CancelWrite`. `Close` succeeds when the
+sending: the application must call `CancelWrite`. A receive direction the
+handler finished before `HTTPStream`, by reading the request body to its end or
+closing it, counts as finished. `Close` succeeds when the
 peer has already stopped the direction with H3_NO_ERROR, which a server may do
 once it has responded. Until then the request
 context stays live. Peer resets no longer abort the other direction; they are
@@ -144,13 +146,45 @@ writer finishes a partially written DATA frame on the next `Write` or
 can likewise be repeated. A deadline that expires while HEADERS are being
 written is terminal for the send direction.
 
-A header or trailer section waiting for a QPACK dynamic-table insertion reads
-nothing from the request stream, so the QUIC stream's own controls cannot
-reach it. The read deadline is therefore also applied to that wait, which
-keeps the undecided section for the repeated call, and `CancelRead` ends it
-without writing to the decoder stream; the QPACK cancellation follows at
-cleanup. A response read through its validated end needs no cancellation, so
-releasing it does not depend on decoder-stream credit.
+### What a receive call can wait on
+
+`Read`, `ReadResponse`, `Response.Body.Close`, `CancelRead` and
+`SetReadDeadline` must not be held by the peer past the application's own
+controls. The receive path can wait in these places:
+
+| Wait | Peer-controlled | Ended by |
+| --- | --- | --- |
+| QUIC stream read | yes | the QUIC read deadline and `CancelRead` |
+| the shared QPACK decoder's lock (another stream is writing feedback) | yes | read deadline, `CancelRead`, body close, request end |
+| this section's own feedback write (acknowledgment) | yes, decoder-stream credit | the same |
+| a dynamic-table insertion the section references | yes | the same |
+| `RawStream`'s read lock | no: held only by this stream's own `Read`/`ReadResponse` | that call returning |
+| `FieldStream`'s and `RawStream`'s state mutexes | no: never held across I/O | immediately |
+| `Information` and trailer callbacks | no: application code | the application |
+
+The three QPACK waits read nothing from the request stream, so the QUIC
+stream's controls cannot reach them. A raw stream therefore detaches its
+`FieldStream`: the section is handed to the shared decoder from a goroutine (at
+most one per stream), and `Decode` waits for it under the read deadline,
+`StopReading` (from `CancelRead`) and its context (body close, request end).
+An expired deadline keeps the section in flight for the repeated call.
+`CancelRead`, `SetReadDeadline` and `Body.Close` only set state and return.
+Ordinary requests are not detached and behave as before.
+
+What is not interruptible is the QPACK cancellation that releases an abandoned
+request: it is written under the decoder's lock, after any section still in
+flight. It runs in the stream's cleanup, never in an application call, and
+ends with the connection (the session interrupts the decoder stream's writer).
+Until then a peer that withholds decoder-stream credit keeps the abandoned
+request's slot occupied. Ordinary requests have always had this property;
+removing it means queueing decoder feedback instead of writing it under the
+lock, which is a change to `FieldDecoder`, not to raw streams. A response read
+through its validated end needs no cancellation and releases at once.
+
+`ReadResponse` keeps its count of interim responses across calls repeated
+after a deadline, so `MaxInformational` bounds the response rather than each
+attempt; the `MessageReader` already keeps everything else a repeated call
+needs (a partial frame header, HEADERS block, skipped frame or section).
 
 ## Knowing differences from upstream
 

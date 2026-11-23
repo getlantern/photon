@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -922,5 +923,119 @@ func TestRawStreamCloseAfterPeerStopped(t *testing.T) {
 			t.Fatalf("code %#x: %v", code, err)
 		}
 		stream.CancelRead(0x10c)
+	}
+}
+
+// gatedWriter is a decoder stream that runs out of flow-control credit once
+// armed: the write after that blocks until released.
+type gatedWriter struct {
+	armed   atomic.Bool
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func newGatedWriter() *gatedWriter {
+	return &gatedWriter{entered: make(chan struct{}), release: make(chan struct{})}
+}
+func (w *gatedWriter) Write(p []byte) (int, error) {
+	if w.armed.Load() {
+		w.once.Do(func() { close(w.entered) })
+		<-w.release
+	}
+	return len(p), nil
+}
+
+// returnsPromptly runs a call that must not wait for the peer.
+func returnsPromptly(t *testing.T, what string, call func()) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() { defer close(done); call() }()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal(what, "blocked behind QPACK feedback")
+	}
+}
+
+// A section that decodes at once still owes the peer an acknowledgment, written
+// to a decoder stream whose credit the peer controls. The receive controls must
+// work while that write is stuck, and must not get stuck behind it themselves.
+func TestClientStreamReceiveControlsReachFeedbackWrite(t *testing.T) {
+	dynamic := readerFrame(t, h3.Headers, []byte{2, 0, 0x80})
+	for _, mode := range []string{"headers/deadline", "headers/cancel", "trailers/deadline", "trailers/cancel", "trailers/close"} {
+		t.Run(mode, func(t *testing.T) {
+			trailers := strings.HasPrefix(mode, "trailers")
+			wire, insert := dynamic, qpack.EncoderInstruction{Type: qpack.InsertLiteralName, Name: ":status", Value: "200"}
+			if trailers {
+				wire = append(readerHeaders(t, responseFields("200")...), dynamic...)
+				insert = qpack.EncoderInstruction{Type: qpack.InsertLiteralName, Name: "x-end", Value: "done"}
+			}
+			feedback := newGatedWriter()
+			var released sync.Once
+			release := func() { released.Do(func() { close(feedback.release) }) }
+			defer release()
+			_, decoder, stream, _, _ := blockedFixture(t, bytes.NewReader(wire), feedback)
+			defer func() { stream.CancelRead(0x10c); stream.CancelWrite(0x10c) }()
+			if err := decoderUpdate(t, decoder, insert); err != nil {
+				t.Fatal(err)
+			}
+			feedback.armed.Store(true)
+			var response *http.Response
+			receive := func() (err error) {
+				response, err = stream.ReadResponse()
+				return err
+			}
+			if trailers {
+				if err := receive(); err != nil {
+					t.Fatal(err)
+				}
+				receive = func() error {
+					_, err := stream.Read(make([]byte, 1))
+					return err
+				}
+			}
+			result := make(chan error, 1)
+			go func() { result <- receive() }()
+			select {
+			case <-feedback.entered:
+			case <-time.After(3 * time.Second):
+				t.Fatal("section never reached its acknowledgment")
+			}
+			switch {
+			case strings.HasSuffix(mode, "cancel"):
+				returnsPromptly(t, "CancelRead", func() { stream.CancelRead(0x77) })
+			case strings.HasSuffix(mode, "close"):
+				returnsPromptly(t, "Body.Close", func() { response.Body.Close() })
+			default:
+				returnsPromptly(t, "SetReadDeadline", func() { stream.SetReadDeadline(time.Now().Add(-time.Second)) })
+			}
+			var err error
+			select {
+			case err = <-result:
+			case <-time.After(3 * time.Second):
+				t.Fatal("receive control left the read blocked behind QPACK feedback")
+			}
+			if !strings.HasSuffix(mode, "deadline") {
+				if err == nil || err == io.EOF {
+					t.Fatal("read succeeded after its direction was ended:", err)
+				}
+				return
+			}
+			if !errors.Is(err, os.ErrDeadlineExceeded) {
+				t.Fatal(err)
+			}
+			// The section is still being acknowledged; the repeated call gets it.
+			returnsPromptly(t, "SetReadDeadline", func() { stream.SetReadDeadline(time.Time{}) })
+			release()
+			err = receive()
+			if trailers {
+				if err != io.EOF || response.Trailer.Get("X-End") != "done" {
+					t.Fatal(err, response.Trailer)
+				}
+			} else if err != nil || response.StatusCode != 200 {
+				t.Fatal(response, err)
+			}
+		})
 	}
 }

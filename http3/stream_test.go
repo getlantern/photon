@@ -5,10 +5,12 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -646,5 +648,59 @@ func TestHTTPStreamConnectionLoss(t *testing.T) {
 	// Shutdown has nothing left to wait for.
 	if err := server.Shutdown(ctx); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A handler may finish receiving before it takes the stream over. The stream
+// then has only its send direction left to finish.
+func TestHTTPStreamAfterRequestBodyFinished(t *testing.T) {
+	for _, mode := range []string{"read to EOF", "closed"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			taken := make(chan takenStream, 1)
+			server := &Server{MaxConcurrentRequests: 1, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if mode == "closed" {
+					r.Body.Close()
+				} else if body, err := io.ReadAll(r.Body); err != nil || string(body) != "request body" {
+					taken <- takenStream{err: fmt.Errorf("request body %q: %v", body, err)}
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+				stream, err := w.(HTTPStreamer).HTTPStream()
+				if err == nil {
+					if _, err = stream.Write([]byte("done")); err == nil {
+						err = stream.Close()
+					}
+				}
+				taken <- takenStream{stream: stream, request: r, err: err}
+			})}
+			client, origin := dialTestServer(ctx, t, server, nil)
+			request, _ := http.NewRequestWithContext(ctx, "POST", origin+"/", strings.NewReader("request body"))
+			response, err := client.RoundTrip(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, err := io.ReadAll(response.Body)
+			response.Body.Close()
+			if err != nil || string(body) != "done" {
+				t.Fatalf("%q %v", body, err)
+			}
+			peer := await(ctx, t, "takeover", taken)
+			if peer.err != nil {
+				t.Fatal(peer.err)
+			}
+			select {
+			case <-peer.request.Context().Done():
+			case <-ctx.Done():
+				t.Fatal("request waits for a receive direction that finished before takeover")
+			}
+			// Its request slot, the server's only one, is free again.
+			request, _ = http.NewRequestWithContext(ctx, "POST", origin+"/", strings.NewReader("request body"))
+			if response, err = client.RoundTrip(request); err != nil {
+				t.Fatal(err)
+			}
+			response.Body.Close()
+		})
 	}
 }

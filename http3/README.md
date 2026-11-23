@@ -731,7 +731,7 @@ leave the accept loops to the caller:
 ```go
 raw, err := server.NewRawServerConn(conn)
 if err != nil {
-    return err // conn is still the caller's
+    return err // not admitted: conn is still the caller's (ConnContext aside, below)
 }
 go func() {
     for {

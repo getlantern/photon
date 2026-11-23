@@ -66,6 +66,7 @@ func (s *RawStream) attachFields(fields *FieldStream) {
 	s.fieldsMu.Lock()
 	defer s.fieldsMu.Unlock()
 	s.fields = fields
+	fields.Detach()
 	fields.SetReadDeadline(s.readDeadline)
 }
 func (s *RawStream) setReadDeadline(t time.Time) {

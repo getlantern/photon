@@ -269,6 +269,10 @@ func ServeRequest(parent context.Context, stream ServerRequestStream, config Ser
 		response.hijacked = true
 		task.detached.Store(true)
 		body.raw.Store(taken)
+		// Receiving may already be over; the stream must not wait for it again.
+		if body.ended.Load() {
+			taken.receiveEnded()
+		}
 		raw = taken
 		return raw, nil
 	}
@@ -390,6 +394,7 @@ type serverRequestBody struct {
 	io.ReadCloser
 	task   *requestTask
 	closed atomic.Bool
+	ended  atomic.Bool               // a read ended the body, or it was closed
 	raw    atomic.Pointer[RawStream] // set at takeover, which then owns reads
 }
 
@@ -398,6 +403,9 @@ func (b *serverRequestBody) Read(p []byte) (int, error) {
 		return raw.Read(p)
 	}
 	n, err := b.ReadCloser.Read(p)
+	if err != nil && !h3.IsDeadline(err) {
+		b.ended.Store(true)
+	}
 	if err != nil && err != io.EOF && err != io.ErrClosedPipe && !h3.IsDeadline(err) {
 		var connError *h3.Error
 		var messageError *MessageError
@@ -423,6 +431,7 @@ func invokeHandler(handler http.Handler, writer http.ResponseWriter, request *ht
 
 func (b *serverRequestBody) Close() error {
 	b.closed.Store(true)
+	b.ended.Store(true)
 	if raw := b.raw.Load(); raw != nil {
 		defer raw.receiveEnded()
 	}

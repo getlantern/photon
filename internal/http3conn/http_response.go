@@ -21,6 +21,11 @@ type HTTPResponseConfig struct {
 	Body             BodyConfig
 	MaxInformational int
 	Information      func(status int, headers http.Header) error
+	// Interim, if set, holds the count of interim responses across calls
+	// repeated after an expired read deadline, so that MaxInformational bounds
+	// the response and not each attempt. Everything else a repeated call needs
+	// is already kept by the MessageReader.
+	Interim *int
 }
 
 // ReadHTTPResponse consumes informational responses and returns final headers plus
@@ -39,7 +44,10 @@ func ReadHTTPResponse(ctx context.Context, request *http.Request, reader *Messag
 			config.Body.Close(false)
 		}
 	}()
-	interim := 0
+	interim := config.Interim
+	if interim == nil {
+		interim = new(int)
+	}
 	for {
 		event, e := reader.Next(ctx)
 		// A read deadline interrupted the skipping of a frame in an earlier call.
@@ -59,8 +67,8 @@ func ReadHTTPResponse(ctx context.Context, request *http.Request, reader *Messag
 				return nil, e
 			}
 			if event.Section == InformationalSection {
-				interim++
-				if interim > config.MaxInformational {
+				*interim++
+				if *interim > config.MaxInformational {
 					return nil, &h3.Error{Code: h3.ExcessiveLoad, Reason: "informational response limit"}
 				}
 				if config.Information != nil {

@@ -42,6 +42,7 @@ type ClientStream struct {
 	request   *http.Request
 	fields    *FieldStream
 	reader    *MessageReader
+	interim   int // interim responses seen, across ReadResponse retries; under readMu
 
 	complete atomic.Bool // the response was read through a valid FIN
 }
@@ -226,7 +227,7 @@ func (c *ClientStream) ReadResponse() (response *http.Response, err error) {
 	}
 	transferred := false
 	response, err = ReadHTTPResponse(c.ctx, request, reader, HTTPResponseConfig{
-		MaxInformational: c.config.MaxInformational, Information: c.config.Information,
+		MaxInformational: c.config.MaxInformational, Information: c.config.Information, Interim: &c.interim,
 		Body: BodyConfig{Close: func(complete bool) error {
 			// A failure before the body exists is scoped below, where it is known.
 			if !transferred {
