@@ -302,7 +302,7 @@ func (c *servedConn) serve() (err error) {
 		return nil
 	}
 	return session.ServeRequests(ctx, acceptor, http3conn.ServeRequestsConfig{
-		MaxActive: requests, Drain: entry.drain, IdleTimeout: s.IdleTimeout, Report: s.requestReport(),
+		MaxActive: requests, Drain: entry.drain, IdleTimeout: s.IdleTimeout, DrainGrace: s.drainGrace(), Report: s.requestReport(),
 		Request: http3conn.ServeRequestConfig{Priorities: priorities, HandlerError: httpError, HandlerPolicy: func(next http.Handler) http.Handler {
 			withSettings := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				next.ServeHTTP(&settingsResponseWriter{HTTPResponseWriter: w.(*http3conn.HTTPResponseWriter), settingsView: settingsFrom(sessionSettings{session})}, r)
@@ -314,7 +314,9 @@ func (c *servedConn) serve() (err error) {
 
 // Shutdown permanently stops admission and initiates GOAWAY on owned connections.
 // It waits for handlers, delivery and protocol cleanup, then for each client to
-// close its connection as GOAWAY asks, bounded by ctx. Expiry
+// close its connection as GOAWAY asks, bounded by ctx; a client that does not
+// close within IdleTimeout (3 seconds when unset) is closed with H3_NO_ERROR.
+// Expiry
 // does not abort active connections; use Close for abortive shutdown. Listeners
 // passed to Serve stop accepting immediately and close after their workers join.
 // Listeners passed to ServeListener or used independently with ServeQUICConn
@@ -375,6 +377,19 @@ func (s *Server) Close() error {
 		}
 	}
 	return nil
+}
+
+// defaultDrainGrace bounds the wait for a drained connection's client to close
+// when IdleTimeout is unset: ample for a client to read what it has received.
+const defaultDrainGrace = 3 * time.Second
+
+// drainGrace is how long a drained connection waits for its client to close
+// before the server closes it: IdleTimeout if set, else defaultDrainGrace.
+func (s *Server) drainGrace() time.Duration {
+	if s.IdleTimeout > 0 {
+		return s.IdleTimeout
+	}
+	return defaultDrainGrace
 }
 
 func (s *Server) limits() (requests, headers, connections int, err error) {

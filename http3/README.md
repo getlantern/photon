@@ -56,7 +56,9 @@ leaves each connection for its client to close, as GOAWAY asks (RFC 9114
 section 5.2), rather than closing it under a response the client may not have
 read: some QUIC stacks discard unread data on CONNECTION_CLOSE. Photon's pooled
 `Transport` closes a drained connection once its responses are released; the
-owner of a `ClientConn` closes it. Its deadline does not abort handlers;
+owner of a `ClientConn` closes it. A client that does not close within
+`IdleTimeout`, or 3 seconds when that is unset, has the connection closed with
+H3_NO_ERROR, so it cannot hold it. Its deadline does not abort handlers;
 `Close()` cancels owned connections and handlers without waiting for application
 code to return. For listeners passed to Serve, Shutdown stops acceptance and
 closes the listener after connection workers finish; Close closes it

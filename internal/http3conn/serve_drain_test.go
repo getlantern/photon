@@ -220,3 +220,30 @@ func TestServeRequestsRejectsAcceptRacingDrain(t *testing.T) {
 	}
 	transport.check(t, 0x100)
 }
+
+// A client that never closes after GOAWAY cannot hold the connection: once the
+// drain grace has passed, the server closes it itself with H3_NO_ERROR.
+func TestServeRequestsDrainGraceBoundsWaitForClient(t *testing.T) {
+	config := serveConfig(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("handler invoked") }))
+	session, transport := requestLoopSession(t, config)
+	control := &drainControl{ackEntered: make(chan struct{}), ackRelease: make(chan struct{})}
+	close(control.ackRelease)
+	session.control = control
+	drain := make(chan struct{})
+	close(drain)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- session.ServeRequests(ctx, &requestAcceptor{streams: make(chan ServerRequestStream)}, ServeRequestsConfig{MaxActive: 1, Request: config, Drain: drain, DrainGrace: 20 * time.Millisecond})
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatal("a client that never closes held the drained connection")
+	}
+	transport.check(t, 0x100)
+}

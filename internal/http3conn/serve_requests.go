@@ -38,9 +38,13 @@ type ServeRequestsConfig struct {
 	// IdleTimeout, if positive, closes the connection with H3_NO_ERROR once no
 	// request stream has been active for that long; ServeRequests returns nil.
 	IdleTimeout time.Duration
-	MaxActive   int
-	Request     ServeRequestConfig
-	Report      func(ctx context.Context, id uint64, err error)
+	// DrainGrace, if positive, bounds how long a drained connection waits for
+	// its client to close before closing it with H3_NO_ERROR, so a client that
+	// never does cannot hold it. Zero waits for the connection to end.
+	DrainGrace time.Duration
+	MaxActive  int
+	Request    ServeRequestConfig
+	Report     func(ctx context.Context, id uint64, err error)
 }
 
 // ServeRequests runs the server session's sole request accept loop. It applies
@@ -156,9 +160,21 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 		// Every request is done. Leave closing to the client, as quic-go's
 		// server does: closing here can cut off response data the client has
 		// received but not yet read, which some QUIC stacks discard on
-		// CONNECTION_CLOSE. The connection ending, or Server.Close, ends this.
-		<-ctx.Done()
-		return ended()
+		// CONNECTION_CLOSE. The connection ending, or Server.Close, ends this,
+		// and so does the drain grace: then the deferred close ends it.
+		var grace <-chan time.Time
+		if config.DrainGrace > 0 {
+			timer := time.NewTimer(config.DrainGrace)
+			defer timer.Stop()
+			grace = timer.C
+		}
+		select {
+		case <-ctx.Done():
+			return ended()
+		case <-grace:
+			drained = true
+			return nil
+		}
 	}
 	encoder, err := s.WaitEncoder(acceptCtx)
 	if err != nil {
