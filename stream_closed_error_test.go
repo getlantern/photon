@@ -416,5 +416,22 @@ func TestEmptyWriteDoesNotWaitForGate(t *testing.T) {
 		if n, err := s.Write(nil); n != 0 || err != nil {
 			t.Fatalf("empty Write behind a busy gate (deadline %v): %d %v", deadline, n, err)
 		}
+		if err := s.TryWriteAll(nil); err != nil {
+			t.Fatalf("empty TryWriteAll behind a busy gate (deadline %v): %v", deadline, err)
+		}
+	}
+	// Once sending has ended, both report why rather than a busy gate.
+	s.CancelWrite(0x77)
+	select {
+	case <-s.Context().Done():
+	case <-ctx.Done():
+		t.Fatal("send direction never ended")
+	}
+	var reset *StreamError
+	if _, err := s.Write(nil); !errors.As(err, &reset) || reset.ErrorCode != 0x77 {
+		t.Fatal("empty Write after CancelWrite behind a busy gate:", err)
+	}
+	if err := s.TryWriteAll(nil); !errors.As(err, &reset) || reset.ErrorCode != 0x77 {
+		t.Fatal("empty TryWriteAll after CancelWrite behind a busy gate:", err)
 	}
 }

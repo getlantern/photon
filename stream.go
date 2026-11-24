@@ -271,6 +271,11 @@ func (s *SendStream) Write(p []byte) (int, error) {
 // It does not wait for QUIC credit, queue capacity or another writer, and ignores
 // the write deadline. It can wait briefly for the connection owner to run.
 func (s *SendStream) TryWriteAll(p []byte) error {
+	// Nothing to queue: report only why sending ended, as an empty Write does,
+	// without contending for the gate.
+	if len(p) == 0 {
+		return s.sendEnded()
+	}
 	if !s.gate.tryAcquire() {
 		return ErrWouldBlock
 	}
@@ -306,8 +311,9 @@ func (s *SendStream) TryWriteAll(p []byte) error {
 // Past the write deadline a write returns os.ErrDeadlineExceeded, unless
 // sending has already ended (CancelWrite, the peer's STOP_SENDING, rejected
 // early data or the connection closing): then it returns that cause, which no
-// retry can get past. An empty write sends nothing and waits for nothing, so it
-// ignores the deadline and reports only why sending ended, if it has.
+// retry can get past. An empty write sends nothing and waits for nothing, not
+// even earlier writes or a pending Close, so it ignores the deadline and
+// reports only why sending ended, if it has.
 func (s *SendStream) WriteWithLimit(p []byte, limiter func(int) int) (int, error) {
 	if len(p) == 0 {
 		return 0, s.sendEnded()
@@ -396,7 +402,8 @@ func (s *SendStream) preferEnded(err error) error {
 }
 
 // Close queues FIN after earlier writes; it does not close the receive side.
-// Repeating it after it succeeded returns nil. Past the write deadline it
+// Repeating it after it succeeded returns nil, unless the server has since
+// rejected early data (Err0RTTRejected). Past the write deadline it
 // reports, as a write does, why sending ended if it has.
 func (s *SendStream) Close() error {
 	if err := s.deadline.run(s.gate.acquire); err != nil {
