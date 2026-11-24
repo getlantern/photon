@@ -49,13 +49,16 @@ func TestHTTP3TransportHeaderLimitResumption(t *testing.T) {
 				arrival := &earlyArrivalObserver{PacketConn: socket, seen: make(chan struct{})}
 				// Early data is expected, so hold the resumed handshake until some arrives:
 				// a client that is slow to write could otherwise finish the handshake first
-				// and send everything as 1-RTT, which proves nothing about early data.
+				// and send nothing early at all. The first 0-RTT packet of any kind releases
+				// it, so this guarantees only that early data was sent. A client that sends
+				// none is released after two seconds, to fail the early-evidence check.
 				if policy.wantEarly {
 					var hellos atomic.Int32
 					st.GetConfigForClient = func(*tls.ClientHelloInfo) (*tls.Config, error) {
 						if hellos.Add(1) > 1 {
 							select {
 							case <-arrival.seen:
+							case <-time.After(2 * time.Second):
 							case <-ctx.Done():
 							}
 						}

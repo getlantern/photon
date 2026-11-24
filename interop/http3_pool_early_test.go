@@ -223,19 +223,14 @@ func testHTTP3TransportEarlyRecovery(t *testing.T, custom bool) {
 						}
 						if round == 1 && !accept && !retry {
 							if !errors.Is(got.err, quic.Err0RTTRejected) {
-								resumed, early := false, false
+								resumed := false
 								if got.response != nil {
 									if got.response.TLS != nil {
 										resumed = got.response.TLS.DidResume
 									}
 									got.response.Body.Close()
 								}
-								select {
-								case <-arrival.seen:
-									early = true
-								default:
-								}
-								t.Fatal("retries disabled", got.err, "; requests", requests.Load(), "hellos", hellos.Load(), "dials", dials.Load(), "resumed", resumed, "early packet seen", early, ";", arrival.summary())
+								t.Fatal("retries disabled", got.err, "; requests", requests.Load(), "hellos", hellos.Load(), "dials", dials.Load(), "resumed", resumed, ";", arrival.summary())
 							}
 							if requests.Load() != 0 {
 								t.Fatal("rejected request processed")

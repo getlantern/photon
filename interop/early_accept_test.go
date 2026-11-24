@@ -37,6 +37,9 @@ func (o *earlyArrivalObserver) ReadFrom(b []byte) (int, net.Addr, error) {
 		for rest := b[:n]; len(rest) > 0; {
 			h, e := wire.ParseHeader(rest, 0)
 			if e != nil || h.PacketLen <= 0 {
+				if allZero(rest) {
+					break // padding after coalesced packets, not a packet
+				}
 				o.mu.Lock()
 				o.unparsed++
 				if o.firstUnparsed == "" {
@@ -58,6 +61,15 @@ func (o *earlyArrivalObserver) ReadFrom(b []byte) (int, net.Addr, error) {
 		}
 	}
 	return n, a, err
+}
+
+func allZero(b []byte) bool {
+	for _, c := range b {
+		if c != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // summary describes every datagram the observer has read.
