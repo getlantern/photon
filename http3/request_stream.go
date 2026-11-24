@@ -191,7 +191,8 @@ func (s *RequestStream) Read(b []byte) (int, error) { return s.stream.Read(b) }
 func (s *RequestStream) Write(b []byte) (int, error) { return s.stream.Write(b) }
 
 // TryWriteAll writes b in a DATA frame if the entire frame can be queued
-// immediately. Otherwise it returns quic.ErrWouldBlock and queues nothing.
+// immediately. Otherwise it returns quic.ErrWouldBlock and queues nothing,
+// unless sending has ended, which it reports instead.
 // It can only be used after SendRequestHeader.
 func (s *RequestStream) TryWriteAll(b []byte) error { return s.stream.TryWriteAll(b) }
 

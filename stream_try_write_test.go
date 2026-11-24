@@ -75,7 +75,9 @@ func TestPublicTryWriteAllAdmission(t *testing.T) {
 }
 
 func TestTryWriteAllBusyWriter(t *testing.T) {
-	s := newSendStream(nil)
+	// A busy gate on an open stream: one whose sending has ended reports why.
+	_, stream := endedSendFixture(t)
+	s := stream.SendStream
 	if !s.gate.tryAcquire() {
 		t.Fatal("idle gate")
 	}

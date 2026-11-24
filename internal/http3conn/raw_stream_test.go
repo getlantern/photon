@@ -1738,3 +1738,103 @@ func TestClientStreamGracefulCloseKeepsOnlyCompleteResponses(t *testing.T) {
 		})
 	}
 }
+
+// rejectingRawStream reports rejected early data on an empty Write, as a QUIC
+// stream does once the server has rejected 0-RTT, even after its FIN.
+type rejectingRawStream struct {
+	*rawTestStream
+	rejected bool
+}
+
+func (s *rejectingRawStream) Write(p []byte) (int, error) {
+	if len(p) == 0 && s.rejected {
+		return 0, quic.Err0RTTRejected
+	}
+	return s.rawTestStream.Write(p)
+}
+
+// Rejected early data overrides every other way an empty raw write could
+// describe a finished send direction, including this stream's own Close: the
+// request never reached the server, which a normal end would hide.
+func TestRawStreamEmptyWriteReportsRejectionAfterClose(t *testing.T) {
+	session, raw, config, _ := rawFixture(t, bytes.NewReader(nil))
+	transport := &rejectingRawStream{rawTestStream: raw}
+	stream, err := session.openRequestStream(context.Background(), transport, nil, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.CancelRead(0x10c)
+	request, _ := http.NewRequest("GET", "https://example.com/", nil)
+	if err := stream.SendRequestHeader(request); err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stream.Write(nil); err == nil || errors.Is(err, quic.Err0RTTRejected) {
+		t.Fatal("empty Write after Close, before any rejection:", err)
+	}
+	transport.rejected = true
+	if _, err := stream.Write(nil); !errors.Is(err, quic.Err0RTTRejected) {
+		t.Fatal("empty Write after rejection:", err)
+	}
+	if err := stream.TryWriteAll(nil); !errors.Is(err, quic.Err0RTTRejected) {
+		t.Fatal("empty TryWriteAll after rejection:", err)
+	}
+	// Calls with data, and a repeat Close, report it the same way.
+	if _, err := stream.Write([]byte("x")); !errors.Is(err, quic.Err0RTTRejected) {
+		t.Fatal("Write after rejection:", err)
+	}
+	if err := stream.TryWriteAll([]byte("x")); !errors.Is(err, quic.Err0RTTRejected) {
+		t.Fatal("TryWriteAll after rejection:", err)
+	}
+	if err := stream.Close(); !errors.Is(err, quic.Err0RTTRejected) {
+		t.Fatal("repeat Close after rejection:", err)
+	}
+}
+
+// A raw TryWriteAll behind a busy writer reports ErrWouldBlock only while the
+// stream can still send: once it has been reset, retrying would spin.
+func TestRawStreamTryWriteAllBehindBusyWriterReportsEndedSend(t *testing.T) {
+	session, raw, config, _ := rawFixture(t, bytes.NewReader(nil))
+	stream, err := session.openRequestStream(context.Background(), raw, nil, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.CancelRead(0x10c)
+	request, _ := http.NewRequest("POST", "https://example.com/", nil)
+	if err := stream.SendRequestHeader(request); err != nil {
+		t.Fatal(err)
+	}
+	stream.writeMu.Lock() // a Write blocked on flow control holds the lock
+	defer stream.writeMu.Unlock()
+	if err := stream.TryWriteAll([]byte("x")); !errors.Is(err, quic.ErrWouldBlock) {
+		t.Fatal("TryWriteAll behind a busy writer on an open stream:", err)
+	}
+	raw.CancelWrite(0x10c)
+	var reset *quic.StreamError
+	if err := stream.TryWriteAll([]byte("x")); !errors.As(err, &reset) || reset.ErrorCode != 0x10c {
+		t.Fatal("TryWriteAll behind a busy writer after a reset:", err)
+	}
+}
+
+// Behind a busy writer after this stream's FIN, a raw TryWriteAll reports the
+// stream closed, as the QUIC layer does, rather than ErrWouldBlock.
+func TestRawStreamTryWriteAllBehindBusyWriterAfterFIN(t *testing.T) {
+	session, raw, config, _ := rawFixture(t, bytes.NewReader(nil))
+	stream, err := session.openRequestStream(context.Background(), raw, nil, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.CancelRead(0x10c)
+	request, _ := http.NewRequest("POST", "https://example.com/", nil)
+	if err := stream.SendRequestHeader(request); err != nil {
+		t.Fatal(err)
+	}
+	stream.writeMu.Lock() // a Close holding the lock has just queued FIN
+	defer stream.writeMu.Unlock()
+	raw.sendCancel(quic.ErrStreamClosed)
+	if err := stream.TryWriteAll([]byte("x")); !errors.Is(err, io.ErrClosedPipe) {
+		t.Fatal("TryWriteAll behind a busy writer after FIN:", err)
+	}
+}

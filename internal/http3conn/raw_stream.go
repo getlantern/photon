@@ -133,16 +133,43 @@ func (s *RawStream) Write(p []byte) (n int, err error) {
 	if len(p) == 0 {
 		return 0, s.sendEnded()
 	}
-	return s.writer.Write(p)
+	n, err = s.writer.Write(p)
+	if errors.Is(err, io.ErrClosedPipe) {
+		if abnormal := s.abnormalEnd(); abnormal != nil {
+			return n, abnormal
+		}
+	}
+	return n, err
 }
 
-// sendEnded reports why sending is over, for a call with nothing to send that
-// never reaches the stream: the writer's own error, or the end of the send
-// direction (CancelWrite, the peer's STOP_SENDING, connection loss) that only
-// a write with data would otherwise run into.
-func (s *RawStream) sendEnded() error {
-	if err := s.writer.writable(); err != nil {
+// abnormalEnd reports an end of sending that the writer's own state would hide,
+// as the stream reports to an empty Write: before this stream's FIN, rejected
+// early data, a reset or a lost connection; after it, only rejected early data,
+// since the FIN already ended the send direction normally. The QUIC stream
+// answers without sending or waiting; a stream wrapper must pass the empty
+// Write through for this to see anything.
+func (s *RawStream) abnormalEnd() error {
+	if _, err := s.stream.Write(nil); err != nil && !errors.Is(err, quic.ErrStreamClosed) {
 		return err
+	}
+	return nil
+}
+
+// sendEnded reports why sending is over, for a call with nothing to send: the
+// writer's own failure; then an abnormal end the stream reports to an empty
+// write (rejected early data, a reset, connection loss), which outranks even
+// this stream's own Close, since the request may never have reached the peer;
+// then the writer's Close; then the end of the send direction (CancelWrite,
+// the peer's STOP_SENDING, connection loss) seen through its context.
+func (s *RawStream) sendEnded() error {
+	if s.writer.err != nil {
+		return s.writer.err
+	}
+	if abnormal := s.abnormalEnd(); abnormal != nil {
+		return abnormal
+	}
+	if s.writer.closed {
+		return io.ErrClosedPipe
 	}
 	if ctx := s.stream.Context(); ctx.Err() != nil {
 		return context.Cause(ctx)
@@ -156,6 +183,16 @@ func (s *RawStream) sendEnded() error {
 func (s *RawStream) TryWriteAll(p []byte) (err error) {
 	defer func() { err = s.mapError.apply(s.ended(err)) }()
 	if !s.writeMu.TryLock() {
+		// A busy writer is worth retrying only while the stream can send.
+		if abnormal := s.abnormalEnd(); abnormal != nil {
+			return abnormal
+		}
+		if ctx := s.stream.Context(); ctx.Err() != nil {
+			if errors.Is(context.Cause(ctx), quic.ErrStreamClosed) {
+				return io.ErrClosedPipe // this stream's own FIN ended sending
+			}
+			return context.Cause(ctx)
+		}
 		return quic.ErrWouldBlock
 	}
 	defer s.writeMu.Unlock()
@@ -167,7 +204,13 @@ func (s *RawStream) TryWriteAll(p []byte) (err error) {
 	if len(p) == 0 {
 		return s.sendEnded()
 	}
-	return s.writer.TryWrite(p)
+	err = s.writer.TryWrite(p)
+	if errors.Is(err, io.ErrClosedPipe) {
+		if abnormal := s.abnormalEnd(); abnormal != nil {
+			return abnormal
+		}
+	}
+	return err
 }
 
 // Close ends the send direction with FIN. It waits for a Write in progress and
@@ -178,6 +221,12 @@ func (s *RawStream) TryWriteAll(p []byte) (err error) {
 func (s *RawStream) Close() error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	// A repeat Close reports early data rejected since the first.
+	if s.writer != nil && s.writer.closed && s.writer.err == nil {
+		if abnormal := s.abnormalEnd(); abnormal != nil && !normalUploadStop(abnormal) {
+			return s.mapError.apply(s.ended(abnormal))
+		}
+	}
 	var err error
 	if s.writer == nil {
 		err = s.stream.Close()

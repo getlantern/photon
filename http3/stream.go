@@ -70,7 +70,8 @@ func (s *Stream) Read(b []byte) (int, error) { return s.datagramStream.Read(b) }
 func (s *Stream) Write(b []byte) (int, error) { return s.datagramStream.Write(b) }
 
 // TryWriteAll writes b in a DATA frame if the entire frame can be queued
-// immediately. Otherwise it returns quic.ErrWouldBlock and queues nothing.
+// immediately. Otherwise it returns quic.ErrWouldBlock and queues nothing,
+// unless sending has ended, which it reports instead.
 func (s *Stream) TryWriteAll(b []byte) error { return s.datagramStream.TryWriteAll(b) }
 
 // StreamID returns the ID of the underlying QUIC stream.

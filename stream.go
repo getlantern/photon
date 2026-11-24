@@ -267,7 +267,8 @@ func (s *SendStream) Write(p []byte) (int, error) {
 	return s.WriteWithLimit(p, nil)
 }
 
-// TryWriteAll queues all of p or returns ErrWouldBlock without queuing any of it.
+// TryWriteAll queues all of p or returns ErrWouldBlock without queuing any of it,
+// unless sending has ended, which it reports instead of ErrWouldBlock.
 // It does not wait for QUIC credit, queue capacity or another writer, and ignores
 // the write deadline. It can wait briefly for the connection owner to run.
 func (s *SendStream) TryWriteAll(p []byte) error {
@@ -277,6 +278,10 @@ func (s *SendStream) TryWriteAll(p []byte) error {
 		return s.sendEnded()
 	}
 	if !s.gate.tryAcquire() {
+		// A busy gate is worth retrying only while sending can still happen.
+		if ended := s.sendEnded(); ended != nil {
+			return ended
+		}
 		return ErrWouldBlock
 	}
 	defer s.gate.release()
@@ -445,7 +450,7 @@ func (s *SendStream) Close() error {
 // A reset or connection failure is returned rather than treated as delivery.
 func (s *SendStream) WaitAcknowledged(ctx context.Context) error {
 	if err := s.gate.acquire(ctx); err != nil {
-		return err
+		return s.preferAbnormalEnd(err)
 	}
 	defer s.gate.release()
 	if s.rejected.Load() {
@@ -461,7 +466,25 @@ func (s *SendStream) WaitAcknowledged(ctx context.Context) error {
 		err := s.conn.raw.StreamAcknowledged(s.id)
 		return !errors.Is(err, engineStream.ErrWouldBlock), errUnlessBlocked(err)
 	})
-	return s.conn.connectionError(err)
+	return s.preferAbnormalEnd(s.conn.connectionError(err))
+}
+
+// preferAbnormalEnd replaces the end of a wait's own context with a reset,
+// rejected early data or a closed connection, when sending ended that way:
+// those are delivery results, not a reason to wait again. Sending that ended
+// normally with FIN says nothing about delivery, so the context's error stands:
+// a connection lost after that FIN may or may not have been told of its
+// delivery, which only the wait itself, holding the gate, can establish.
+// Without a FIN, a connection lost while the wait could not hold the gate is
+// reported as a failure even if its bytes had been acknowledged first.
+func (s *SendStream) preferAbnormalEnd(err error) error {
+	if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	if ended := s.sendEnded(); ended != nil && !errors.Is(ended, ErrStreamClosed) {
+		return ended
+	}
+	return err
 }
 
 func (s *SendStream) SetWriteDeadline(t time.Time) error { s.deadline.set(t); return nil }
