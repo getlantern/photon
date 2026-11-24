@@ -51,7 +51,12 @@ Configuration must remain immutable while serving. Zero limits use the values
 shown above; a nil Handler uses `http.DefaultServeMux`.
 
 `Shutdown(ctx)` permanently stops new admission, sends GOAWAY, and waits for
-existing requests and connection cleanup. Its deadline does not abort handlers;
+existing requests and connection cleanup. As quic-go's server does, it then
+leaves each connection for its client to close, as GOAWAY asks (RFC 9114
+section 5.2), rather than closing it under a response the client may not have
+read: some QUIC stacks discard unread data on CONNECTION_CLOSE. Photon's pooled
+`Transport` closes a drained connection once its responses are released; the
+owner of a `ClientConn` closes it. Its deadline does not abort handlers;
 `Close()` cancels owned connections and handlers without waiting for application
 code to return. For listeners passed to Serve, Shutdown stops acceptance and
 closes the listener after connection workers finish; Close closes it
@@ -69,7 +74,8 @@ It continues after individual connection failures; use ServeQUICConn when the
 caller needs individual connection return errors. Handlers and error
 callbacks must honor cancellation, and must not synchronously call Shutdown.
 A normal peer-initiated close is still returned as `*quic.PeerCloseError`; it does
-not prove acknowledgment of all queued transport bytes. Shutdown itself waits
+not prove acknowledgment of all queued transport bytes. After a Shutdown drain,
+the connection ending is the expected outcome and returns nil. Shutdown itself waits
 for cleanup without aggregating per-connection serving errors.
 
 Outgoing trailers require `PermitsTrailer`, a predicate over lowercase field
@@ -774,7 +780,7 @@ context panics.
 is finished, and blocks while `MaxConcurrentRequests` requests are running. A
 raw server connection is registered with its `Server`: `Shutdown` sends GOAWAY,
 rejects later request streams with H3_REQUEST_REJECTED, waits for the running
-ones and then closes the connection; `Close` aborts it.
+ones and then for the client to close the connection; `Close` aborts it.
 
 ### Idle timeout and logging
 

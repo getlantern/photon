@@ -266,6 +266,8 @@ func TestHTTPStreamHoldsShutdown(t *testing.T) {
 	if _, err := io.ReadAll(stream.stream); err != nil {
 		t.Fatal(err)
 	}
+	// The requests GOAWAY let finish are done; closing is now the client's.
+	client.Close()
 	if err := await(ctx, t, "Shutdown", shutdown); err != nil {
 		t.Fatal(err)
 	}
@@ -572,6 +574,8 @@ func TestRequestStreamGoaway(t *testing.T) {
 	if body, err := io.ReadAll(response.Body); err != nil || string(body) != "kept" {
 		t.Fatalf("%q %v", body, err)
 	}
+	// The requests GOAWAY let finish are done; closing is now the client's.
+	client.Close()
 	if err := await(ctx, t, "Shutdown", shutdown); err != nil {
 		t.Fatal(err)
 	}

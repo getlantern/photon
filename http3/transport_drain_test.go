@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	quic "github.com/getlantern/photon"
 )
 
 func listenTestServer(ctx context.Context, t *testing.T, server *Server) string {
@@ -36,7 +38,10 @@ func listenTestServer(ctx context.Context, t *testing.T, server *Server) string 
 	}
 }
 
-func TestTransportGracefulPeerCloseKeepsBufferedResponse(t *testing.T) {
+// A graceful Shutdown sends GOAWAY and leaves the connection to the client, so
+// a response the client has not read yet arrives whole. Once the pool releases
+// the drained connection, it closes it, and Shutdown completes.
+func TestTransportGracefulShutdownDeliversBufferedResponse(t *testing.T) {
 	for _, trailers := range []bool{false, true} {
 		name := "body"
 		if trailers {
@@ -70,24 +75,16 @@ func TestTransportGracefulPeerCloseKeepsBufferedResponse(t *testing.T) {
 			}
 			client := entry.client
 			transport.mu.Unlock()
-			// GOAWAY, acknowledged response delivery, then H3_NO_ERROR close.
-			if err := server.Shutdown(ctx); err != nil {
-				t.Fatal(err)
-			}
+			shutdown := make(chan error, 1)
+			go func() { shutdown <- server.Shutdown(ctx) }()
 			select {
-			case <-client.session.Done():
+			case <-client.session.GoawayReceived():
 			case <-ctx.Done():
-				t.Fatal("peer close not observed", ctx.Err())
-			}
-			// The pool worker must keep the reserved response alive. A worker that
-			// tears the client down does so promptly after the session stops.
-			select {
-			case <-entry.done:
-			case <-time.After(50 * time.Millisecond):
+				t.Fatal("no GOAWAY", ctx.Err())
 			}
 			body, err := io.ReadAll(response.Body)
 			if err != nil || string(body) != "buffered" {
-				t.Fatalf("buffered response lost after graceful close: %q %v", body, err)
+				t.Fatalf("buffered response lost in graceful shutdown: %q %v", body, err)
 			}
 			if trailers && response.Trailer.Get("X-Drained") != "complete" {
 				t.Fatal("buffered trailers lost", response.Trailer)
@@ -105,6 +102,14 @@ func TestTransportGracefulPeerCloseKeepsBufferedResponse(t *testing.T) {
 			transport.mu.Unlock()
 			if remaining != 0 {
 				t.Fatal("drained connection retained")
+			}
+			select {
+			case err := <-shutdown:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-ctx.Done():
+				t.Fatal("Shutdown waited on after the client closed", ctx.Err())
 			}
 		})
 	}
@@ -148,5 +153,32 @@ func TestServerPeerCancellationCancelsIdleHandler(t *testing.T) {
 	case <-canceled:
 	case <-time.After(2 * time.Second):
 		t.Fatal("request reset did not cancel the handler context")
+	}
+}
+
+// Close reaches the peer even when the server owns the listener whose socket
+// the connection uses: closing the listener first would drop the connection
+// silently and leave the client to its idle timeout.
+func TestServerCloseReachesPeerBeforeOwnedListenerCloses(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	server := &Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "ok") })}
+	client, origin := dialTestServer(ctx, t, server, nil)
+	request, _ := http.NewRequestWithContext(ctx, "GET", origin+"/", nil)
+	response, err := client.RoundTrip(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, response.Body)
+	response.Body.Close()
+	server.Close()
+	select {
+	case <-client.Context().Done():
+	case <-time.After(3 * time.Second): // far below the idle timeout
+		t.Fatal("the client never heard the server close")
+	}
+	var closed *quic.PeerCloseError
+	if cause := context.Cause(client.Context()); !errors.As(cause, &closed) || !closed.Application || closed.Code != uint64(ErrCodeNoError) {
+		t.Fatal("close cause:", cause)
 	}
 }

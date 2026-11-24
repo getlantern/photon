@@ -146,7 +146,8 @@ func TestRawServerConn(t *testing.T) {
 	if !await(ctx, t, "HandleRequestStream", app.handled) {
 		t.Fatal("HandleRequestStream returned before its handler finished")
 	}
-	// Shutdown drains a raw connection like any other, then closes it.
+	// Shutdown drains a raw connection like any other, then leaves closing it
+	// to the client, as GOAWAY asks.
 	shutdown := make(chan error, 1)
 	go func() { shutdown <- server.Shutdown(ctx) }()
 	select {
@@ -159,6 +160,8 @@ func TestRawServerConn(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("raw connection sent no GOAWAY")
 	}
+	// The requests GOAWAY let finish are done; closing is now the client's.
+	client.Close()
 	if err := await(ctx, t, "Shutdown", shutdown); err != nil {
 		t.Fatal(err)
 	}
@@ -168,8 +171,8 @@ func TestRawServerConn(t *testing.T) {
 		t.Fatal("drained raw connection stayed open")
 	}
 	var closed *quic.PeerCloseError
-	if cause := context.Cause(client.Context()); !errors.As(cause, &closed) || !closed.Application || closed.Code != uint64(ErrCodeNoError) {
-		t.Fatal(cause)
+	if cause := context.Cause(client.Context()); errors.As(cause, &closed) {
+		t.Fatal("the server closed the drained connection itself:", cause)
 	}
 	raw := await(ctx, t, "raw connection", app.raw)
 	select {
@@ -239,6 +242,8 @@ func TestRawServerConnRejectsStreamAfterShutdown(t *testing.T) {
 	held.CancelWrite(quic.StreamErrorCode(ErrCodeNoError))
 	peer.stream.CancelRead(quic.StreamErrorCode(ErrCodeNoError))
 	peer.stream.CancelWrite(quic.StreamErrorCode(ErrCodeNoError))
+	// The requests GOAWAY let finish are done; closing is now the client's.
+	client.Close()
 	if err := await(ctx, t, "Shutdown", shutdown); err != nil {
 		t.Fatal(err)
 	}

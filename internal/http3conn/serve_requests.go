@@ -78,8 +78,9 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 	var tasks sync.WaitGroup
 	var abortOnce sync.Once
 	abort := func(code uint64, reason string) { abortOnce.Do(func() { s.transport.Abort(code, reason) }) }
+	drained := false // a graceful drain completed; how the connection then ended does not matter
 	defer func() {
-		if ctx.Err() != nil {
+		if ctx.Err() != nil && !drained {
 			result = context.Cause(ctx)
 		}
 		cancel(result)
@@ -129,17 +130,35 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 		if err := s.SendGoaway(nextID); err != nil {
 			return err
 		}
+		// After GOAWAY the client closes once its requests are done (RFC 9114
+		// section 5.2), so the connection ending is how a drain completes,
+		// whenever it happens. Only the owner's cancellation is a failure.
+		ended := func() error {
+			if parent.Err() != nil {
+				return context.Cause(ctx)
+			}
+			drained = true
+			return nil
+		}
 		if err := control.WaitAcknowledged(ctx); err != nil {
+			if ctx.Err() != nil {
+				return ended()
+			}
 			return err
 		}
 		done := make(chan struct{})
 		go func() { tasks.Wait(); close(done) }()
 		select {
 		case <-done:
-			return nil
 		case <-ctx.Done():
-			return context.Cause(ctx)
+			return ended()
 		}
+		// Every request is done. Leave closing to the client, as quic-go's
+		// server does: closing here can cut off response data the client has
+		// received but not yet read, which some QUIC stacks discard on
+		// CONNECTION_CLOSE. The connection ending, or Server.Close, ends this.
+		<-ctx.Done()
+		return ended()
 	}
 	encoder, err := s.WaitEncoder(acceptCtx)
 	if err != nil {

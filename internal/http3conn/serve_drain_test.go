@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	quic "github.com/getlantern/photon"
 	"net/http"
 	"testing"
 	"time"
@@ -86,6 +87,20 @@ func TestServeRequestsGracefulDrainWaitsForDelivery(t *testing.T) {
 	default:
 	}
 	close(releaseAllowed)
+	// Every request is done, but closing is the client's: the loop must not
+	// close the connection under a response the client may not have read.
+	select {
+	case err := <-done:
+		t.Fatal("closed the connection before the client did", err)
+	default:
+	}
+	transport.mu.Lock()
+	aborts := transport.aborts
+	transport.mu.Unlock()
+	if aborts != 0 {
+		t.Fatal("closed the connection before the client did")
+	}
+	clientCloses(session)
 	select {
 	case err := <-done:
 		if err != nil {
@@ -98,6 +113,12 @@ func TestServeRequestsGracefulDrainWaitsForDelivery(t *testing.T) {
 		t.Fatal("response not completed", request.closes, request.writeCodes)
 	}
 	transport.check(t, 0x100)
+}
+
+// clientCloses ends the connection as a client does once GOAWAY has drained
+// its requests.
+func clientCloses(session *Session) {
+	session.cancel(&quic.PeerCloseError{Application: true, Code: 0x100, Reason: "client done"})
 }
 func TestServeRequestsDrainBeforeSettingsAndCancellation(t *testing.T) {
 	for _, cancelDrain := range []bool{false, true} {
@@ -127,6 +148,7 @@ func TestServeRequestsDrainBeforeSettingsAndCancellation(t *testing.T) {
 			cancel()
 		} else {
 			close(control.ackRelease)
+			clientCloses(session)
 		}
 		select {
 		case err := <-done:
@@ -176,6 +198,12 @@ func TestServeRequestsRejectsAcceptRacingDrain(t *testing.T) {
 		t.Fatal(ctx.Err())
 	}
 	close(drain)
+	select {
+	case <-control.ackEntered:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	clientCloses(session)
 	select {
 	case err := <-done:
 		if err != nil {

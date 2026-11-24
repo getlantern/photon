@@ -313,7 +313,8 @@ func (c *servedConn) serve() (err error) {
 }
 
 // Shutdown permanently stops admission and initiates GOAWAY on owned connections.
-// It waits for handlers, delivery and protocol cleanup, bounded by ctx. Expiry
+// It waits for handlers, delivery and protocol cleanup, then for each client to
+// close its connection as GOAWAY asks, bounded by ctx. Expiry
 // does not abort active connections; use Close for abortive shutdown. Listeners
 // passed to Serve stop accepting immediately and close after their workers join.
 // Listeners passed to ServeListener or used independently with ServeQUICConn
@@ -362,14 +363,16 @@ func (s *Server) stopAdmission() ([]*serverConnection, []*serverListener) {
 // application code. ServeQUICConn returns only after its workers have joined.
 func (s *Server) Close() error {
 	entries, listeners := s.stopAdmission()
+	// Close connections before the listeners that own their socket, so each
+	// close reaches its peer instead of leaving it to time out.
+	for _, entry := range entries {
+		entry.cancel(ErrServerClosed)
+		entry.conn.CloseWithError(0x100, "HTTP3 server closed")
+	}
 	for _, listener := range listeners {
 		if listener.owned {
 			listener.listener.Close()
 		}
-	}
-	for _, entry := range entries {
-		entry.cancel(ErrServerClosed)
-		entry.conn.CloseWithError(0x100, "HTTP3 server closed")
 	}
 	return nil
 }

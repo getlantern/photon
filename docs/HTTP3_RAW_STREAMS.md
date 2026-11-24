@@ -129,8 +129,8 @@ setting.
   request; `OpenRequestStream` returns `ErrPeerDraining` after GOAWAY. A raw
   server connection is registered with its `Server`: `Shutdown` sends GOAWAY,
   rejects later `HandleRequestStream` calls with H3_REQUEST_REJECTED, waits for
-  running requests and taken-over streams, then closes the connection with
-  H3_NO_ERROR. `Close` aborts it.
+  running requests and taken-over streams, then waits for the client to close
+  the connection. `Close` aborts it.
 - Concurrency: taken-over server streams and open `RequestStream`s hold their
   `MaxConcurrentRequests` slot for their whole life. `HandleRequestStream`
   blocks while the server limit is reached.
