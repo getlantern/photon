@@ -155,6 +155,17 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 		if err := s.SendGoaway(nextID); err != nil {
 			return err
 		}
+		// A request stream the client opened before it saw GOAWAY would
+		// otherwise wait, unanswered, until the connection closes. Reject it
+		// so the client can retry it elsewhere (RFC 9114 section 5.2).
+		rejectCtx, stopRejecting := context.WithCancel(ctx)
+		var rejecting sync.WaitGroup
+		rejecting.Add(1)
+		go func() {
+			defer rejecting.Done()
+			s.rejectRequests(rejectCtx, acceptor, &rejecting)
+		}()
+		defer func() { stopRejecting(); rejecting.Wait() }()
 		// No request starts after GOAWAY, and each returns once ctx ends.
 		done := make(chan struct{})
 		go func() { tasks.Wait(); close(done) }()
@@ -390,6 +401,33 @@ func (t *idleTimer) hasExpired() bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.expired
+}
+
+// rejectRequests resets every request stream accepted after GOAWAY with
+// H3_REQUEST_REJECTED until ctx ends. Each stream's Release runs on its own,
+// counted in releases, so a slow peer cannot hold up later rejections.
+func (s *Session) rejectRequests(ctx context.Context, acceptor RequestAcceptor, releases *sync.WaitGroup) {
+	for {
+		stream, err := acceptor.AcceptRequest(ctx)
+		if err != nil || stream == nil {
+			return
+		}
+		if uint64(stream.StreamID())%4 != 0 || uint64(stream.StreamID()) > wire.MaxVarint {
+			s.cancel(&h3.Error{Code: h3.StreamCreationError, Reason: "non-request stream in server request loop"})
+			return
+		}
+		stream.CancelRead(0x10b)
+		stream.CancelWrite(0x10b)
+		if err := s.decoder.Cancel(uint64(stream.StreamID())); err != nil {
+			s.cancel(err)
+			return
+		}
+		releases.Add(1)
+		go func() {
+			defer releases.Done()
+			_ = stream.Release(ctx)
+		}()
+	}
 }
 
 // drainOutcome decides how a connection that ended after a drain's GOAWAY

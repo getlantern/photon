@@ -53,8 +53,9 @@ func TestServeRequestsGracefulDrainWaitsForDelivery(t *testing.T) {
 		}
 	}
 	acceptor := &requestAcceptor{streams: make(chan ServerRequestStream, 2)}
+	late := requestStream(t, 12) // opened before the client saw GOAWAY
 	acceptor.streams <- request
-	acceptor.streams <- requestStream(t, 12)
+	acceptor.streams <- late
 	drain := make(chan struct{})
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -78,8 +79,8 @@ func TestServeRequestsGracefulDrainWaitsForDelivery(t *testing.T) {
 	if !bytes.Equal(control.Bytes(), []byte{7, 1, 12}) {
 		t.Fatal("GOAWAY cutoff", control.Bytes())
 	}
-	if handlerCtx.Err() != nil || acceptor.calls.Load() != 1 {
-		t.Fatal("drain canceled/admitted work")
+	if handlerCtx.Err() != nil {
+		t.Fatal("drain canceled work")
 	}
 	close(control.ackRelease)
 	close(finishHandler)
@@ -123,6 +124,11 @@ func TestServeRequestsGracefulDrainWaitsForDelivery(t *testing.T) {
 	}
 	if request.closes != 1 || len(request.writeCodes) != 0 {
 		t.Fatal("response not completed", request.closes, request.writeCodes)
+	}
+	// The stream that arrived after GOAWAY is rejected, not served or left
+	// waiting.
+	if len(late.writeCodes) != 1 || late.writeCodes[0] != 0x10b || len(late.readCodes) != 1 || late.readCodes[0] != 0x10b {
+		t.Fatal("late request not rejected", late.writeCodes, late.readCodes)
 	}
 	transport.check(t, 0x100)
 }
@@ -175,21 +181,28 @@ func TestServeRequestsDrainBeforeSettingsAndCancellation(t *testing.T) {
 		}
 		cancel()
 		transport.check(t, 0x100)
-		if acceptor.calls.Load() != 0 {
-			t.Fatal("accepted while draining")
-		}
+		// The drain's rejecting loop may call the acceptor; the handler
+		// fails the test if any request was admitted.
 	}
 }
 
 type drainRaceAcceptor struct {
 	stream  ServerRequestStream
 	entered chan struct{}
+	once    sync.Once
 }
 
-func (a drainRaceAcceptor) AcceptRequest(ctx context.Context) (ServerRequestStream, error) {
-	close(a.entered)
+// AcceptRequest returns its stream from the first call, once the drain has
+// interrupted it. Later calls, such as the drain's rejecting loop, find no
+// stream.
+func (a *drainRaceAcceptor) AcceptRequest(ctx context.Context) (ServerRequestStream, error) {
+	first := false
+	a.once.Do(func() { first = true; close(a.entered) })
 	<-ctx.Done()
-	return a.stream, nil
+	if first {
+		return a.stream, nil
+	}
+	return nil, ctx.Err()
 }
 func TestServeRequestsRejectsAcceptRacingDrain(t *testing.T) {
 	config := serveConfig(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("handler invoked after drain") }))
@@ -198,7 +211,7 @@ func TestServeRequestsRejectsAcceptRacingDrain(t *testing.T) {
 	close(control.ackRelease)
 	session.control = control
 	stream := requestStream(t, 0)
-	acceptor := drainRaceAcceptor{stream: stream, entered: make(chan struct{})}
+	acceptor := &drainRaceAcceptor{stream: stream, entered: make(chan struct{})}
 	drain := make(chan struct{})
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -687,4 +700,55 @@ func TestServeRequestsDrainProtocolErrorRacingCutoff(t *testing.T) {
 			t.Fatal("run", i, "protocol error hidden:", err)
 		}
 	}
+}
+
+// A request stream that arrives while a drained connection waits for its
+// client is rejected with H3_REQUEST_REJECTED at once, not left unanswered
+// until the connection closes.
+func TestServeRequestsDrainRejectsStreamDuringGrace(t *testing.T) {
+	config := serveConfig(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("handler invoked after drain") }))
+	session, transport := requestLoopSession(t, config)
+	control := &drainControl{ackEntered: make(chan struct{}), ackRelease: make(chan struct{})}
+	close(control.ackRelease)
+	session.control = control
+	acceptor := &requestAcceptor{streams: make(chan ServerRequestStream)}
+	late := requestStream(t, 0)
+	rejected := make(chan struct{})
+	late.release = func(context.Context) error { close(rejected); return nil }
+	drain, drained := make(chan struct{}), make(chan struct{})
+	close(drain)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- session.ServeRequests(ctx, acceptor, ServeRequestsConfig{MaxActive: 1, Request: config, Drain: drain, drainedHook: func() { close(drained) }})
+	}()
+	select {
+	case <-drained:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	select {
+	case acceptor.streams <- late:
+	case <-ctx.Done():
+		t.Fatal("stream not accepted during the grace", ctx.Err())
+	}
+	select {
+	case <-rejected:
+	case <-ctx.Done():
+		t.Fatal("stream not rejected during the grace", ctx.Err())
+	}
+	clientCloses(session)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	if len(late.writeCodes) != 1 || late.writeCodes[0] != 0x10b || len(late.readCodes) != 1 || late.readCodes[0] != 0x10b {
+		t.Fatal("late request not rejected", late.writeCodes, late.readCodes)
+	}
+	transport.check(t, 0x100)
 }

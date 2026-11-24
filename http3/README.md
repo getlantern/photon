@@ -90,10 +90,16 @@ nothing in flight and a peer's or transport's error close, unless a request
 running in the drain failed or a local HTTP/3 protocol error ended it. A failed
 request's error is returned, and each such failure is also passed to
 `ErrorHandler` and, when `Logger` is set, logged: handler panics at error
-level, other failures at debug level. The client's H3_NO_ERROR close counts as delivery of a
-response the server has finished sending even if it never acknowledged it,
-since the server cannot tell whether the client read it first. Shutdown itself
-waits for cleanup without aggregating per-connection serving errors.
+level, other failures at debug level. The client's H3_NO_ERROR close counts as
+delivery of a response the server has finished sending even if it never
+acknowledged it, since the server cannot tell whether the client read it
+first. Nor is a client's STOP_SENDING that arrives after the response's FIN
+reported as a failure, during a drain or otherwise: sending already ended with
+that FIN, and the client may have received every byte. A request stream the
+client opens before it sees GOAWAY is reset with H3_REQUEST_REJECTED, so it
+can retry elsewhere, at any point in the drain, including while the server
+waits for the client to close. Shutdown itself waits for cleanup without
+aggregating per-connection serving errors.
 
 Outgoing trailers require `PermitsTrailer`, a predicate over lowercase field
 names whose definitions permit trailers. Setting the Trailer header alone is
