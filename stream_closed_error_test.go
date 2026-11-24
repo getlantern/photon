@@ -482,17 +482,16 @@ func TestWaitAcknowledgedReportsAbnormalEnd(t *testing.T) {
 					return errors.As(err, &closed) && closed.ErrorCode == 0x79
 				}
 			case "busy gate, FIN, endpoint closed":
-				// FIN first leaves the send context reporting a normal end;
-				// the connection dying before delivery still has to show.
+				// After a normal FIN, a call that never got the gate cannot
+				// tell whether the peer acknowledged it before the connection
+				// closed, so it must not claim either: its context's error
+				// stands rather than a false report of non-delivery.
 				if err := s.Close(); err != nil {
 					t.Fatal(err)
 				}
 				server.CloseWithError(0x79, "gone")
 				<-s.SendStream.conn.server.Done()
-				want = func(err error) bool {
-					var closed *ApplicationError
-					return errors.As(err, &closed) && closed.ErrorCode == 0x79
-				}
+				want = func(err error) bool { return errors.Is(err, context.DeadlineExceeded) }
 			}
 			<-s.Context().Done()
 			if strings.HasPrefix(end, "busy gate") {

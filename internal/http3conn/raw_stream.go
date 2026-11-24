@@ -142,11 +142,12 @@ func (s *RawStream) Write(p []byte) (n int, err error) {
 	return n, err
 }
 
-// abnormalEnd reports an end of sending that the writer's own state would hide:
-// rejected early data, a reset or a lost connection, as the stream reports to
-// an empty Write. The QUIC stream answers that without sending or waiting; a
-// stream wrapper must pass the empty Write through for this to see anything.
-// The normal end that this stream's own FIN causes is not one.
+// abnormalEnd reports an end of sending that the writer's own state would hide,
+// as the stream reports to an empty Write: before this stream's FIN, rejected
+// early data, a reset or a lost connection; after it, only rejected early data,
+// since the FIN already ended the send direction normally. The QUIC stream
+// answers without sending or waiting; a stream wrapper must pass the empty
+// Write through for this to see anything.
 func (s *RawStream) abnormalEnd() error {
 	if _, err := s.stream.Write(nil); err != nil && !errors.Is(err, quic.ErrStreamClosed) {
 		return err
@@ -217,9 +218,9 @@ func (s *RawStream) TryWriteAll(p []byte) (err error) {
 func (s *RawStream) Close() error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	// A repeat Close reports what ended sending abnormally since the first.
+	// A repeat Close reports early data rejected since the first.
 	if s.writer != nil && s.writer.closed && s.writer.err == nil {
-		if abnormal := s.abnormalEnd(); abnormal != nil {
+		if abnormal := s.abnormalEnd(); abnormal != nil && !normalUploadStop(abnormal) {
 			return s.mapError.apply(s.ended(abnormal))
 		}
 	}

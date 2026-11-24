@@ -472,17 +472,15 @@ func (s *SendStream) WaitAcknowledged(ctx context.Context) error {
 // preferAbnormalEnd replaces the end of a wait's own context with a reset,
 // rejected early data or a closed connection, when sending ended that way:
 // those are delivery results, not a reason to wait again. Sending that ended
-// normally with FIN says nothing about delivery, so the context's error stands,
-// unless the connection has since closed before the FIN was acknowledged.
+// normally with FIN says nothing about delivery, so the context's error stands:
+// a connection lost after that FIN may or may not have been told of its
+// delivery, which only the wait itself, holding the gate, can establish.
 func (s *SendStream) preferAbnormalEnd(err error) error {
 	if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 		return err
 	}
 	if ended := s.sendEnded(); ended != nil && !errors.Is(ended, ErrStreamClosed) {
 		return ended
-	}
-	if cause := context.Cause(s.conn.ctx); cause != nil {
-		return s.conn.connectionError(cause)
 	}
 	return err
 }
