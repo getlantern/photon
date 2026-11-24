@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -459,7 +460,7 @@ func TestTryWriteAllBehindBusyGateReportsEndedSend(t *testing.T) {
 // once. A normal end with FIN is not a delivery result, so then the context's
 // error stands.
 func TestWaitAcknowledgedReportsAbnormalEnd(t *testing.T) {
-	for _, end := range []string{"busy gate, CancelWrite", "busy gate, FIN", "endpoint closed"} {
+	for _, end := range []string{"busy gate, CancelWrite", "busy gate, FIN", "endpoint closed", "busy gate, FIN, endpoint closed"} {
 		t.Run(end, func(t *testing.T) {
 			server, s := endedSendFixture(t)
 			var want func(error) bool
@@ -480,9 +481,21 @@ func TestWaitAcknowledgedReportsAbnormalEnd(t *testing.T) {
 					var closed *ApplicationError
 					return errors.As(err, &closed) && closed.ErrorCode == 0x79
 				}
+			case "busy gate, FIN, endpoint closed":
+				// FIN first leaves the send context reporting a normal end;
+				// the connection dying before delivery still has to show.
+				if err := s.Close(); err != nil {
+					t.Fatal(err)
+				}
+				server.CloseWithError(0x79, "gone")
+				<-s.SendStream.conn.server.Done()
+				want = func(err error) bool {
+					var closed *ApplicationError
+					return errors.As(err, &closed) && closed.ErrorCode == 0x79
+				}
 			}
 			<-s.Context().Done()
-			if end != "endpoint closed" {
+			if strings.HasPrefix(end, "busy gate") {
 				s.gate <- struct{}{} // another call holds the gate
 				defer s.gate.release()
 			}

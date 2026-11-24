@@ -133,7 +133,25 @@ func (s *RawStream) Write(p []byte) (n int, err error) {
 	if len(p) == 0 {
 		return 0, s.sendEnded()
 	}
-	return s.writer.Write(p)
+	n, err = s.writer.Write(p)
+	if errors.Is(err, io.ErrClosedPipe) {
+		if abnormal := s.abnormalEnd(); abnormal != nil {
+			return n, abnormal
+		}
+	}
+	return n, err
+}
+
+// abnormalEnd reports an end of sending that the writer's own state would hide:
+// rejected early data, a reset or a lost connection, as the stream reports to
+// an empty Write. The QUIC stream answers that without sending or waiting; a
+// stream wrapper must pass the empty Write through for this to see anything.
+// The normal end that this stream's own FIN causes is not one.
+func (s *RawStream) abnormalEnd() error {
+	if _, err := s.stream.Write(nil); err != nil && !errors.Is(err, quic.ErrStreamClosed) {
+		return err
+	}
+	return nil
 }
 
 // sendEnded reports why sending is over, for a call with nothing to send: the
@@ -146,8 +164,8 @@ func (s *RawStream) sendEnded() error {
 	if s.writer.err != nil {
 		return s.writer.err
 	}
-	if _, err := s.stream.Write(nil); err != nil && !errors.Is(err, quic.ErrStreamClosed) {
-		return err
+	if abnormal := s.abnormalEnd(); abnormal != nil {
+		return abnormal
 	}
 	if s.writer.closed {
 		return io.ErrClosedPipe
@@ -164,6 +182,13 @@ func (s *RawStream) sendEnded() error {
 func (s *RawStream) TryWriteAll(p []byte) (err error) {
 	defer func() { err = s.mapError.apply(s.ended(err)) }()
 	if !s.writeMu.TryLock() {
+		// A busy writer is worth retrying only while the stream can send.
+		if abnormal := s.abnormalEnd(); abnormal != nil {
+			return abnormal
+		}
+		if ctx := s.stream.Context(); ctx.Err() != nil && !errors.Is(context.Cause(ctx), quic.ErrStreamClosed) {
+			return context.Cause(ctx)
+		}
 		return quic.ErrWouldBlock
 	}
 	defer s.writeMu.Unlock()
@@ -175,7 +200,13 @@ func (s *RawStream) TryWriteAll(p []byte) (err error) {
 	if len(p) == 0 {
 		return s.sendEnded()
 	}
-	return s.writer.TryWrite(p)
+	err = s.writer.TryWrite(p)
+	if errors.Is(err, io.ErrClosedPipe) {
+		if abnormal := s.abnormalEnd(); abnormal != nil {
+			return abnormal
+		}
+	}
+	return err
 }
 
 // Close ends the send direction with FIN. It waits for a Write in progress and
@@ -186,6 +217,12 @@ func (s *RawStream) TryWriteAll(p []byte) (err error) {
 func (s *RawStream) Close() error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	// A repeat Close reports what ended sending abnormally since the first.
+	if s.writer != nil && s.writer.closed && s.writer.err == nil {
+		if abnormal := s.abnormalEnd(); abnormal != nil {
+			return s.mapError.apply(s.ended(abnormal))
+		}
+	}
 	var err error
 	if s.writer == nil {
 		err = s.stream.Close()
