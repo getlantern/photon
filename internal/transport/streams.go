@@ -165,20 +165,30 @@ func (c *Conn) WriteStreamWithLimit(id uint64, data []byte, limiter func(int) in
 	return c.writeStream(id, data, false, limiter)
 }
 
-func (c *Conn) writeStream(id uint64, data []byte, fin bool, limiter func(int) int) (int, error) {
+// SendError reports why stream id's send side can no longer be written, or nil
+// while it can. It changes nothing.
+func (c *Conn) SendError(id uint64) error {
 	if err := c.check(); err != nil {
-		return 0, err
+		return err
 	}
 	s := c.streams.objects[id]
 	if s == nil || s.send == nil {
-		return 0, stream.ErrStreamState
+		return stream.ErrStreamState
 	}
 	if s.sendTerminal != nil {
 		if s.sendTerminal == context.Canceled {
-			return 0, stream.ErrSendClosed
+			return stream.ErrSendClosed
 		}
-		return 0, s.sendTerminal
+		return s.sendTerminal
 	}
+	return nil
+}
+
+func (c *Conn) writeStream(id uint64, data []byte, fin bool, limiter func(int) int) (int, error) {
+	if err := c.SendError(id); err != nil {
+		return 0, err
+	}
+	s := c.streams.objects[id]
 	if len(data) > 0 {
 		streamBlocked := s.send.Offset() == s.send.Limit()
 		connectionBlocked := c.streams.send.Used() == c.streams.send.Limit()

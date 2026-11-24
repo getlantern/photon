@@ -40,6 +40,11 @@ func (d *streamDeadline) set(at time.Time) {
 		cancel()
 	}
 }
+func (d *streamDeadline) expired() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return !d.at.IsZero() && !time.Now().Before(d.at)
+}
 func (d *streamDeadline) run(fn func(context.Context) error) error {
 	for {
 		d.mu.Lock()
@@ -304,7 +309,7 @@ func (s *SendStream) TryWriteAll(p []byte) error {
 // must not block, and must not call QUIC methods. A nil limiter behaves as Write.
 func (s *SendStream) WriteWithLimit(p []byte, limiter func(int) int) (int, error) {
 	if err := s.deadline.run(s.gate.acquire); err != nil {
-		return 0, err
+		return 0, s.preferEnded(err)
 	}
 	defer s.gate.release()
 	if s.rejected.Load() {
@@ -315,6 +320,14 @@ func (s *SendStream) WriteWithLimit(p []byte, limiter func(int) int) (int, error
 	}
 	total := 0
 	if len(p) == 0 {
+		// Nothing to send, but the call reports what a write with data would:
+		// why sending ended if it has, else an expired deadline.
+		if err := s.sendEnded(); err != nil {
+			return 0, err
+		}
+		if s.deadline.expired() {
+			return 0, os.ErrDeadlineExceeded
+		}
 		return 0, nil
 	}
 	// Keep one deadline context across partial commits. If the deadline changes,
@@ -357,11 +370,42 @@ func (s *SendStream) WriteWithLimit(p []byte, limiter func(int) int) (int, error
 		}
 		return nil
 	})
-	return total, s.conn.connectionError(err)
+	return total, s.preferEnded(s.conn.connectionError(err))
+}
+
+// sendEnded reports why the send direction can no longer be written, or nil
+// while it can. It waits only briefly, for the connection owner, and not on
+// the write deadline: an expired deadline must not hide why sending ended.
+// Once the endpoint has closed, the owner reports that at once and
+// connectionError turns it into the connection's own cause.
+func (s *SendStream) sendEnded() error {
+	err := s.conn.server.Do(context.Background(), func(*transport.ServerEndpoint) error {
+		if s.released {
+			if s.sendTerminal != nil && s.sendTerminal != context.Canceled {
+				return s.sendTerminal
+			}
+			return ErrStreamClosed
+		}
+		return s.conn.raw.SendError(s.id)
+	})
+	return s.conn.connectionError(err)
+}
+
+// preferEnded replaces an expired write deadline with the reason sending
+// ended, when it has: a reset or a closed connection is not a timeout, and a
+// caller must not be told the call may be retried.
+func (s *SendStream) preferEnded(err error) error {
+	if !errors.Is(err, os.ErrDeadlineExceeded) {
+		return err
+	}
+	if ended := s.sendEnded(); ended != nil {
+		return ended
+	}
+	return err
 }
 func (s *SendStream) Close() error {
 	if err := s.deadline.run(s.gate.acquire); err != nil {
-		return err
+		return s.preferEnded(err)
 	}
 	defer s.gate.release()
 	if s.rejected.Load() {
@@ -385,7 +429,7 @@ func (s *SendStream) Close() error {
 	if err == nil {
 		s.closed = true
 	}
-	return s.conn.connectionError(err)
+	return s.preferEnded(s.conn.connectionError(err))
 }
 
 // WaitAcknowledged waits for delivery of all previously committed bytes and FIN
@@ -413,6 +457,10 @@ func (s *SendStream) WaitAcknowledged(ctx context.Context) error {
 	return s.conn.connectionError(err)
 }
 
+// SetWriteDeadline bounds Write and Close, including ones already waiting. A
+// call past the deadline returns os.ErrDeadlineExceeded unless sending has
+// already ended (CancelWrite, the peer's STOP_SENDING, or the connection
+// closing); then it returns that cause, which is not a timeout to retry.
 func (s *SendStream) SetWriteDeadline(t time.Time) error { s.deadline.set(t); return nil }
 
 // SetPriority sets scheduling urgency, clipped to 0–7 (zero is highest).

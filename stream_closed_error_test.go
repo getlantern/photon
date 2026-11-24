@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"testing"
 	"time"
 
@@ -118,5 +119,181 @@ func TestWriteAfterCloseReturnsErrStreamClosed(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// An empty Write sends nothing, but reports a send direction that has ended
+// exactly as a Write with data would: after CancelWrite, after the peer's
+// STOP_SENDING, and after the connection closes.
+func TestEmptyWriteReportsEndedSend(t *testing.T) {
+	for _, end := range []string{"CancelWrite", "STOP_SENDING", "connection"} {
+		t.Run(end, func(t *testing.T) {
+			clientTLS, serverTLS := dialTLS(t)
+			l, err := ListenAddr("127.0.0.1:0", serverTLS, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer l.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			client, err := DialAddr(ctx, l.Addr().String(), clientTLS, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer client.server.Close()
+			server, err := l.Accept(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			s, err := client.OpenStream()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.Write([]byte("x")); err != nil {
+				t.Fatal(err)
+			}
+			if n, err := s.Write(nil); n != 0 || err != nil {
+				t.Fatal("empty write on an open stream:", n, err)
+			}
+			// On an open stream an expired deadline is reported, as for data.
+			s.SetWriteDeadline(time.Now().Add(-time.Second))
+			if _, err := s.Write([]byte("y")); !errors.Is(err, os.ErrDeadlineExceeded) {
+				t.Fatal("write with data past the deadline:", err)
+			}
+			if n, err := s.Write(nil); n != 0 || !errors.Is(err, os.ErrDeadlineExceeded) {
+				t.Fatal("empty write past the deadline:", n, err)
+			}
+			s.SetWriteDeadline(time.Time{})
+			switch end {
+			case "CancelWrite":
+				s.CancelWrite(0x77)
+			case "STOP_SENDING":
+				peer, err := server.AcceptStream(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				peer.CancelRead(0x78)
+			case "connection":
+				server.CloseWithError(0x79, "gone")
+			}
+			select {
+			case <-s.Context().Done():
+			case <-ctx.Done():
+				t.Fatal("send direction never ended")
+			}
+			_, want := s.Write([]byte("late"))
+			if want == nil {
+				t.Fatal("write with data succeeded after the send direction ended")
+			}
+			if n, err := s.Write(nil); n != 0 || err == nil || err.Error() != want.Error() {
+				t.Fatalf("empty write: %d %v, want %v", n, err, want)
+			}
+			// Past the deadline too, an empty write reports what a write with
+			// data does.
+			s.SetWriteDeadline(time.Now().Add(-time.Second))
+			_, wantLate := s.Write([]byte("late"))
+			if n, err := s.Write(nil); n != 0 || err == nil || wantLate == nil || err.Error() != wantLate.Error() {
+				t.Fatalf("empty write past the deadline: %d %v, want %v", n, err, wantLate)
+			}
+			s.SetWriteDeadline(time.Time{})
+			wantTry := s.TryWriteAll([]byte("late"))
+			if wantTry == nil {
+				t.Fatal("TryWriteAll with data succeeded after the send direction ended")
+			}
+			if err := s.TryWriteAll(nil); err == nil || err.Error() != wantTry.Error() {
+				t.Fatalf("empty TryWriteAll: %v, want %v", err, wantTry)
+			}
+		})
+	}
+}
+
+// Once sending has ended, every send call reports why, even with its write
+// deadline expired: a reset or a closed connection is not a timeout, and a
+// caller must not be told it may retry. The answer must not depend on which
+// of two ready events a select happens to pick, so each call is repeated.
+// On a stream still open, an expired deadline is reported as before.
+func TestEndedSendBeatsExpiredDeadline(t *testing.T) {
+	for _, end := range []string{"open", "CancelWrite", "STOP_SENDING", "connection", "endpoint closed"} {
+		t.Run(end, func(t *testing.T) {
+			clientTLS, serverTLS := dialTLS(t)
+			l, err := ListenAddr("127.0.0.1:0", serverTLS, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer l.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			client, err := DialAddr(ctx, l.Addr().String(), clientTLS, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer client.server.Close()
+			server, err := l.Accept(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			s, err := client.OpenStream()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.Write([]byte("x")); err != nil {
+				t.Fatal(err)
+			}
+			var want func(error) bool
+			switch end {
+			case "open":
+				want = func(err error) bool { return errors.Is(err, os.ErrDeadlineExceeded) }
+			case "CancelWrite":
+				s.CancelWrite(0x77)
+				want = func(err error) bool { var reset *StreamError; return errors.As(err, &reset) && reset.ErrorCode == 0x77 }
+			case "STOP_SENDING":
+				peer, err := server.AcceptStream(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				peer.CancelRead(0x78)
+				want = func(err error) bool { var reset *StreamError; return errors.As(err, &reset) && reset.ErrorCode == 0x78 }
+			case "connection", "endpoint closed":
+				server.CloseWithError(0x79, "gone")
+				want = func(err error) bool {
+					var closed *ApplicationError
+					return errors.As(err, &closed) && closed.ErrorCode == 0x79
+				}
+			}
+			if end != "open" {
+				select {
+				case <-s.Context().Done():
+				case <-ctx.Done():
+					t.Fatal("send direction never ended")
+				}
+			}
+			if end == "endpoint closed" {
+				select {
+				case <-client.server.Done():
+				case <-ctx.Done():
+					t.Fatal("client endpoint never closed")
+				}
+			}
+			s.SetWriteDeadline(time.Now().Add(-time.Second))
+			for i := 0; i < 50; i++ {
+				for name, call := range map[string]func() error{
+					"Write":       func() error { _, err := s.Write([]byte("late")); return err },
+					"empty Write": func() error { _, err := s.Write(nil); return err },
+					"Close":       s.Close,
+				} {
+					if end == "open" && name == "Close" {
+						continue // a Close past the deadline is covered below
+					}
+					if err := call(); !want(err) {
+						t.Fatalf("%s past the deadline: %v", name, err)
+					}
+				}
+			}
+			if end == "open" {
+				if err := s.Close(); !want(err) {
+					t.Fatal("Close past the deadline:", err)
+				}
+			}
+		})
 	}
 }

@@ -1,8 +1,6 @@
 package transport
 
 import (
-	"context"
-
 	"github.com/getlantern/photon/internal/stream"
 )
 
@@ -10,19 +8,10 @@ import (
 // credit. The owner serializes the preflight and commit. Portable chunks make
 // the reservation independent of path selection or later MTU fallback.
 func (c *Conn) TryWriteStreamAll(id uint64, data []byte) error {
-	if err := c.check(); err != nil {
+	if err := c.SendError(id); err != nil {
 		return err
 	}
 	s := c.streams.objects[id]
-	if s == nil || s.send == nil {
-		return stream.ErrStreamState
-	}
-	if s.sendTerminal != nil {
-		if s.sendTerminal == context.Canceled {
-			return stream.ErrSendClosed
-		}
-		return s.sendTerminal
-	}
 	if len(data) == 0 {
 		return nil
 	}
