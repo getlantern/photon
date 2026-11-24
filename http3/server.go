@@ -342,6 +342,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		select {
 		case <-listener.done:
 		case <-ctx.Done():
+			s.expireDrains()
 			return context.Cause(ctx)
 		}
 	}

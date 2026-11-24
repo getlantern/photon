@@ -60,8 +60,9 @@ owner of a `ClientConn` closes it. A client that does not close within 3
 seconds, or `IdleTimeout` if that is shorter, has the connection closed with
 H3_NO_ERROR, so it cannot hold it. Shutdown can therefore take up to 3 seconds
 even with no requests running. Once its deadline has expired, a drained
-connection is closed as soon as its requests are done. The deadline does not
-abort handlers;
+connection is closed as soon as its requests are done. That close, like one
+after a grace shortened by a small `IdleTimeout`, can still cut off a response
+the client has received but not read. The deadline does not abort handlers;
 `Close()` cancels owned connections and handlers without waiting for application
 code to return. For listeners passed to Serve, Shutdown stops acceptance and
 closes the listener after connection workers finish; Close closes it
@@ -81,12 +82,12 @@ callbacks must honor cancellation, and must not synchronously call Shutdown.
 A normal peer-initiated close is still returned as `*quic.PeerCloseError`; it does
 not prove acknowledgment of all queued transport bytes. After a Shutdown drain's
 GOAWAY, the client closing with H3_NO_ERROR is the expected outcome and returns
-nil, unless it cut a request short. That close counts as delivery of a response
-the server has finished sending even if it never acknowledged it, since the
-server cannot tell whether the client read it first. Once GOAWAY is
-acknowledged and every request is done, any ending returns nil but a local
-protocol error or the client closing with an error code. Shutdown itself waits
-for cleanup without aggregating per-connection serving errors.
+nil. So does any other ending once GOAWAY is sent, unless a request running in
+the drain failed (each such failure is also logged to `Logger`) or a local
+protocol error ended it. The client's H3_NO_ERROR close counts as delivery of a
+response the server has finished sending even if it never acknowledged it,
+since the server cannot tell whether the client read it first. Shutdown itself
+waits for cleanup without aggregating per-connection serving errors.
 
 Outgoing trailers require `PermitsTrailer`, a predicate over lowercase field
 names whose definitions permit trailers. Setting the Trailer header alone is

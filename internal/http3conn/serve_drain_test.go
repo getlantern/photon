@@ -14,10 +14,14 @@ import (
 type drainControl struct {
 	fakeStream
 	ackEntered, ackRelease chan struct{}
+	ackErr                 error // returned at once, as when the stream sees the close before ctx
 }
 
 func (c *drainControl) WaitAcknowledged(ctx context.Context) error {
 	close(c.ackEntered)
+	if c.ackErr != nil {
+		return c.ackErr
+	}
 	select {
 	case <-c.ackRelease:
 		return nil
@@ -153,7 +157,9 @@ func TestServeRequestsDrainBeforeSettingsAndCancellation(t *testing.T) {
 		}
 		select {
 		case err := <-done:
-			if cancelDrain && !errors.Is(err, context.Canceled) || !cancelDrain && err != nil {
+			// No request was running, so even the owner's cancellation
+			// leaves nothing undelivered.
+			if err != nil {
 				t.Fatal(err)
 			}
 		case <-time.After(time.Second):
@@ -250,8 +256,8 @@ func TestServeRequestsDrainGraceBoundsWaitForClient(t *testing.T) {
 }
 
 // TestServeRequestsDrainEndingCause checks which connection endings after
-// GOAWAY complete a drain: only the client's H3_NO_ERROR close once its
-// requests are done, even if the owner cancels right after it.
+// GOAWAY complete a drain: any, unless a request running in the drain failed
+// or a local protocol error ended it.
 func TestServeRequestsDrainEndingCause(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
@@ -266,13 +272,13 @@ func TestServeRequestsDrainEndingCause(t *testing.T) {
 	}{
 		{name: "client close", code: 0x100, clean: true},
 		{name: "client close then owner cancel", code: 0x100, thenCancel: true, clean: true},
-		{name: "client close with error code before drained", code: 0x102, holdAck: true},
+		{name: "client close with error code before drained", code: 0x102, holdAck: true, clean: true},
 		{name: "client close before drained", code: 0x100, holdAck: true, clean: true},
 		{name: "client close mid-request", code: 0x100, midRequest: true},
 		{name: "owner cancel after requests done", ownerOnly: true, clean: true},
 		{name: "protocol error after requests done", protocol: true},
 		{name: "client close after requests done", code: 0x100, afterDone: true, clean: true},
-		{name: "client error close after requests done", code: 0x102, afterDone: true},
+		{name: "client error close after requests done", code: 0x102, afterDone: true, clean: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			entered := make(chan struct{})
@@ -367,6 +373,13 @@ func TestServeRequestsDrainClientCloseBeforeFinalAck(t *testing.T) {
 }
 
 func testDrainClientCloseBeforeFinalAck(t *testing.T, releaseFirst bool) {
+	testDrainRelease(t, releaseFirst, nil)
+}
+
+// testDrainRelease runs one request through a drain whose client closes with
+// H3_NO_ERROR while Release waits. resetErr, if set, is what Release reports
+// instead of the close: the drain must then fail and report the request.
+func testDrainRelease(t *testing.T, releaseFirst bool, resetErr error) {
 	entered := make(chan struct{})
 	config := serveConfig(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		close(entered)
@@ -385,6 +398,9 @@ func testDrainClientCloseBeforeFinalAck(t *testing.T, releaseFirst bool) {
 			return &quic.PeerCloseError{Application: true, Code: 0x100, Reason: "client done"}
 		}
 		<-ctx.Done() // the final ACK never comes
+		if resetErr != nil {
+			return resetErr
+		}
 		return context.Cause(ctx)
 	}
 	acceptor := &requestAcceptor{streams: make(chan ServerRequestStream, 1)}
@@ -413,17 +429,46 @@ func testDrainClientCloseBeforeFinalAck(t *testing.T, releaseFirst bool) {
 	clientCloses(session)
 	select {
 	case err := <-done:
-		if err != nil {
+		if resetErr == nil && err != nil {
 			t.Fatal("drain reported failure", err)
+		}
+		if resetErr != nil && err == nil {
+			t.Fatal("drain hid a reset response")
 		}
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
 	select {
 	case err := <-reports:
-		t.Fatal("delivered request reported", err)
+		if resetErr == nil {
+			t.Fatal("delivered request reported", err)
+		}
 	default:
+		if resetErr != nil {
+			t.Fatal("reset response not reported")
+		}
 	}
+}
+
+// A reset or STOP_SENDING that Release reports is a failure even when the
+// client then closes with H3_NO_ERROR.
+func TestServeRequestsDrainResetBeforeCleanClose(t *testing.T) {
+	testDrainRelease(t, false, errors.New("stream reset by peer"))
+}
+
+// WaitAcknowledged can see the client's clean close before ctx does.
+func TestServeRequestsDrainCloseSeenByAcknowledgment(t *testing.T) {
+	config := serveConfig(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("handler invoked") }))
+	session, transport := requestLoopSession(t, config)
+	session.control = &drainControl{ackEntered: make(chan struct{}), ackRelease: make(chan struct{}), ackErr: &quic.PeerCloseError{Application: true, Code: 0x100, Reason: "client done"}}
+	drain := make(chan struct{})
+	close(drain)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := session.ServeRequests(ctx, &requestAcceptor{streams: make(chan ServerRequestStream)}, ServeRequestsConfig{MaxActive: 1, Request: config, Drain: drain}); err != nil {
+		t.Fatal(err)
+	}
+	transport.check(t, 0x100)
 }
 
 // A connection that ends during a drain is closed at once, even while a

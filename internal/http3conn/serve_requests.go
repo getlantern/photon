@@ -8,7 +8,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	quic "github.com/getlantern/photon"
 	h3 "github.com/getlantern/photon/internal/http3wire"
 	"github.com/getlantern/photon/internal/wire"
 )
@@ -62,10 +61,9 @@ type ServeRequestsConfig struct {
 // the session to join its critical-stream tasks. Drain is graceful; cancellation
 // is abortive. A peer-initiated close remains a transport error (including a
 // normal application close) rather than proving acknowledgment of queued data,
-// except after a drain's GOAWAY: then the client's H3_NO_ERROR close completes
-// the drain unless it cut a request short, and once GOAWAY is acknowledged and
-// every request is done so does any ending but a peer's error close or a local
-// protocol error. ServeRequests then returns nil.
+// except after a drain's GOAWAY: then the connection ending completes the
+// drain, and ServeRequests returns nil, unless a request running in the drain
+// failed or a local protocol error ended it.
 // This loop exclusively owns server GOAWAY and its cutoff while
 // running; callers must not concurrently call SendGoaway.
 func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor, config ServeRequestsConfig) (result error) {
@@ -91,14 +89,14 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 		s.cancel(context.Cause(parent))
 	}
 	var tasks sync.WaitGroup
-	var cutShort atomic.Bool // a request failed because the connection ended
-	var goawaySent atomic.Bool
+	var draining atomic.Bool      // set before GOAWAY: the client may close once it arrives
+	var failedInDrain atomic.Bool // a request running in the drain failed
 	var abortOnce sync.Once
 	abort := func(code uint64, reason string) { abortOnce.Do(func() { s.transport.Abort(code, reason) }) }
 	drained := false // a graceful drain completed; how the connection then ended does not matter
-	// The connection ended during a drain; the outcome is decided once every
+	// The connection ended after GOAWAY; the outcome is decided once every
 	// request has returned, after the connection is closed.
-	endedInDrain, acked := false, false
+	endedInDrain := false
 	defer func() {
 		if ctx.Err() != nil && !drained {
 			result = context.Cause(ctx)
@@ -116,7 +114,7 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 		}
 		tasks.Wait()
 		if endedInDrain {
-			result = drainOutcome(result, cutShort.Load(), acked)
+			result = drainOutcome(result, failedInDrain.Load())
 		}
 	}()
 	acceptCtx, stopAccept := context.WithCancel(ctx)
@@ -150,25 +148,24 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 			abort(0x100, "idle timeout")
 			return nil
 		}
-		// Set first: the client may close as soon as GOAWAY reaches it.
-		goawaySent.Store(true)
+		draining.Store(true)
 		if err := s.SendGoaway(nextID); err != nil {
 			return err
 		}
 		// No request starts after GOAWAY, and each returns once ctx ends.
 		done := make(chan struct{})
 		go func() { tasks.Wait(); close(done) }()
+		// After GOAWAY the client closes once its requests are done (RFC 9114
+		// section 5.2), so the connection ending, however it does, is how the
+		// drain completes. drainOutcome decides it once every request returned.
 		ended := func() error {
 			endedInDrain = true
 			return context.Cause(ctx)
 		}
 		if err := control.WaitAcknowledged(ctx); err != nil {
-			if ctx.Err() != nil {
-				return ended()
-			}
+			endedInDrain = true
 			return err
 		}
-		acked = true
 		select {
 		case <-done:
 		case <-ctx.Done():
@@ -292,9 +289,9 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 			// response's last packets. That close is its word that it is done,
 			// so it counts as delivery, though the server cannot tell whether
 			// the client read the response first. Release can report the close
-			// before ctx does.
+			// before ctx does; a stream reset or STOP_SENDING still fails.
 			delivered := stream.Release(ctx)
-			if delivered != nil && err == nil && goawaySent.Load() && (gracefulPeerClose(delivered) || gracefulPeerClose(context.Cause(ctx))) {
+			if delivered != nil && err == nil && draining.Load() && (gracefulPeerClose(delivered) || errors.Is(delivered, context.Canceled) && gracefulPeerClose(context.Cause(ctx))) {
 				delivered = nil
 			}
 			if delivered != nil {
@@ -305,8 +302,8 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 					err = delivered
 				}
 			}
-			if err != nil && ctx.Err() != nil {
-				cutShort.Store(true)
+			if err != nil && draining.Load() {
+				failedInDrain.Store(true)
 			}
 			if err != nil && config.Report != nil {
 				config.Report(ctx, uint64(stream.StreamID()), err)
@@ -377,24 +374,14 @@ func (t *idleTimer) hasExpired() bool {
 	return t.expired
 }
 
-// drainOutcome decides how a connection that ended during a drain's GOAWAY
-// went, once every request has returned. After GOAWAY the client closes once
-// its requests are done (RFC 9114 section 5.2). A request cut short by the
-// connection ending, or a local protocol error, fails the drain. The client's
-// H3_NO_ERROR close completes it. Once GOAWAY is acknowledged and every
-// request is done, so does any other ending but the peer closing with an
-// error, which is news the caller should see.
-func drainOutcome(cause error, cutShort, acked bool) error {
+// drainOutcome decides how a connection that ended after a drain's GOAWAY
+// went, once every request has returned: the drain fails if a request running
+// in it failed or a local protocol error ended it, and completes otherwise.
+// Per-request failures also reach Report.
+func drainOutcome(cause error, failed bool) error {
 	var protocol *h3.Error
-	if cutShort || errors.As(cause, &protocol) {
+	if failed || errors.As(cause, &protocol) {
 		return cause
 	}
-	if gracefulPeerClose(cause) {
-		return nil
-	}
-	var peer *quic.PeerCloseError
-	if acked && !errors.As(cause, &peer) {
-		return nil
-	}
-	return cause
+	return nil
 }
