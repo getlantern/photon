@@ -380,8 +380,11 @@ func testHTTP3ClientGoawayResponse(t *testing.T, readAfterClose, cancelRequest, 
 				}
 				server.Close()
 				select {
-				case <-shutdown:
+				case err := <-shutdown:
 					shutdownJoined = true
+					if err != nil {
+						t.Fatal("shutdown", err)
+					}
 				case <-ctx.Done():
 					t.Fatal(ctx.Err())
 				}

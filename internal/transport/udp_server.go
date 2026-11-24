@@ -199,12 +199,12 @@ func newPacketServerWithOwnership(sockets []net.PacketConn, endpoint *ServerEndp
 }
 func (s *UDPServer) Addr() net.Addr { return s.packetConn.LocalAddr() }
 func (s *UDPServer) Close() error {
-	// Stopping closes the sockets at once. First let the owner finish one send
-	// pass: a command's reply comes only after the pass that follows every
-	// earlier command, so datagrams already queued, such as the CONNECTION_CLOSE
-	// of a connection closed just before, leave before their socket does. The
-	// command wakes no waiters, and an owner stuck elsewhere is not waited for
-	// beyond a moment: it could not send anyway, and Close must not hang on it.
+	// Stopping closes the sockets at once. First let the owner run one more
+	// loop iteration, whose send pass of up to 64 datagrams carries what earlier
+	// commands queued, such as the CONNECTION_CLOSE of a connection closed just
+	// before, so it leaves before its socket does. A backlog beyond one pass can
+	// still be cut off. The command wakes no waiters, and an owner stuck
+	// elsewhere is not waited for beyond a moment: Close must not hang on it.
 	flush, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	_, _ = s.invoke(flush, func(*ServerEndpoint) error { return nil }, false)
 	cancel()

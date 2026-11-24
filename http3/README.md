@@ -76,9 +76,10 @@ It continues after individual connection failures; use ServeQUICConn when the
 caller needs individual connection return errors. Handlers and error
 callbacks must honor cancellation, and must not synchronously call Shutdown.
 A normal peer-initiated close is still returned as `*quic.PeerCloseError`; it does
-not prove acknowledgment of all queued transport bytes. After a Shutdown drain,
-the connection ending is the expected outcome and returns nil. Shutdown itself waits
-for cleanup without aggregating per-connection serving errors.
+not prove acknowledgment of all queued transport bytes. After a Shutdown drain's
+GOAWAY, the client closing with H3_NO_ERROR is the expected outcome and returns
+nil, unless it cut a request short; any other ending returns its error. Shutdown
+itself waits for cleanup without aggregating per-connection serving errors.
 
 Outgoing trailers require `PermitsTrailer`, a predicate over lowercase field
 names whose definitions permit trailers. Setting the Trailer header alone is

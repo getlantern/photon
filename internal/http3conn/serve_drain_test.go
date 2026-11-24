@@ -247,3 +247,76 @@ func TestServeRequestsDrainGraceBoundsWaitForClient(t *testing.T) {
 	}
 	transport.check(t, 0x100)
 }
+
+// TestServeRequestsDrainEndingCause checks which connection endings after
+// GOAWAY complete a drain: only the client's H3_NO_ERROR close once its
+// requests are done, even if the owner cancels right after it.
+func TestServeRequestsDrainEndingCause(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		midRequest bool
+		code       uint64
+		thenCancel bool
+		clean      bool
+	}{
+		{name: "client close", code: 0x100, clean: true},
+		{name: "client close then owner cancel", code: 0x100, thenCancel: true, clean: true},
+		{name: "client close with error code", code: 0x102},
+		{name: "client close mid-request", code: 0x100, midRequest: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			entered := make(chan struct{})
+			config := serveConfig(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				close(entered)
+				<-r.Context().Done()
+			}))
+			session, _ := requestLoopSession(t, config)
+			control := &drainControl{ackEntered: make(chan struct{}), ackRelease: make(chan struct{})}
+			close(control.ackRelease)
+			session.control = control
+			acceptor := &requestAcceptor{streams: make(chan ServerRequestStream, 1)}
+			if tc.midRequest {
+				acceptor.streams <- requestStream(t, 0)
+			}
+			drain := make(chan struct{})
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			parent, cancelParent := context.WithCancel(ctx)
+			defer cancelParent()
+			done := make(chan error, 1)
+			go func() {
+				done <- session.ServeRequests(parent, acceptor, ServeRequestsConfig{MaxActive: 1, Request: config, Drain: drain})
+			}()
+			if tc.midRequest {
+				select {
+				case <-entered:
+				case <-ctx.Done():
+					t.Fatal(ctx.Err())
+				}
+			}
+			close(drain)
+			select {
+			case <-control.ackEntered:
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			}
+			session.cancel(&quic.PeerCloseError{Application: true, Code: tc.code, Reason: "client done"})
+			if tc.thenCancel {
+				cancelParent()
+			}
+			var err error
+			select {
+			case err = <-done:
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			}
+			var peer *quic.PeerCloseError
+			switch {
+			case tc.clean && err != nil:
+				t.Fatal("drain reported failure", err)
+			case !tc.clean && !errors.As(err, &peer):
+				t.Fatal("drain hid the connection's ending", err)
+			}
+		})
+	}
+}

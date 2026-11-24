@@ -316,8 +316,7 @@ func (c *servedConn) serve() (err error) {
 // It waits for handlers, delivery and protocol cleanup, then for each client to
 // close its connection as GOAWAY asks, bounded by ctx; a client that does not
 // close within IdleTimeout (3 seconds when unset) is closed with H3_NO_ERROR.
-// Expiry
-// does not abort active connections; use Close for abortive shutdown. Listeners
+// Expiry does not abort active connections; use Close for abortive shutdown. Listeners
 // passed to Serve stop accepting immediately and close after their workers join.
 // Listeners passed to ServeListener or used independently with ServeQUICConn
 // remain caller-owned and are not closed.
