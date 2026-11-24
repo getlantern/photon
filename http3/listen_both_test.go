@@ -177,16 +177,25 @@ func TestCombinedStartupFailure(t *testing.T) {
 	origin := httptest.NewTLSServer(nil)
 	credentials := origin.TLS.Clone()
 	origin.Close()
-	tcp, err := net.Listen("tcp4", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	// The test needs its own socket on the UDP side of the port; another one
+	// already there would do the blocking, but cannot be relied on to stay.
+	var tcp net.Listener
+	var blocker net.PacketConn
+	for range 20 {
+		var err error
+		if tcp, err = net.Listen("tcp4", "127.0.0.1:0"); err != nil {
+			t.Fatal(err)
+		}
+		if blocker, err = net.ListenPacket("udp4", tcp.Addr().String()); err == nil {
+			break
+		}
+		tcp.Close()
+		tcp = nil
+	}
+	if tcp == nil {
+		t.Fatal("no port free for both TCP and UDP")
 	}
 	address := tcp.Addr().String()
-	blocker, err := net.ListenPacket("udp4", address)
-	if err != nil {
-		tcp.Close()
-		t.Fatal(err)
-	}
 	defer blocker.Close()
 	if err := serveTLSAndQUIC(tcp, credentials, nil); err == nil {
 		t.Fatal("UDP conflict ignored")
