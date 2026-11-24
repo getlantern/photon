@@ -40,78 +40,105 @@ func listenTestServer(ctx context.Context, t *testing.T, server *Server) string 
 
 // A graceful Shutdown sends GOAWAY and leaves the connection to the client, so
 // a response the client has not read yet arrives whole. Once the pool releases
-// the drained connection, it closes it, and Shutdown completes.
+// the drained connection, it closes it, and Shutdown completes. With a short
+// drain grace the server closes first, with H3_NO_ERROR; the pool must keep
+// the reserved response readable after that close too.
 func TestTransportGracefulShutdownDeliversBufferedResponse(t *testing.T) {
-	for _, trailers := range []bool{false, true} {
-		name := "body"
-		if trailers {
-			name = "trailers"
+	for _, serverCloses := range []bool{false, true} {
+		for _, trailers := range []bool{false, true} {
+			name := "body"
+			if trailers {
+				name = "trailers"
+			}
+			if serverCloses {
+				name += "/server-closes"
+			}
+			t.Run(name, func(t *testing.T) {
+				testGracefulShutdownBufferedResponse(t, trailers, serverCloses)
+			})
 		}
-		t.Run(name, func(t *testing.T) {
-			server := &Server{PermitsTrailer: func(string) bool { return true }, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if trailers {
-					w.Header().Set("Trailer", "X-Drained")
-				}
-				io.WriteString(w, "buffered")
-				if trailers {
-					w.Header().Set("X-Drained", "complete")
-				}
-			})}
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			address := listenTestServer(ctx, t, server)
-			transport := &Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
-			defer transport.Close()
-			request, _ := http.NewRequestWithContext(ctx, "GET", "https://"+address+"/", nil)
-			response, err := transport.RoundTrip(request)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer response.Body.Close()
-			transport.mu.Lock()
-			var entry *pooledClient
-			for candidate := range transport.all {
-				entry = candidate
-			}
-			client := entry.client
-			transport.mu.Unlock()
-			shutdown := make(chan error, 1)
-			go func() { shutdown <- server.Shutdown(ctx) }()
-			select {
-			case <-client.session.GoawayReceived():
-			case <-ctx.Done():
-				t.Fatal("no GOAWAY", ctx.Err())
-			}
-			body, err := io.ReadAll(response.Body)
-			if err != nil || string(body) != "buffered" {
-				t.Fatalf("buffered response lost in graceful shutdown: %q %v", body, err)
-			}
-			if trailers && response.Trailer.Get("X-Drained") != "complete" {
-				t.Fatal("buffered trailers lost", response.Trailer)
-			}
-			if err := response.Body.Close(); err != nil {
-				t.Fatal(err)
-			}
-			select {
-			case <-entry.done:
-			case <-ctx.Done():
-				t.Fatal("drained connection retained after release", ctx.Err())
-			}
-			transport.mu.Lock()
-			remaining := len(transport.all) + len(transport.pool)
-			transport.mu.Unlock()
-			if remaining != 0 {
-				t.Fatal("drained connection retained")
-			}
-			select {
-			case err := <-shutdown:
-				if err != nil {
-					t.Fatal(err)
-				}
-			case <-ctx.Done():
-				t.Fatal("Shutdown waited on after the client closed", ctx.Err())
-			}
-		})
+	}
+}
+
+func testGracefulShutdownBufferedResponse(t *testing.T, trailers, serverCloses bool) {
+	server := &Server{PermitsTrailer: func(string) bool { return true }, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if trailers {
+			w.Header().Set("Trailer", "X-Drained")
+		}
+		io.WriteString(w, "buffered")
+		if trailers {
+			w.Header().Set("X-Drained", "complete")
+		}
+	})}
+	if serverCloses {
+		server.IdleTimeout = 50 * time.Millisecond // also the drain grace
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	address := listenTestServer(ctx, t, server)
+	transport := &Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+	defer transport.Close()
+	request, _ := http.NewRequestWithContext(ctx, "GET", "https://"+address+"/", nil)
+	response, err := transport.RoundTrip(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	transport.mu.Lock()
+	var entry *pooledClient
+	for candidate := range transport.all {
+		entry = candidate
+	}
+	client := entry.client
+	transport.mu.Unlock()
+	shutdown := make(chan error, 1)
+	go func() { shutdown <- server.Shutdown(ctx) }()
+	select {
+	case <-client.session.GoawayReceived():
+	case <-ctx.Done():
+		t.Fatal("no GOAWAY", ctx.Err())
+	}
+	if serverCloses {
+		select {
+		case <-client.session.Done():
+		case <-ctx.Done():
+			t.Fatal("server close not observed", ctx.Err())
+		}
+		// A worker that tears the client down does so promptly after
+		// the session stops.
+		select {
+		case <-entry.done:
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	body, err := io.ReadAll(response.Body)
+	if err != nil || string(body) != "buffered" {
+		t.Fatalf("buffered response lost in graceful shutdown: %q %v", body, err)
+	}
+	if trailers && response.Trailer.Get("X-Drained") != "complete" {
+		t.Fatal("buffered trailers lost", response.Trailer)
+	}
+	if err := response.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-entry.done:
+	case <-ctx.Done():
+		t.Fatal("drained connection retained after release", ctx.Err())
+	}
+	transport.mu.Lock()
+	remaining := len(transport.all) + len(transport.pool)
+	transport.mu.Unlock()
+	if remaining != 0 {
+		t.Fatal("drained connection retained")
+	}
+	select {
+	case err := <-shutdown:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatal("Shutdown waited on after the connection closed", ctx.Err())
 	}
 }
 

@@ -47,6 +47,8 @@ type ServeRequestsConfig struct {
 	MaxActive  int
 	Request    ServeRequestConfig
 	Report     func(ctx context.Context, id uint64, err error)
+
+	drainedHook func() // tests: every request of a drain is done
 }
 
 // ServeRequests runs the server session's sole request accept loop. It applies
@@ -57,8 +59,9 @@ type ServeRequestsConfig struct {
 // the session to join its critical-stream tasks. Drain is graceful; cancellation
 // is abortive. A peer-initiated close remains a transport error (including a
 // normal application close) rather than proving acknowledgment of queued data,
-// except after a drain's GOAWAY: then the client's H3_NO_ERROR close once no
-// request is running is how the drain completes, and ServeRequests returns nil.
+// except after a drain's GOAWAY: then the client's H3_NO_ERROR close completes
+// the drain unless it cut a request short, and once every request is done any
+// ending does. ServeRequests then returns nil.
 // This loop exclusively owns server GOAWAY and its cutoff while
 // running; callers must not concurrently call SendGoaway.
 func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor, config ServeRequestsConfig) (result error) {
@@ -85,6 +88,7 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 	}
 	var tasks sync.WaitGroup
 	var cutShort atomic.Bool // a request failed because the connection ended
+	var goawaySent atomic.Bool
 	var abortOnce sync.Once
 	abort := func(code uint64, reason string) { abortOnce.Do(func() { s.transport.Abort(code, reason) }) }
 	drained := false // a graceful drain completed; how the connection then ended does not matter
@@ -139,6 +143,7 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 		if err := s.SendGoaway(nextID); err != nil {
 			return err
 		}
+		goawaySent.Store(true)
 		// No request starts after GOAWAY, and each returns once ctx ends.
 		done := make(chan struct{})
 		go func() { tasks.Wait(); close(done) }()
@@ -149,8 +154,7 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 		ended := func() error {
 			<-done
 			cause := context.Cause(ctx)
-			var peer *transport.PeerCloseError
-			if !cutShort.Load() && errors.As(cause, &peer) && peer.Application && peer.Code == 0x100 {
+			if !cutShort.Load() && cleanPeerClose(cause) {
 				drained = true
 				return nil
 			}
@@ -170,8 +174,12 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 		// Every request is done. Leave closing to the client, as quic-go's
 		// server does: closing here can cut off response data the client has
 		// received but not yet read, which some QUIC stacks discard on
-		// CONNECTION_CLOSE. The connection ending, or Server.Close, ends this,
-		// and so does the drain grace: then the deferred close ends it.
+		// CONNECTION_CLOSE. The drain is complete, so however the connection
+		// now ends, by the client, Server.Close, an idle timeout or the drain
+		// grace (then the deferred close ends it), it is not a failure.
+		if config.drainedHook != nil {
+			config.drainedHook()
+		}
 		var grace <-chan time.Time
 		if config.DrainGrace > 0 {
 			timer := time.NewTimer(config.DrainGrace)
@@ -180,7 +188,11 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 		}
 		select {
 		case <-ctx.Done():
-			return ended()
+			if cutShort.Load() { // ctx ended as the last request finished
+				return context.Cause(ctx)
+			}
+			drained = true
+			return nil
 		case <-grace:
 			drained = true
 			return nil
@@ -274,7 +286,10 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 				defer request.Priorities.finish(uint64(stream.StreamID()))
 			}
 			err := ServeRequest(ctx, stream, request)
-			if delivered := stream.Release(ctx); delivered != nil {
+			// After GOAWAY a client that has read its response closes with
+			// H3_NO_ERROR, and its CONNECTION_CLOSE need not acknowledge the
+			// response's last packets. That close is its word that it is done.
+			if delivered := stream.Release(ctx); delivered != nil && !(err == nil && goawaySent.Load() && cleanPeerClose(context.Cause(ctx))) {
 				if ctx.Err() == nil {
 					s.cancel(delivered)
 				}
@@ -352,4 +367,11 @@ func (t *idleTimer) hasExpired() bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.expired
+}
+
+// cleanPeerClose reports whether err is the peer closing the connection with
+// H3_NO_ERROR.
+func cleanPeerClose(err error) bool {
+	var peer *transport.PeerCloseError
+	return errors.As(err, &peer) && peer.Application && peer.Code == 0x100
 }

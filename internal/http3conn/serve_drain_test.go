@@ -257,12 +257,16 @@ func TestServeRequestsDrainEndingCause(t *testing.T) {
 		midRequest bool
 		code       uint64
 		thenCancel bool
+		ownerOnly  bool // the owner cancels once requests are done; no client close
+		holdAck    bool // GOAWAY is never acknowledged, so the drain is not done
 		clean      bool
 	}{
 		{name: "client close", code: 0x100, clean: true},
 		{name: "client close then owner cancel", code: 0x100, thenCancel: true, clean: true},
-		{name: "client close with error code", code: 0x102},
+		{name: "client close with error code before drained", code: 0x102, holdAck: true},
+		{name: "client close before drained", code: 0x100, holdAck: true, clean: true},
 		{name: "client close mid-request", code: 0x100, midRequest: true},
+		{name: "owner cancel after requests done", ownerOnly: true, clean: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			entered := make(chan struct{})
@@ -272,7 +276,9 @@ func TestServeRequestsDrainEndingCause(t *testing.T) {
 			}))
 			session, _ := requestLoopSession(t, config)
 			control := &drainControl{ackEntered: make(chan struct{}), ackRelease: make(chan struct{})}
-			close(control.ackRelease)
+			if !tc.holdAck {
+				close(control.ackRelease)
+			}
 			session.control = control
 			acceptor := &requestAcceptor{streams: make(chan ServerRequestStream, 1)}
 			if tc.midRequest {
@@ -283,9 +289,10 @@ func TestServeRequestsDrainEndingCause(t *testing.T) {
 			defer cancel()
 			parent, cancelParent := context.WithCancel(ctx)
 			defer cancelParent()
+			drained := make(chan struct{})
 			done := make(chan error, 1)
 			go func() {
-				done <- session.ServeRequests(parent, acceptor, ServeRequestsConfig{MaxActive: 1, Request: config, Drain: drain})
+				done <- session.ServeRequests(parent, acceptor, ServeRequestsConfig{MaxActive: 1, Request: config, Drain: drain, drainedHook: func() { close(drained) }})
 			}()
 			if tc.midRequest {
 				select {
@@ -300,7 +307,16 @@ func TestServeRequestsDrainEndingCause(t *testing.T) {
 			case <-ctx.Done():
 				t.Fatal(ctx.Err())
 			}
-			session.cancel(&quic.PeerCloseError{Application: true, Code: tc.code, Reason: "client done"})
+			if tc.ownerOnly {
+				select {
+				case <-drained:
+				case <-ctx.Done():
+					t.Fatal(ctx.Err())
+				}
+				cancelParent()
+			} else {
+				session.cancel(&quic.PeerCloseError{Application: true, Code: tc.code, Reason: "client done"})
+			}
 			if tc.thenCancel {
 				cancelParent()
 			}
@@ -318,5 +334,64 @@ func TestServeRequestsDrainEndingCause(t *testing.T) {
 				t.Fatal("drain hid the connection's ending", err)
 			}
 		})
+	}
+}
+
+// A client that has read its response may close before acknowledging the
+// response's last packets. After GOAWAY that close completes the drain, and
+// the request is not reported as failed.
+func TestServeRequestsDrainClientCloseBeforeFinalAck(t *testing.T) {
+	entered := make(chan struct{})
+	config := serveConfig(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(entered)
+		w.WriteHeader(204)
+	}))
+	session, _ := requestLoopSession(t, config)
+	control := &drainControl{ackEntered: make(chan struct{}), ackRelease: make(chan struct{})}
+	close(control.ackRelease)
+	session.control = control
+	request := requestStream(t, 0)
+	releasing := make(chan struct{})
+	request.release = func(ctx context.Context) error {
+		close(releasing)
+		<-ctx.Done() // the final ACK never comes
+		return context.Cause(ctx)
+	}
+	acceptor := &requestAcceptor{streams: make(chan ServerRequestStream, 1)}
+	acceptor.streams <- request
+	drain := make(chan struct{})
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	reports := make(chan error, 1)
+	done := make(chan error, 1)
+	go func() {
+		done <- session.ServeRequests(ctx, acceptor, ServeRequestsConfig{MaxActive: 1, Request: config, Drain: drain, Report: func(_ context.Context, _ uint64, err error) { reports <- err }})
+	}()
+	for _, c := range []chan struct{}{entered, releasing} {
+		select {
+		case <-c:
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+	}
+	close(drain)
+	select {
+	case <-control.ackEntered:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	clientCloses(session)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal("drain reported failure", err)
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	select {
+	case err := <-reports:
+		t.Fatal("delivered request reported", err)
+	default:
 	}
 }

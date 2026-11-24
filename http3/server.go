@@ -315,7 +315,7 @@ func (c *servedConn) serve() (err error) {
 // Shutdown permanently stops admission and initiates GOAWAY on owned connections.
 // It waits for handlers, delivery and protocol cleanup, then for each client to
 // close its connection as GOAWAY asks, bounded by ctx; a client that does not
-// close within IdleTimeout (3 seconds when unset) is closed with H3_NO_ERROR.
+// close within 3 seconds (or IdleTimeout, if shorter) is closed with H3_NO_ERROR.
 // Expiry does not abort active connections; use Close for abortive shutdown. Listeners
 // passed to Serve stop accepting immediately and close after their workers join.
 // Listeners passed to ServeListener or used independently with ServeQUICConn
@@ -378,17 +378,18 @@ func (s *Server) Close() error {
 	return nil
 }
 
-// defaultDrainGrace bounds the wait for a drained connection's client to close
-// when IdleTimeout is unset: ample for a client to read what it has received.
-const defaultDrainGrace = 3 * time.Second
+// maxDrainGrace bounds the wait for a drained connection's client to close:
+// ample for a client to read what it has received. A client with no public
+// GOAWAY signal, such as an idle ClientConn, may never close.
+const maxDrainGrace = 3 * time.Second
 
 // drainGrace is how long a drained connection waits for its client to close
-// before the server closes it: IdleTimeout if set, else defaultDrainGrace.
+// before the server closes it: maxDrainGrace, or IdleTimeout if shorter.
 func (s *Server) drainGrace() time.Duration {
 	if s.IdleTimeout > 0 {
-		return s.IdleTimeout
+		return min(s.IdleTimeout, maxDrainGrace)
 	}
-	return defaultDrainGrace
+	return maxDrainGrace
 }
 
 func (s *Server) limits() (requests, headers, connections int, err error) {

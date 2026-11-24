@@ -56,8 +56,8 @@ leaves each connection for its client to close, as GOAWAY asks (RFC 9114
 section 5.2), rather than closing it under a response the client may not have
 read: some QUIC stacks discard unread data on CONNECTION_CLOSE. Photon's pooled
 `Transport` closes a drained connection once its responses are released; the
-owner of a `ClientConn` closes it. A client that does not close within
-`IdleTimeout`, or 3 seconds when that is unset, has the connection closed with
+owner of a `ClientConn` closes it. A client that does not close within 3
+seconds, or `IdleTimeout` if that is shorter, has the connection closed with
 H3_NO_ERROR, so it cannot hold it. Its deadline does not abort handlers;
 `Close()` cancels owned connections and handlers without waiting for application
 code to return. For listeners passed to Serve, Shutdown stops acceptance and
@@ -78,8 +78,10 @@ callbacks must honor cancellation, and must not synchronously call Shutdown.
 A normal peer-initiated close is still returned as `*quic.PeerCloseError`; it does
 not prove acknowledgment of all queued transport bytes. After a Shutdown drain's
 GOAWAY, the client closing with H3_NO_ERROR is the expected outcome and returns
-nil, unless it cut a request short; any other ending returns its error. Shutdown
-itself waits for cleanup without aggregating per-connection serving errors.
+nil, unless it cut a request short; that close need not acknowledge a response
+the client has read. Once every request is done, any ending of the connection
+returns nil. Shutdown itself waits for cleanup without aggregating
+per-connection serving errors.
 
 Outgoing trailers require `PermitsTrailer`, a predicate over lowercase field
 names whose definitions permit trailers. Setting the Trailer header alone is
