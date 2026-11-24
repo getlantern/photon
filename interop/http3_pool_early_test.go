@@ -125,12 +125,19 @@ func testHTTP3TransportEarlyRecovery(t *testing.T, custom bool) {
 						// and with retries disabled it simply succeeds. A bodyless
 						// HEAD0RTT gives no such signal, so rejection is checked with a
 						// GET0RTT; it is handled the same way with or without a body.
+						// It stays replayable, so a retry would happen if retries were
+						// not disabled, and the count below would show it.
 						var rejectedBody *cachedEarlyAdmissionBody
+						var rejectedReplays atomic.Int32
 						if round == 1 && !accept && !retry {
 							rejectedBody = &cachedEarlyAdmissionBody{entered: make(chan struct{})}
 							method = ownh3.MethodGet0RTT
 							request, _ = http.NewRequestWithContext(ctx, method, origin+"/", rejectedBody)
 							request.ContentLength = -1
+							request.GetBody = func() (io.ReadCloser, error) {
+								rejectedReplays.Add(1)
+								return &countedHTTPBody{Reader: strings.NewReader("")}, nil
+							}
 						}
 						type outcome struct {
 							response *http.Response
@@ -234,6 +241,9 @@ func testHTTP3TransportEarlyRecovery(t *testing.T, custom bool) {
 							}
 							if requests.Load() != 0 {
 								t.Fatal("rejected request processed")
+							}
+							if replays := rejectedReplays.Load(); replays != 0 {
+								t.Fatal("rejected request replayed with retries disabled:", replays)
 							}
 							fresh, _ := http.NewRequestWithContext(ctx, http.MethodHead, origin+"/fresh", nil)
 							got.response, got.err = pool.RoundTrip(fresh)
