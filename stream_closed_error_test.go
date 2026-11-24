@@ -155,15 +155,7 @@ func TestEmptyWriteReportsEndedSend(t *testing.T) {
 			if n, err := s.Write(nil); n != 0 || err != nil {
 				t.Fatal("empty write on an open stream:", n, err)
 			}
-			// On an open stream an expired deadline is reported, as for data.
-			s.SetWriteDeadline(time.Now().Add(-time.Second))
-			if _, err := s.Write([]byte("y")); !errors.Is(err, os.ErrDeadlineExceeded) {
-				t.Fatal("write with data past the deadline:", err)
-			}
-			if n, err := s.Write(nil); n != 0 || !errors.Is(err, os.ErrDeadlineExceeded) {
-				t.Fatal("empty write past the deadline:", n, err)
-			}
-			s.SetWriteDeadline(time.Time{})
+
 			switch end {
 			case "CancelWrite":
 				s.CancelWrite(0x77)
@@ -284,7 +276,16 @@ func TestEndedSendBeatsExpiredDeadline(t *testing.T) {
 					if end == "open" && name == "Close" {
 						continue // a Close past the deadline is covered below
 					}
-					if err := call(); !want(err) {
+					err := call()
+					// An empty write waits for nothing, so on an open stream
+					// the deadline does not apply to it.
+					if end == "open" && name == "empty Write" {
+						if err != nil {
+							t.Fatal("empty Write on an open stream past the deadline:", err)
+						}
+						continue
+					}
+					if !want(err) {
 						t.Fatalf("%s past the deadline: %v", name, err)
 					}
 				}
@@ -295,5 +296,44 @@ func TestEndedSendBeatsExpiredDeadline(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A repeat Close past its deadline, waiting behind another call, still
+// reports success: sending ended with this stream's own FIN.
+func TestRepeatCloseBehindBusyGateSucceeds(t *testing.T) {
+	clientTLS, serverTLS := dialTLS(t)
+	l, err := ListenAddr("127.0.0.1:0", serverTLS, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client, err := DialAddr(ctx, l.Addr().String(), clientTLS, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.server.Close()
+	if _, err := l.Accept(ctx); err != nil {
+		t.Fatal(err)
+	}
+	s, err := client.OpenStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-s.Context().Done():
+	case <-ctx.Done():
+		t.Fatal("send context never ended after Close")
+	}
+	s.gate <- struct{}{} // another call holds the gate
+	defer s.gate.release()
+	s.SetWriteDeadline(time.Now().Add(-time.Second))
+	if err := s.Close(); err != nil {
+		t.Fatal("repeat Close behind a busy gate:", err)
 	}
 }
