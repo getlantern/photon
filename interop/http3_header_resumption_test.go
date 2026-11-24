@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -46,6 +47,21 @@ func TestHTTP3TransportHeaderLimitResumption(t *testing.T) {
 					t.Fatal(err)
 				}
 				arrival := &earlyArrivalObserver{PacketConn: socket, seen: make(chan struct{})}
+				// Early data is expected, so hold the resumed handshake until some arrives:
+				// a client that is slow to write could otherwise finish the handshake first
+				// and send everything as 1-RTT, which proves nothing about early data.
+				if policy.wantEarly {
+					var hellos atomic.Int32
+					st.GetConfigForClient = func(*tls.ClientHelloInfo) (*tls.Config, error) {
+						if hellos.Add(1) > 1 {
+							select {
+							case <-arrival.seen:
+							case <-ctx.Done():
+							}
+						}
+						return nil, nil
+					}
+				}
 				transport := &upstream.Transport{Conn: arrival}
 				defer func() { socket.Close(); transport.Close() }()
 				listener, err := transport.ListenEarly(st, &upstream.Config{Allow0RTT: true, Versions: []upstream.Version{upstream.Version(v)}})
@@ -162,7 +178,7 @@ func TestHTTP3TransportHeaderLimitResumption(t *testing.T) {
 					}
 				default:
 					if policy.wantEarly {
-						t.Fatal("missing early packet evidence")
+						t.Fatal("missing early packet evidence;", arrival.summary())
 					}
 				}
 			})

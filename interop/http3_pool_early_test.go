@@ -116,6 +116,18 @@ func testHTTP3TransportEarlyRecovery(t *testing.T, custom bool) {
 							method = ownh3.MethodHead0RTT
 						}
 						request, _ := http.NewRequestWithContext(ctx, method, origin+"/", nil)
+						// A rejection is only certain for a request the client began
+						// while early data was still its only option. Its body reports
+						// when the client has opened the stream and is sending it; the
+						// handshake is held until then. Without that, a slow client can
+						// open the stream after the handshake and send it as 1-RTT.
+						var rejectedBody *cachedEarlyAdmissionBody
+						if round == 1 && !accept && !retry {
+							rejectedBody = &cachedEarlyAdmissionBody{entered: make(chan struct{})}
+							method = ownh3.MethodGet0RTT
+							request, _ = http.NewRequestWithContext(ctx, method, origin+"/", rejectedBody)
+							request.ContentLength = -1
+						}
 						type outcome struct {
 							response *http.Response
 							err      error
@@ -131,6 +143,13 @@ func testHTTP3TransportEarlyRecovery(t *testing.T, custom bool) {
 							case <-arrival.seen:
 							case <-ctx.Done():
 								t.Fatal("no pooled early wire packet", ctx.Err())
+							}
+							if rejectedBody != nil {
+								select {
+								case <-rejectedBody.entered:
+								case <-ctx.Done():
+									t.Fatal("early request never began sending", ctx.Err())
+								}
 							}
 							if strings.HasPrefix(mode.name, "cached-") {
 								cachedResult = make(chan outcome, 1)
@@ -200,7 +219,16 @@ func testHTTP3TransportEarlyRecovery(t *testing.T, custom bool) {
 						}
 						if round == 1 && !accept && !retry {
 							if !errors.Is(got.err, quic.Err0RTTRejected) {
-								t.Fatal("retries disabled", got.err)
+								resumed, early := false, false
+								if got.response != nil && got.response.TLS != nil {
+									resumed = got.response.TLS.DidResume
+								}
+								select {
+								case <-arrival.seen:
+									early = true
+								default:
+								}
+								t.Fatal("retries disabled", got.err, "; requests", requests.Load(), "hellos", hellos.Load(), "dials", dials.Load(), "resumed", resumed, "early packet seen", early, ";", arrival.summary())
 							}
 							if requests.Load() != 0 {
 								t.Fatal("rejected request processed")
