@@ -277,6 +277,10 @@ func (s *SendStream) TryWriteAll(p []byte) error {
 		return s.sendEnded()
 	}
 	if !s.gate.tryAcquire() {
+		// A busy gate is worth retrying only while sending can still happen.
+		if ended := s.sendEnded(); ended != nil {
+			return ended
+		}
 		return ErrWouldBlock
 	}
 	defer s.gate.release()
@@ -445,7 +449,7 @@ func (s *SendStream) Close() error {
 // A reset or connection failure is returned rather than treated as delivery.
 func (s *SendStream) WaitAcknowledged(ctx context.Context) error {
 	if err := s.gate.acquire(ctx); err != nil {
-		return err
+		return s.preferAbnormalEnd(err)
 	}
 	defer s.gate.release()
 	if s.rejected.Load() {
@@ -461,7 +465,21 @@ func (s *SendStream) WaitAcknowledged(ctx context.Context) error {
 		err := s.conn.raw.StreamAcknowledged(s.id)
 		return !errors.Is(err, engineStream.ErrWouldBlock), errUnlessBlocked(err)
 	})
-	return s.conn.connectionError(err)
+	return s.preferAbnormalEnd(s.conn.connectionError(err))
+}
+
+// preferAbnormalEnd replaces the end of a wait's own context with a reset,
+// rejected early data or a closed connection, when sending ended that way:
+// those are delivery results, not a reason to wait again. Sending that ended
+// normally with FIN says nothing about delivery, so the context's error stands.
+func (s *SendStream) preferAbnormalEnd(err error) error {
+	if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	if ended := s.sendEnded(); ended != nil && !errors.Is(ended, ErrStreamClosed) {
+		return ended
+	}
+	return err
 }
 
 func (s *SendStream) SetWriteDeadline(t time.Time) error { s.deadline.set(t); return nil }

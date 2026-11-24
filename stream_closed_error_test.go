@@ -435,3 +435,97 @@ func TestEmptyWriteDoesNotWaitForGate(t *testing.T) {
 		t.Fatal("empty TryWriteAll after CancelWrite behind a busy gate:", err)
 	}
 }
+
+// A TryWriteAll with data never waits, so behind a busy gate it reports
+// ErrWouldBlock, but not once sending has ended: a caller that retries on
+// ErrWouldBlock would spin on a dead stream.
+func TestTryWriteAllBehindBusyGateReportsEndedSend(t *testing.T) {
+	_, s := endedSendFixture(t)
+	s.gate <- struct{}{} // a writer blocked on flow control holds the gate
+	defer s.gate.release()
+	if err := s.TryWriteAll([]byte("x")); !errors.Is(err, ErrWouldBlock) {
+		t.Fatal("TryWriteAll behind a busy gate on an open stream:", err)
+	}
+	s.CancelWrite(0x77)
+	<-s.Context().Done()
+	var reset *StreamError
+	if err := s.TryWriteAll([]byte("x")); !errors.As(err, &reset) || reset.ErrorCode != 0x77 {
+		t.Fatal("TryWriteAll behind a busy gate after CancelWrite:", err)
+	}
+}
+
+// WaitAcknowledged reports a reset or a closed connection rather than its own
+// context ending, even when it never got the gate, or when both are ready at
+// once. A normal end with FIN is not a delivery result, so then the context's
+// error stands.
+func TestWaitAcknowledgedReportsAbnormalEnd(t *testing.T) {
+	for _, end := range []string{"busy gate, CancelWrite", "busy gate, FIN", "endpoint closed"} {
+		t.Run(end, func(t *testing.T) {
+			server, s := endedSendFixture(t)
+			var want func(error) bool
+			switch end {
+			case "busy gate, CancelWrite":
+				s.CancelWrite(0x77)
+				want = func(err error) bool { var reset *StreamError; return errors.As(err, &reset) && reset.ErrorCode == 0x77 }
+			case "busy gate, FIN":
+				if err := s.Close(); err != nil {
+					t.Fatal(err)
+				}
+				want = func(err error) bool { return errors.Is(err, context.DeadlineExceeded) }
+			case "endpoint closed":
+				server.CloseWithError(0x79, "gone")
+				<-s.Context().Done()
+				<-s.SendStream.conn.server.Done()
+				want = func(err error) bool {
+					var closed *ApplicationError
+					return errors.As(err, &closed) && closed.ErrorCode == 0x79
+				}
+			}
+			<-s.Context().Done()
+			if end != "endpoint closed" {
+				s.gate <- struct{}{} // another call holds the gate
+				defer s.gate.release()
+			}
+			for i := 0; i < 50; i++ {
+				ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+				<-ctx.Done()
+				err := s.WaitAcknowledged(ctx)
+				cancel()
+				if !want(err) {
+					t.Fatalf("WaitAcknowledged: %v", err)
+				}
+			}
+		})
+	}
+}
+
+// endedSendFixture returns an accepted server connection and an open client
+// stream that has sent a byte.
+func endedSendFixture(t *testing.T) (*Conn, *Stream) {
+	t.Helper()
+	clientTLS, serverTLS := dialTLS(t)
+	l, err := ListenAddr("127.0.0.1:0", serverTLS, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	t.Cleanup(cancel)
+	client, err := DialAddr(ctx, l.Addr().String(), clientTLS, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { client.server.Close() })
+	server, err := l.Accept(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := client.OpenStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Write([]byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	return server, s
+}

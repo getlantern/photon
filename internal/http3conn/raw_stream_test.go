@@ -1738,3 +1738,47 @@ func TestClientStreamGracefulCloseKeepsOnlyCompleteResponses(t *testing.T) {
 		})
 	}
 }
+
+// rejectingRawStream reports rejected early data on an empty Write, as a QUIC
+// stream does once the server has rejected 0-RTT, even after its FIN.
+type rejectingRawStream struct {
+	*rawTestStream
+	rejected bool
+}
+
+func (s *rejectingRawStream) Write(p []byte) (int, error) {
+	if len(p) == 0 && s.rejected {
+		return 0, quic.Err0RTTRejected
+	}
+	return s.rawTestStream.Write(p)
+}
+
+// Rejected early data overrides every other way an empty raw write could
+// describe a finished send direction, including this stream's own Close: the
+// request never reached the server, which a normal end would hide.
+func TestRawStreamEmptyWriteReportsRejectionAfterClose(t *testing.T) {
+	session, raw, config, _ := rawFixture(t, bytes.NewReader(nil))
+	transport := &rejectingRawStream{rawTestStream: raw}
+	stream, err := session.openRequestStream(context.Background(), transport, nil, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.CancelRead(0x10c)
+	request, _ := http.NewRequest("GET", "https://example.com/", nil)
+	if err := stream.SendRequestHeader(request); err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stream.Write(nil); err == nil || errors.Is(err, quic.Err0RTTRejected) {
+		t.Fatal("empty Write after Close, before any rejection:", err)
+	}
+	transport.rejected = true
+	if _, err := stream.Write(nil); !errors.Is(err, quic.Err0RTTRejected) {
+		t.Fatal("empty Write after rejection:", err)
+	}
+	if err := stream.TryWriteAll(nil); !errors.Is(err, quic.Err0RTTRejected) {
+		t.Fatal("empty TryWriteAll after rejection:", err)
+	}
+}

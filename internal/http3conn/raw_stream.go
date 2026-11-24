@@ -136,13 +136,21 @@ func (s *RawStream) Write(p []byte) (n int, err error) {
 	return s.writer.Write(p)
 }
 
-// sendEnded reports why sending is over, for a call with nothing to send that
-// never reaches the stream: the writer's own error, or the end of the send
-// direction (CancelWrite, the peer's STOP_SENDING, connection loss) that only
-// a write with data would otherwise run into.
+// sendEnded reports why sending is over, for a call with nothing to send: the
+// writer's own failure; then an abnormal end the stream reports to an empty
+// write (rejected early data, a reset, connection loss), which outranks even
+// this stream's own Close, since the request may never have reached the peer;
+// then the writer's Close; then the end of the send direction (CancelWrite,
+// the peer's STOP_SENDING, connection loss) seen through its context.
 func (s *RawStream) sendEnded() error {
-	if err := s.writer.writable(); err != nil {
+	if s.writer.err != nil {
+		return s.writer.err
+	}
+	if _, err := s.stream.Write(nil); err != nil && !errors.Is(err, quic.ErrStreamClosed) {
 		return err
+	}
+	if s.writer.closed {
+		return io.ErrClosedPipe
 	}
 	if ctx := s.stream.Context(); ctx.Err() != nil {
 		return context.Cause(ctx)
