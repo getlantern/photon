@@ -55,6 +55,8 @@ func TestServeRequestsGracefulDrainWaitsForDelivery(t *testing.T) {
 	}
 	acceptor := &requestAcceptor{streams: make(chan ServerRequestStream, 2)}
 	late := requestStream(t, 12) // opened before the client saw GOAWAY
+	lateRejected := make(chan struct{})
+	late.release = func(context.Context) error { close(lateRejected); return nil }
 	acceptor.streams <- request
 	acceptor.streams <- late
 	drain := make(chan struct{})
@@ -113,6 +115,11 @@ func TestServeRequestsGracefulDrainWaitsForDelivery(t *testing.T) {
 	transport.mu.Unlock()
 	if aborts != 0 {
 		t.Fatal("closed the connection before the client did")
+	}
+	select {
+	case <-lateRejected:
+	case <-ctx.Done():
+		t.Fatal("late request not rejected before the client closed", ctx.Err())
 	}
 	clientCloses(session)
 	select {
