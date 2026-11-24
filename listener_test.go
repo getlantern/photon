@@ -57,3 +57,41 @@ func TestListenConfiguration(t *testing.T) {
 		t.Fatal("accept blocked after close")
 	}
 }
+
+// Closing a listener that owns its socket first sends what is already queued,
+// so a connection closed just before still tells its peer instead of leaving
+// it to the idle timeout. Repeated, because without that the close loses a race.
+func TestListenerCloseSendsQueuedConnectionClose(t *testing.T) {
+	for i := 0; i < 20; i++ {
+		clientTLS, serverTLS := dialTLS(t)
+		l, err := ListenAddr("127.0.0.1:0", serverTLS, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { l.Close() })
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		t.Cleanup(cancel)
+		client, err := DialAddr(ctx, l.Addr().String(), clientTLS, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { client.server.Close() })
+		server, err := l.Accept(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		server.CloseWithError(0x42, "closing")
+		l.Close()
+		select {
+		case <-client.Context().Done():
+		case <-time.After(3 * time.Second): // far below the idle timeout
+			t.Fatal("the client never heard the close, run", i)
+		}
+		var closed *ApplicationError
+		if cause := context.Cause(client.Context()); !errors.As(cause, &closed) || closed.ErrorCode != 0x42 {
+			t.Fatal("close cause:", cause)
+		}
+		client.server.Close()
+		cancel()
+	}
+}

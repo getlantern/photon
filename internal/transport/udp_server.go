@@ -199,6 +199,16 @@ func newPacketServerWithOwnership(sockets []net.PacketConn, endpoint *ServerEndp
 }
 func (s *UDPServer) Addr() net.Addr { return s.packetConn.LocalAddr() }
 func (s *UDPServer) Close() error {
+	// Stopping closes the sockets at once. First send the owner a no-op: each
+	// loop iteration runs a send pass of up to 64 datagrams before it takes a
+	// command, so by the no-op's reply a pass has run since every earlier
+	// command. What they queued, such as the CONNECTION_CLOSE of a connection
+	// closed just before, then leaves before its socket does, unless a backlog
+	// beyond one pass is ahead of it. The no-op wakes no waiters, and an owner
+	// stuck elsewhere is not waited for beyond a moment: Close must not hang.
+	flush, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	_, _ = s.invoke(flush, func(*ServerEndpoint) error { return nil }, false)
+	cancel()
 	s.stopRuntime()
 	<-s.done
 	<-s.readerDone

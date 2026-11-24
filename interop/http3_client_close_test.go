@@ -264,14 +264,28 @@ func testHTTP3ClientGoawayResponse(t *testing.T, readAfterClose, cancelRequest, 
 			defer cancel()
 			finish := make(chan struct{})
 			entered := make(chan struct{}, 2)
+			// delivered closes once the peer has acknowledged the whole response.
+			// The handler takes its stream over to learn that; the client sees an
+			// ordinary response either way.
+			delivered := make(chan struct{})
 			server := &ownh3.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				entered <- struct{}{}
-				w.Write([]byte("start"))
-				w.(http.Flusher).Flush()
+				w.WriteHeader(http.StatusOK)
+				stream, err := w.(ownh3.HTTPStreamer).HTTPStream()
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				defer stream.CancelRead(quic.StreamErrorCode(ownh3.ErrCodeNoError))
+				stream.Write([]byte("start"))
 				select {
 				case <-finish:
-					w.Write([]byte("end"))
+					stream.Write([]byte("end"))
+					if stream.Close() == nil && stream.QUICStream().WaitAcknowledged(r.Context()) == nil {
+						close(delivered)
+					}
 				case <-r.Context().Done():
+					stream.CancelWrite(quic.StreamErrorCode(ownh3.ErrCodeRequestCanceled))
 				}
 			})}
 			served := make(chan struct{})
@@ -357,11 +371,19 @@ func testHTTP3ClientGoawayResponse(t *testing.T, readAfterClose, cancelRequest, 
 			}
 			close(finish)
 			if readAfterClose {
+				// A peer that closes as soon as its response is delivered: photon's
+				// server leaves closing to the client after GOAWAY, so close it here.
+				select {
+				case <-delivered:
+				case <-ctx.Done():
+					t.Fatal("response never delivered", ctx.Err())
+				}
+				server.Close()
 				select {
 				case err := <-shutdown:
 					shutdownJoined = true
 					if err != nil {
-						t.Fatal("shutdown before read", err)
+						t.Fatal("shutdown", err)
 					}
 				case <-ctx.Done():
 					t.Fatal(ctx.Err())
@@ -424,6 +446,8 @@ func testHTTP3ClientGoawayResponse(t *testing.T, readAfterClose, cancelRequest, 
 			if err := response.Body.Close(); err != nil {
 				t.Fatal(err)
 			}
+			// Its requests done, the client closes, which completes Shutdown.
+			client.Close()
 			if !shutdownJoined {
 				select {
 				case err := <-shutdown:

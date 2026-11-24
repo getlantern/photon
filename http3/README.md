@@ -51,7 +51,21 @@ Configuration must remain immutable while serving. Zero limits use the values
 shown above; a nil Handler uses `http.DefaultServeMux`.
 
 `Shutdown(ctx)` permanently stops new admission, sends GOAWAY, and waits for
-existing requests and connection cleanup. Its deadline does not abort handlers;
+existing requests and connection cleanup. As quic-go's server does, it then
+leaves each connection for its client to close, as GOAWAY asks (RFC 9114
+section 5.2), rather than closing it under a response the client may not have
+read: some QUIC stacks discard unread data on CONNECTION_CLOSE. Photon's pooled
+`Transport` closes a drained connection once its responses are released; the
+owner of a `ClientConn` closes it. A client that does not close within 3
+seconds, or `IdleTimeout` if that is shorter, has the connection closed with
+H3_NO_ERROR, so it cannot hold it. That 3 seconds bounds only the wait for the
+client, which starts once GOAWAY is acknowledged and requests are done, so
+Shutdown can take that long and more even with no requests running. Once its
+deadline has expired, a drained connection is closed as soon as GOAWAY is
+acknowledged and its requests and taken-over streams are done; one still busy
+stays open. That close, like one
+after a grace shortened by a small `IdleTimeout`, can still cut off a response
+the client has received but not read. The deadline does not abort handlers;
 `Close()` cancels owned connections and handlers without waiting for application
 code to return. For listeners passed to Serve, Shutdown stops acceptance and
 closes the listener after connection workers finish; Close closes it
@@ -69,8 +83,17 @@ It continues after individual connection failures; use ServeQUICConn when the
 caller needs individual connection return errors. Handlers and error
 callbacks must honor cancellation, and must not synchronously call Shutdown.
 A normal peer-initiated close is still returned as `*quic.PeerCloseError`; it does
-not prove acknowledgment of all queued transport bytes. Shutdown itself waits
-for cleanup without aggregating per-connection serving errors.
+not prove acknowledgment of all queued transport bytes. After a Shutdown drain's
+GOAWAY, the client closing with H3_NO_ERROR is the expected outcome and returns
+nil. So does any other ending once GOAWAY is sent, including `Close` with
+nothing in flight and a peer's or transport's error close, unless a request
+running in the drain failed or a local HTTP/3 protocol error ended it. A failed
+request's error is returned, and each such failure is also passed to
+`ErrorHandler` and, when `Logger` is set, logged: handler panics at error
+level, other failures at debug level. The client's H3_NO_ERROR close counts as delivery of a
+response the server has finished sending even if it never acknowledged it,
+since the server cannot tell whether the client read it first. Shutdown itself
+waits for cleanup without aggregating per-connection serving errors.
 
 Outgoing trailers require `PermitsTrailer`, a predicate over lowercase field
 names whose definitions permit trailers. Setting the Trailer header alone is
@@ -774,7 +797,10 @@ context panics.
 is finished, and blocks while `MaxConcurrentRequests` requests are running. A
 raw server connection is registered with its `Server`: `Shutdown` sends GOAWAY,
 rejects later request streams with H3_REQUEST_REJECTED, waits for the running
-ones and then closes the connection; `Close` aborts it.
+ones and then for the client to close the connection, which the server closes
+itself after the drain grace, or once `Shutdown`'s context has expired and the
+running ones are done. An expired deadline does not close a connection with a
+taken-over stream still open; `Close` aborts it.
 
 ### Idle timeout and logging
 

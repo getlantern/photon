@@ -101,6 +101,7 @@ type Server struct {
 
 	mu            sync.Mutex
 	stopping      bool
+	drainCutoff   chan struct{} // closed when Shutdown's deadline expires
 	connections   map[*quic.Conn]*serverConnection
 	listeners     map[*serverListener]struct{}
 	listenerOrder uint64
@@ -302,7 +303,7 @@ func (c *servedConn) serve() (err error) {
 		return nil
 	}
 	return session.ServeRequests(ctx, acceptor, http3conn.ServeRequestsConfig{
-		MaxActive: requests, Drain: entry.drain, IdleTimeout: s.IdleTimeout, Report: s.requestReport(),
+		MaxActive: requests, Drain: entry.drain, DrainCutoff: s.cutoff(), IdleTimeout: s.IdleTimeout, DrainGrace: s.drainGrace(), Report: s.requestReport(),
 		Request: http3conn.ServeRequestConfig{Priorities: priorities, HandlerError: httpError, HandlerPolicy: func(next http.Handler) http.Handler {
 			withSettings := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				next.ServeHTTP(&settingsResponseWriter{HTTPResponseWriter: w.(*http3conn.HTTPResponseWriter), settingsView: settingsFrom(sessionSettings{session})}, r)
@@ -313,9 +314,17 @@ func (c *servedConn) serve() (err error) {
 }
 
 // Shutdown permanently stops admission and initiates GOAWAY on owned connections.
-// It waits for handlers, delivery and protocol cleanup, bounded by ctx. Expiry
-// does not abort active connections; use Close for abortive shutdown. Listeners
-// passed to Serve stop accepting immediately and close after their workers join.
+// It waits for handlers, delivery and protocol cleanup, then for each client to
+// close its connection as GOAWAY asks, bounded by ctx; a client that does not
+// close within 3 seconds (or IdleTimeout, if shorter) of that wait starting is
+// closed with H3_NO_ERROR. The wait starts once GOAWAY is acknowledged and
+// requests are done, so even with no requests running Shutdown can take 3
+// seconds and more. When ctx expires, Shutdown returns ctx's cause,
+// and from then on a drained connection waiting for its client, now or once
+// its requests are done, is closed with H3_NO_ERROR, including during any
+// later Shutdown call. Expiry does not abort active connections; use Close
+// for abortive shutdown. Listeners passed to Serve stop accepting immediately
+// and close after their workers join.
 // Listeners passed to ServeListener or used independently with ServeQUICConn
 // remain caller-owned and are not closed.
 func (s *Server) Shutdown(ctx context.Context) error {
@@ -327,6 +336,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		select {
 		case <-entry.done:
 		case <-ctx.Done():
+			s.expireDrains()
 			return context.Cause(ctx)
 		}
 	}
@@ -334,11 +344,39 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		select {
 		case <-listener.done:
 		case <-ctx.Done():
+			s.expireDrains()
 			return context.Cause(ctx)
 		}
 	}
 	return nil
 }
+
+// cutoff returns the channel that ends drained connections' wait for their
+// clients once Shutdown's deadline has expired.
+func (s *Server) cutoff() <-chan struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.drainCutoff == nil {
+		s.drainCutoff = make(chan struct{})
+	}
+	return s.drainCutoff
+}
+
+// expireDrains closes drained connections still waiting for their clients,
+// and any that drain later, with H3_NO_ERROR.
+func (s *Server) expireDrains() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.drainCutoff == nil {
+		s.drainCutoff = make(chan struct{})
+	}
+	select {
+	case <-s.drainCutoff:
+	default:
+		close(s.drainCutoff)
+	}
+}
+
 func (s *Server) stopAdmission() ([]*serverConnection, []*serverListener) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -362,16 +400,32 @@ func (s *Server) stopAdmission() ([]*serverConnection, []*serverListener) {
 // application code. ServeQUICConn returns only after its workers have joined.
 func (s *Server) Close() error {
 	entries, listeners := s.stopAdmission()
+	// Close connections before the listeners that own their socket, so each
+	// close reaches its peer instead of leaving it to time out.
+	for _, entry := range entries {
+		entry.cancel(ErrServerClosed)
+		entry.conn.CloseWithError(0x100, "HTTP3 server closed")
+	}
 	for _, listener := range listeners {
 		if listener.owned {
 			listener.listener.Close()
 		}
 	}
-	for _, entry := range entries {
-		entry.cancel(ErrServerClosed)
-		entry.conn.CloseWithError(0x100, "HTTP3 server closed")
-	}
 	return nil
+}
+
+// maxDrainGrace bounds the wait for a drained connection's client to close:
+// ample for a client to read what it has received. A client with no public
+// GOAWAY signal, such as an idle ClientConn, may never close.
+const maxDrainGrace = 3 * time.Second
+
+// drainGrace is how long a drained connection waits for its client to close
+// before the server closes it: maxDrainGrace, or IdleTimeout if shorter.
+func (s *Server) drainGrace() time.Duration {
+	if s.IdleTimeout > 0 {
+		return min(s.IdleTimeout, maxDrainGrace)
+	}
+	return maxDrainGrace
 }
 
 func (s *Server) limits() (requests, headers, connections int, err error) {
