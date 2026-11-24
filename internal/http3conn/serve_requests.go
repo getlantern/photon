@@ -12,8 +12,11 @@ import (
 	"github.com/getlantern/photon/internal/wire"
 )
 
-// RequestAcceptor must interrupt AcceptRequest when ctx is canceled. The transport
-// enforces stream identity and flow-control limits for requests not yet accepted.
+// RequestAcceptor must interrupt AcceptRequest when ctx is canceled, and fail
+// only once ctx or the connection has ended: during a drain an accept error
+// ends rejection of late streams, and the session reports the ending. The
+// transport enforces stream identity and flow-control limits for requests not
+// yet accepted.
 type RequestAcceptor interface {
 	AcceptRequest(context.Context) (ServerRequestStream, error)
 }
@@ -273,7 +276,7 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 			return err
 		}
 		if stream == nil {
-			return fmt.Errorf("http3: acceptor returned nil request stream")
+			return &h3.Error{Code: 0x102, Reason: "acceptor returned nil request stream"}
 		}
 		if uint64(stream.StreamID())%4 != 0 || uint64(stream.StreamID()) > wire.MaxVarint {
 			return &h3.Error{Code: h3.StreamCreationError, Reason: "non-request stream in server request loop"}

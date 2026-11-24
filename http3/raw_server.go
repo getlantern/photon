@@ -63,7 +63,8 @@ func (c *RawServerConn) HandleRequestStream(str *quic.Stream) {
 	str.ReleaseStreamCredit()
 	handed := &handedRequestStream{Stream: str, released: make(chan struct{})}
 	// Once draining, reject here, at once, rather than through the request
-	// loop's rejecting accept, which would wait for the stream to complete.
+	// loop's rejecting accept, which waits for the stream to complete. A drain
+	// that starts while this call waits below may still take that path.
 	select {
 	case <-c.drain:
 		str.CancelRead(quic.StreamErrorCode(ErrCodeRequestRejected))
