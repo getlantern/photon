@@ -68,11 +68,14 @@ func TestListenerCloseSendsQueuedConnectionClose(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		t.Cleanup(func() { l.Close() })
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		t.Cleanup(cancel)
 		client, err := DialAddr(ctx, l.Addr().String(), clientTLS, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
+		t.Cleanup(func() { client.server.Close() })
 		server, err := l.Accept(ctx)
 		if err != nil {
 			t.Fatal(err)

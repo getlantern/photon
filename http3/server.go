@@ -317,12 +317,13 @@ func (c *servedConn) serve() (err error) {
 // It waits for handlers, delivery and protocol cleanup, then for each client to
 // close its connection as GOAWAY asks, bounded by ctx; a client that does not
 // close within 3 seconds (or IdleTimeout, if shorter) is closed with H3_NO_ERROR.
-// When ctx expires, Shutdown returns ctx's cause, and from then on a drained
-// connection waiting for its client, now or once its requests are done, is
-// closed with H3_NO_ERROR, including during any later Shutdown call. Even with no requests running, Shutdown can take
-// that long, since it waits for clients to close. Expiry does not abort
-// active connections; use Close for abortive shutdown. Listeners
-// passed to Serve stop accepting immediately and close after their workers join.
+// Even with no requests running, Shutdown can take up to 3 seconds, since it
+// waits for clients to close. When ctx expires, Shutdown returns ctx's cause,
+// and from then on a drained connection waiting for its client, now or once
+// its requests are done, is closed with H3_NO_ERROR, including during any
+// later Shutdown call. Expiry does not abort active connections; use Close
+// for abortive shutdown. Listeners passed to Serve stop accepting immediately
+// and close after their workers join.
 // Listeners passed to ServeListener or used independently with ServeQUICConn
 // remain caller-owned and are not closed.
 func (s *Server) Shutdown(ctx context.Context) error {

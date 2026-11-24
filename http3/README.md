@@ -85,7 +85,7 @@ GOAWAY, the client closing with H3_NO_ERROR is the expected outcome and returns
 nil. So does any other ending once GOAWAY is sent, including `Close` with
 nothing in flight and a peer's or transport's error close, unless a request
 running in the drain failed (its error is returned, and each such failure is
-also logged to `Logger`) or a local HTTP/3 protocol error ended it. The client's H3_NO_ERROR close counts as delivery of a
+also passed to `ErrorHandler` and logged at debug level when `Logger` is set) or a local HTTP/3 protocol error ended it. The client's H3_NO_ERROR close counts as delivery of a
 response the server has finished sending even if it never acknowledged it,
 since the server cannot tell whether the client read it first. Shutdown itself
 waits for cleanup without aggregating per-connection serving errors.

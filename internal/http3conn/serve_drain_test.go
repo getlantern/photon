@@ -7,7 +7,6 @@ import (
 	quic "github.com/getlantern/photon"
 	h3 "github.com/getlantern/photon/internal/http3wire"
 	"net/http"
-	"strings"
 	"testing"
 	"time"
 )
@@ -577,7 +576,8 @@ func TestServeRequestsDrainCutoff(t *testing.T) {
 }
 
 // A request that fails during the drain fails it on every path, with the
-// request's own error, including when the grace ends the wait.
+// request's own error, including when the grace ends the wait. The
+// connection still closes with H3_NO_ERROR.
 func TestServeRequestsDrainFailureOnGracePath(t *testing.T) {
 	proceed := make(chan struct{})
 	entered := make(chan struct{})
@@ -586,7 +586,7 @@ func TestServeRequestsDrainFailureOnGracePath(t *testing.T) {
 		<-proceed
 		panic("handler failed during drain")
 	}))
-	session, _ := requestLoopSession(t, config)
+	session, transport := requestLoopSession(t, config)
 	control := &drainControl{ackEntered: make(chan struct{}), ackRelease: make(chan struct{})}
 	close(control.ackRelease)
 	session.control = control
@@ -613,12 +613,14 @@ func TestServeRequestsDrainFailureOnGracePath(t *testing.T) {
 	close(proceed)
 	select {
 	case err := <-done:
-		if err == nil || !strings.Contains(err.Error(), "handler panic") {
+		var panicked *HandlerPanicError
+		if !errors.As(err, &panicked) {
 			t.Fatal("grace hid a request that failed during the drain:", err)
 		}
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
+	transport.check(t, 0x100)
 }
 
 // A control-stream failure while the connection lives, such as STOP_SENDING,
