@@ -316,9 +316,10 @@ func (c *servedConn) serve() (err error) {
 // Shutdown permanently stops admission and initiates GOAWAY on owned connections.
 // It waits for handlers, delivery and protocol cleanup, then for each client to
 // close its connection as GOAWAY asks, bounded by ctx; a client that does not
-// close within 3 seconds (or IdleTimeout, if shorter) is closed with H3_NO_ERROR.
-// Even with no requests running, Shutdown can take up to 3 seconds, since it
-// waits for clients to close. When ctx expires, Shutdown returns ctx's cause,
+// close within 3 seconds (or IdleTimeout, if shorter) of that wait starting is
+// closed with H3_NO_ERROR. The wait starts once GOAWAY is acknowledged and
+// requests are done, so even with no requests running Shutdown can take 3
+// seconds and more. When ctx expires, Shutdown returns ctx's cause,
 // and from then on a drained connection waiting for its client, now or once
 // its requests are done, is closed with H3_NO_ERROR, including during any
 // later Shutdown call. Expiry does not abort active connections; use Close

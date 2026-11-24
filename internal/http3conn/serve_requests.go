@@ -166,10 +166,10 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 			return context.Cause(ctx)
 		}
 		if err := control.WaitAcknowledged(ctx); err != nil {
-			// The stream can see the client's close before ctx does. Any other
-			// failure while the connection lives, such as STOP_SENDING on the
-			// control stream, is an error as before.
-			if ctx.Err() != nil || gracefulPeerClose(err) {
+			// The stream can see the client's close, with any code, before
+			// ctx does. A failure while the connection lives, such as
+			// STOP_SENDING on the control stream, is an error as before.
+			if ctx.Err() != nil || peerClosed(err) {
 				endedInDrain = true
 			}
 			return err

@@ -58,9 +58,12 @@ read: some QUIC stacks discard unread data on CONNECTION_CLOSE. Photon's pooled
 `Transport` closes a drained connection once its responses are released; the
 owner of a `ClientConn` closes it. A client that does not close within 3
 seconds, or `IdleTimeout` if that is shorter, has the connection closed with
-H3_NO_ERROR, so it cannot hold it. Shutdown can therefore take up to 3 seconds
-even with no requests running. Once its deadline has expired, a drained
-connection is closed as soon as its requests are done. That close, like one
+H3_NO_ERROR, so it cannot hold it. That 3 seconds bounds only the wait for the
+client, which starts once GOAWAY is acknowledged and requests are done, so
+Shutdown can take that long and more even with no requests running. Once its
+deadline has expired, a drained connection is closed as soon as GOAWAY is
+acknowledged and its requests and taken-over streams are done; one still busy
+stays open. That close, like one
 after a grace shortened by a small `IdleTimeout`, can still cut off a response
 the client has received but not read. The deadline does not abort handlers;
 `Close()` cancels owned connections and handlers without waiting for application
@@ -84,8 +87,10 @@ not prove acknowledgment of all queued transport bytes. After a Shutdown drain's
 GOAWAY, the client closing with H3_NO_ERROR is the expected outcome and returns
 nil. So does any other ending once GOAWAY is sent, including `Close` with
 nothing in flight and a peer's or transport's error close, unless a request
-running in the drain failed (its error is returned, and each such failure is
-also passed to `ErrorHandler` and logged at debug level when `Logger` is set) or a local HTTP/3 protocol error ended it. The client's H3_NO_ERROR close counts as delivery of a
+running in the drain failed or a local HTTP/3 protocol error ended it. A failed
+request's error is returned, and each such failure is also passed to
+`ErrorHandler` and, when `Logger` is set, logged: handler panics at error
+level, other failures at debug level. The client's H3_NO_ERROR close counts as delivery of a
 response the server has finished sending even if it never acknowledged it,
 since the server cannot tell whether the client read it first. Shutdown itself
 waits for cleanup without aggregating per-connection serving errors.
@@ -793,8 +798,9 @@ is finished, and blocks while `MaxConcurrentRequests` requests are running. A
 raw server connection is registered with its `Server`: `Shutdown` sends GOAWAY,
 rejects later request streams with H3_REQUEST_REJECTED, waits for the running
 ones and then for the client to close the connection, which the server closes
-itself after the drain grace or once `Shutdown`'s context expires; `Close`
-aborts it.
+itself after the drain grace, or once `Shutdown`'s context has expired and the
+running ones are done. An expired deadline does not close a connection with a
+taken-over stream still open; `Close` aborts it.
 
 ### Idle timeout and logging
 

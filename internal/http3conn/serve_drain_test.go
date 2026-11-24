@@ -7,6 +7,7 @@ import (
 	quic "github.com/getlantern/photon"
 	h3 "github.com/getlantern/photon/internal/http3wire"
 	"net/http"
+	"sync"
 	"testing"
 	"time"
 )
@@ -57,9 +58,10 @@ func TestServeRequestsGracefulDrainWaitsForDelivery(t *testing.T) {
 	drain := make(chan struct{})
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
+	drained := make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
-		done <- session.ServeRequests(ctx, acceptor, ServeRequestsConfig{MaxActive: 1, Request: config, Drain: drain})
+		done <- session.ServeRequests(ctx, acceptor, ServeRequestsConfig{MaxActive: 1, Request: config, Drain: drain, drainedHook: func() { close(drained) }})
 	}()
 	var handlerCtx context.Context
 	select {
@@ -94,6 +96,11 @@ func TestServeRequestsGracefulDrainWaitsForDelivery(t *testing.T) {
 	close(releaseAllowed)
 	// Every request is done, but closing is the client's: the loop must not
 	// close the connection under a response the client may not have read.
+	select {
+	case <-drained:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
 	select {
 	case err := <-done:
 		t.Fatal("closed the connection before the client did", err)
@@ -409,9 +416,10 @@ func testDrainRelease(t *testing.T, releaseFirst bool, resetErr error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	reports := make(chan error, 1)
+	drained := make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
-		done <- session.ServeRequests(ctx, acceptor, ServeRequestsConfig{MaxActive: 1, Request: config, Drain: drain, Report: func(_ context.Context, _ uint64, err error) { reports <- err }})
+		done <- session.ServeRequests(ctx, acceptor, ServeRequestsConfig{MaxActive: 1, Request: config, Drain: drain, drainedHook: func() { close(drained) }, Report: func(_ context.Context, _ uint64, err error) { reports <- err }})
 	}()
 	for _, c := range []chan struct{}{entered, releasing} {
 		select {
@@ -425,6 +433,15 @@ func testDrainRelease(t *testing.T, releaseFirst bool, resetErr error) {
 	case <-control.ackEntered:
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
+	}
+	if releaseFirst {
+		// Release has returned the close and the request is joined before
+		// ctx sees any close.
+		select {
+		case <-drained:
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
 	}
 	clientCloses(session)
 	select {
@@ -456,19 +473,24 @@ func TestServeRequestsDrainResetBeforeCleanClose(t *testing.T) {
 	testDrainRelease(t, false, errors.New("stream reset by peer"))
 }
 
-// WaitAcknowledged can see the client's clean close before ctx does.
+// WaitAcknowledged can see the client's close, with any code, before ctx
+// does. That close ends the connection, so it completes the drain as the
+// same close seen through ctx would.
 func TestServeRequestsDrainCloseSeenByAcknowledgment(t *testing.T) {
-	config := serveConfig(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("handler invoked") }))
-	session, transport := requestLoopSession(t, config)
-	session.control = &drainControl{ackEntered: make(chan struct{}), ackRelease: make(chan struct{}), ackErr: &quic.PeerCloseError{Application: true, Code: 0x100, Reason: "client done"}}
-	drain := make(chan struct{})
-	close(drain)
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	if err := session.ServeRequests(ctx, &requestAcceptor{streams: make(chan ServerRequestStream)}, ServeRequestsConfig{MaxActive: 1, Request: config, Drain: drain}); err != nil {
-		t.Fatal(err)
+	for _, code := range []uint64{0x100, 0x102} {
+		config := serveConfig(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("handler invoked") }))
+		session, transport := requestLoopSession(t, config)
+		session.control = &drainControl{ackEntered: make(chan struct{}), ackRelease: make(chan struct{}), ackErr: &quic.PeerCloseError{Application: true, Code: code, Reason: "client done"}}
+		drain := make(chan struct{})
+		close(drain)
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		err := session.ServeRequests(ctx, &requestAcceptor{streams: make(chan ServerRequestStream)}, ServeRequestsConfig{MaxActive: 1, Request: config, Drain: drain})
+		cancel()
+		if err != nil {
+			t.Fatal("code", code, err)
+		}
+		transport.check(t, 0x100)
 	}
-	transport.check(t, 0x100)
 }
 
 // A connection that ends during a drain is closed at once, even while a
@@ -476,6 +498,8 @@ func TestServeRequestsDrainCloseSeenByAcknowledgment(t *testing.T) {
 // it.
 func TestServeRequestsDrainEndingClosesBeforeJoiningRequests(t *testing.T) {
 	entered, finish := make(chan struct{}), make(chan struct{})
+	release := sync.OnceFunc(func() { close(finish) })
+	t.Cleanup(release) // a failed wait must not strand the handler
 	config := serveConfig(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		close(entered)
 		<-finish // ignores r.Context()
@@ -518,7 +542,7 @@ func TestServeRequestsDrainEndingClosesBeforeJoiningRequests(t *testing.T) {
 		case <-time.After(time.Millisecond):
 		}
 	}
-	close(finish)
+	release()
 	select {
 	case err := <-done:
 		if err == nil {
@@ -580,6 +604,8 @@ func TestServeRequestsDrainCutoff(t *testing.T) {
 // connection still closes with H3_NO_ERROR.
 func TestServeRequestsDrainFailureOnGracePath(t *testing.T) {
 	proceed := make(chan struct{})
+	release := sync.OnceFunc(func() { close(proceed) })
+	t.Cleanup(release) // a failed wait must not strand the handler
 	entered := make(chan struct{})
 	config := serveConfig(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		close(entered)
@@ -610,7 +636,7 @@ func TestServeRequestsDrainFailureOnGracePath(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
-	close(proceed)
+	release()
 	select {
 	case err := <-done:
 		var panicked *HandlerPanicError

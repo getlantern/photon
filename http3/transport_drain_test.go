@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -61,11 +62,21 @@ func TestTransportGracefulShutdownDeliversBufferedResponse(t *testing.T) {
 }
 
 func testGracefulShutdownBufferedResponse(t *testing.T, trailers, serverCloses bool) {
+	// The handler runs until the client has seen GOAWAY, so a short idle
+	// timeout cannot close the connection before the drain starts.
+	hold := make(chan struct{})
+	release := sync.OnceFunc(func() { close(hold) })
+	t.Cleanup(release)
 	server := &Server{PermitsTrailer: func(string) bool { return true }, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if trailers {
 			w.Header().Set("Trailer", "X-Drained")
 		}
 		io.WriteString(w, "buffered")
+		w.(http.Flusher).Flush()
+		select {
+		case <-hold:
+		case <-r.Context().Done():
+		}
 		if trailers {
 			w.Header().Set("X-Drained", "complete")
 		}
@@ -98,6 +109,7 @@ func testGracefulShutdownBufferedResponse(t *testing.T, trailers, serverCloses b
 	case <-ctx.Done():
 		t.Fatal("no GOAWAY", ctx.Err())
 	}
+	release()
 	if serverCloses {
 		select {
 		case <-client.session.Done():

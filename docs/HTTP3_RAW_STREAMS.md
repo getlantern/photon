@@ -130,9 +130,11 @@ setting.
   server connection is registered with its `Server`: `Shutdown` sends GOAWAY,
   rejects later `HandleRequestStream` calls with H3_REQUEST_REJECTED, waits for
   running requests and taken-over streams, then waits for the client to close
-  the connection. After 3 seconds (or `IdleTimeout`, if shorter), or when
-  `Shutdown`'s context expires, the server closes it with H3_NO_ERROR. `Close`
-  aborts it.
+  the connection. After 3 seconds of that wait (or `IdleTimeout`, if shorter),
+  or once `Shutdown`'s context has expired and the running requests and
+  taken-over streams are done, the server closes it with H3_NO_ERROR. An
+  expired deadline does not close a connection with a taken-over stream still
+  open; `Close` aborts it.
 - Concurrency: taken-over server streams and open `RequestStream`s hold their
   `MaxConcurrentRequests` slot for their whole life. `HandleRequestStream`
   blocks while the server limit is reached.

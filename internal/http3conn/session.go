@@ -309,6 +309,12 @@ func gracefulPeerClose(cause error) bool {
 	return errors.As(cause, &closed) && closed.Application && closed.Code == 0x100
 }
 
+// peerClosed reports a peer CONNECTION_CLOSE with any code.
+func peerClosed(cause error) bool {
+	var closed *quic.PeerCloseError
+	return errors.As(cause, &closed)
+}
+
 // WaitEncoder waits for successful initialization from live or remembered SETTINGS.
 // Canceling this wait does not stop the connection session.
 func (s *Session) WaitEncoder(ctx context.Context) (*FieldEncoder, error) {
