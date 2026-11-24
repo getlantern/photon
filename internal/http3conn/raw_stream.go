@@ -187,7 +187,10 @@ func (s *RawStream) TryWriteAll(p []byte) (err error) {
 		if abnormal := s.abnormalEnd(); abnormal != nil {
 			return abnormal
 		}
-		if ctx := s.stream.Context(); ctx.Err() != nil && !errors.Is(context.Cause(ctx), quic.ErrStreamClosed) {
+		if ctx := s.stream.Context(); ctx.Err() != nil {
+			if errors.Is(context.Cause(ctx), quic.ErrStreamClosed) {
+				return io.ErrClosedPipe // this stream's own FIN ended sending
+			}
 			return context.Cause(ctx)
 		}
 		return quic.ErrWouldBlock

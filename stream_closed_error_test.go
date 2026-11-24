@@ -448,7 +448,7 @@ func TestTryWriteAllBehindBusyGateReportsEndedSend(t *testing.T) {
 		t.Fatal("TryWriteAll behind a busy gate on an open stream:", err)
 	}
 	s.CancelWrite(0x77)
-	<-s.Context().Done()
+	await(t, s.Context().Done(), "end of sending")
 	var reset *StreamError
 	if err := s.TryWriteAll([]byte("x")); !errors.As(err, &reset) || reset.ErrorCode != 0x77 {
 		t.Fatal("TryWriteAll behind a busy gate after CancelWrite:", err)
@@ -475,8 +475,8 @@ func TestWaitAcknowledgedReportsAbnormalEnd(t *testing.T) {
 				want = func(err error) bool { return errors.Is(err, context.DeadlineExceeded) }
 			case "endpoint closed":
 				server.CloseWithError(0x79, "gone")
-				<-s.Context().Done()
-				<-s.SendStream.conn.server.Done()
+				await(t, s.Context().Done(), "end of sending")
+				await(t, s.SendStream.conn.server.Done(), "endpoint close")
 				want = func(err error) bool {
 					var closed *ApplicationError
 					return errors.As(err, &closed) && closed.ErrorCode == 0x79
@@ -490,10 +490,10 @@ func TestWaitAcknowledgedReportsAbnormalEnd(t *testing.T) {
 					t.Fatal(err)
 				}
 				server.CloseWithError(0x79, "gone")
-				<-s.SendStream.conn.server.Done()
+				await(t, s.SendStream.conn.server.Done(), "endpoint close")
 				want = func(err error) bool { return errors.Is(err, context.DeadlineExceeded) }
 			}
-			<-s.Context().Done()
+			await(t, s.Context().Done(), "end of sending")
 			if strings.HasPrefix(end, "busy gate") {
 				s.gate <- struct{}{} // another call holds the gate
 				defer s.gate.release()
@@ -540,4 +540,14 @@ func endedSendFixture(t *testing.T) (*Conn, *Stream) {
 		t.Fatal(err)
 	}
 	return server, s
+}
+
+// await fails the test if ch does not close within five seconds.
+func await(t *testing.T, ch <-chan struct{}, what string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(5 * time.Second):
+		t.Fatal(what, "never happened")
+	}
 }

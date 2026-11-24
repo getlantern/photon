@@ -1817,3 +1817,24 @@ func TestRawStreamTryWriteAllBehindBusyWriterReportsEndedSend(t *testing.T) {
 		t.Fatal("TryWriteAll behind a busy writer after a reset:", err)
 	}
 }
+
+// Behind a busy writer after this stream's FIN, a raw TryWriteAll reports the
+// stream closed, as the QUIC layer does, rather than ErrWouldBlock.
+func TestRawStreamTryWriteAllBehindBusyWriterAfterFIN(t *testing.T) {
+	session, raw, config, _ := rawFixture(t, bytes.NewReader(nil))
+	stream, err := session.openRequestStream(context.Background(), raw, nil, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.CancelRead(0x10c)
+	request, _ := http.NewRequest("POST", "https://example.com/", nil)
+	if err := stream.SendRequestHeader(request); err != nil {
+		t.Fatal(err)
+	}
+	stream.writeMu.Lock() // a Close holding the lock has just queued FIN
+	defer stream.writeMu.Unlock()
+	raw.sendCancel(quic.ErrStreamClosed)
+	if err := stream.TryWriteAll([]byte("x")); !errors.Is(err, io.ErrClosedPipe) {
+		t.Fatal("TryWriteAll behind a busy writer after FIN:", err)
+	}
+}

@@ -475,6 +475,8 @@ func (s *SendStream) WaitAcknowledged(ctx context.Context) error {
 // normally with FIN says nothing about delivery, so the context's error stands:
 // a connection lost after that FIN may or may not have been told of its
 // delivery, which only the wait itself, holding the gate, can establish.
+// Without a FIN, a connection lost while the wait could not hold the gate is
+// reported as a failure even if its bytes had been acknowledged first.
 func (s *SendStream) preferAbnormalEnd(err error) error {
 	if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 		return err
