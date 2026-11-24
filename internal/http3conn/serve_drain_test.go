@@ -261,6 +261,7 @@ func TestServeRequestsDrainEndingCause(t *testing.T) {
 		ownerOnly  bool // the owner cancels once requests are done; no client close
 		holdAck    bool // GOAWAY is never acknowledged, so the drain is not done
 		protocol   bool // a protocol error ends the connection once requests are done
+		afterDone  bool // the client closes once GOAWAY is acknowledged and requests are done
 		clean      bool
 	}{
 		{name: "client close", code: 0x100, clean: true},
@@ -270,6 +271,8 @@ func TestServeRequestsDrainEndingCause(t *testing.T) {
 		{name: "client close mid-request", code: 0x100, midRequest: true},
 		{name: "owner cancel after requests done", ownerOnly: true, clean: true},
 		{name: "protocol error after requests done", protocol: true},
+		{name: "client close after requests done", code: 0x100, afterDone: true, clean: true},
+		{name: "client error close after requests done", code: 0x102, afterDone: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			entered := make(chan struct{})
@@ -295,7 +298,7 @@ func TestServeRequestsDrainEndingCause(t *testing.T) {
 			drained := make(chan struct{})
 			done := make(chan error, 1)
 			go func() {
-				done <- session.ServeRequests(parent, acceptor, ServeRequestsConfig{MaxActive: 1, Request: config, Drain: drain, Drained: func() { close(drained) }})
+				done <- session.ServeRequests(parent, acceptor, ServeRequestsConfig{MaxActive: 1, Request: config, Drain: drain, drainedHook: func() { close(drained) }})
 			}()
 			if tc.midRequest {
 				select {
@@ -310,17 +313,17 @@ func TestServeRequestsDrainEndingCause(t *testing.T) {
 			case <-ctx.Done():
 				t.Fatal(ctx.Err())
 			}
-			if tc.ownerOnly || tc.protocol {
+			if tc.ownerOnly || tc.protocol || tc.afterDone {
 				select {
 				case <-drained:
 				case <-ctx.Done():
 					t.Fatal(ctx.Err())
 				}
-				if tc.protocol {
-					session.cancel(&h3.Error{Code: h3.FrameUnexpected, Reason: "bad frame"})
-				} else {
-					cancelParent()
-				}
+			}
+			if tc.protocol {
+				session.cancel(&h3.Error{Code: h3.FrameUnexpected, Reason: "bad frame"})
+			} else if tc.ownerOnly {
+				cancelParent()
 			} else {
 				session.cancel(&quic.PeerCloseError{Application: true, Code: tc.code, Reason: "client done"})
 			}
@@ -420,5 +423,109 @@ func testDrainClientCloseBeforeFinalAck(t *testing.T, releaseFirst bool) {
 	case err := <-reports:
 		t.Fatal("delivered request reported", err)
 	default:
+	}
+}
+
+// A connection that ends during a drain is closed at once, even while a
+// handler that ignores cancellation is still running; the outcome waits for
+// it.
+func TestServeRequestsDrainEndingClosesBeforeJoiningRequests(t *testing.T) {
+	entered, finish := make(chan struct{}), make(chan struct{})
+	config := serveConfig(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(entered)
+		<-finish // ignores r.Context()
+	}))
+	session, transport := requestLoopSession(t, config)
+	control := &drainControl{ackEntered: make(chan struct{}), ackRelease: make(chan struct{})}
+	close(control.ackRelease)
+	session.control = control
+	acceptor := &requestAcceptor{streams: make(chan ServerRequestStream, 1)}
+	acceptor.streams <- requestStream(t, 0)
+	drain := make(chan struct{})
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- session.ServeRequests(ctx, acceptor, ServeRequestsConfig{MaxActive: 1, Request: config, Drain: drain})
+	}()
+	select {
+	case <-entered:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	close(drain)
+	select {
+	case <-control.ackEntered:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	clientCloses(session)
+	for {
+		transport.mu.Lock()
+		aborts := transport.aborts
+		transport.mu.Unlock()
+		if aborts == 1 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("connection not closed while a request was running")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	close(finish)
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("a request cut short by the close completed the drain")
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+}
+
+// Closing DrainCutoff ends a drained connection's wait for its client, whether
+// it closes before or after the requests are done.
+func TestServeRequestsDrainCutoff(t *testing.T) {
+	for _, early := range []bool{false, true} {
+		name := "while waiting"
+		if early {
+			name = "before drained"
+		}
+		t.Run(name, func(t *testing.T) {
+			config := serveConfig(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("handler invoked") }))
+			session, transport := requestLoopSession(t, config)
+			control := &drainControl{ackEntered: make(chan struct{}), ackRelease: make(chan struct{})}
+			close(control.ackRelease)
+			session.control = control
+			drain, cutoff, drained := make(chan struct{}), make(chan struct{}), make(chan struct{})
+			close(drain)
+			if early {
+				close(cutoff)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			done := make(chan error, 1)
+			go func() {
+				done <- session.ServeRequests(ctx, &requestAcceptor{streams: make(chan ServerRequestStream)}, ServeRequestsConfig{MaxActive: 1, Request: config, Drain: drain, DrainCutoff: cutoff, drainedHook: func() { close(drained) }})
+			}()
+			if !early {
+				select {
+				case <-drained:
+				case <-ctx.Done():
+					t.Fatal(ctx.Err())
+				}
+				close(cutoff)
+			}
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-ctx.Done():
+				t.Fatal("cutoff did not end the wait", ctx.Err())
+			}
+			transport.check(t, 0x100)
+		})
 	}
 }

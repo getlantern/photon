@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	quic "github.com/getlantern/photon"
 	h3 "github.com/getlantern/photon/internal/http3wire"
-	"github.com/getlantern/photon/internal/transport"
 	"github.com/getlantern/photon/internal/wire"
 )
 
@@ -47,9 +47,11 @@ type ServeRequestsConfig struct {
 	MaxActive  int
 	Request    ServeRequestConfig
 	Report     func(ctx context.Context, id uint64, err error)
-	// Drained, if set, is called once GOAWAY is acknowledged and every request
-	// of a drain is done, as the connection starts waiting for its client.
-	Drained func()
+	// Closing DrainCutoff ends a drained connection's wait for its client at
+	// once, as the grace does, whether it is waiting already or later.
+	DrainCutoff <-chan struct{}
+
+	drainedHook func() // tests: GOAWAY acknowledged and every request done
 }
 
 // ServeRequests runs the server session's sole request accept loop. It applies
@@ -62,8 +64,8 @@ type ServeRequestsConfig struct {
 // normal application close) rather than proving acknowledgment of queued data,
 // except after a drain's GOAWAY: then the client's H3_NO_ERROR close completes
 // the drain unless it cut a request short, and once GOAWAY is acknowledged and
-// every request is done any ending but a protocol error does. ServeRequests
-// then returns nil.
+// every request is done so does any ending but a peer's error close or a local
+// protocol error. ServeRequests then returns nil.
 // This loop exclusively owns server GOAWAY and its cutoff while
 // running; callers must not concurrently call SendGoaway.
 func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor, config ServeRequestsConfig) (result error) {
@@ -94,6 +96,9 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 	var abortOnce sync.Once
 	abort := func(code uint64, reason string) { abortOnce.Do(func() { s.transport.Abort(code, reason) }) }
 	drained := false // a graceful drain completed; how the connection then ended does not matter
+	// The connection ended during a drain; the outcome is decided once every
+	// request has returned, after the connection is closed.
+	endedInDrain, acked := false, false
 	defer func() {
 		if ctx.Err() != nil && !drained {
 			result = context.Cause(ctx)
@@ -110,6 +115,9 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 			<-interrupted
 		}
 		tasks.Wait()
+		if endedInDrain {
+			result = drainOutcome(result, cutShort.Load(), acked)
+		}
 	}()
 	acceptCtx, stopAccept := context.WithCancel(ctx)
 	watchDone := make(chan struct{})
@@ -142,32 +150,17 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 			abort(0x100, "idle timeout")
 			return nil
 		}
+		// Set first: the client may close as soon as GOAWAY reaches it.
+		goawaySent.Store(true)
 		if err := s.SendGoaway(nextID); err != nil {
 			return err
 		}
-		goawaySent.Store(true)
 		// No request starts after GOAWAY, and each returns once ctx ends.
 		done := make(chan struct{})
 		go func() { tasks.Wait(); close(done) }()
-		acked := false
-		// After GOAWAY the client closes once its requests are done (RFC 9114
-		// section 5.2). One rule decides every ending, whichever context or
-		// select case is seen first: a request cut short by the connection
-		// ending, or a protocol error found here, fails the drain; otherwise
-		// the client's H3_NO_ERROR close completes it, and so does any ending
-		// once GOAWAY is acknowledged and every request is done.
 		ended := func() error {
-			<-done
-			cause := context.Cause(ctx)
-			var protocol *h3.Error
-			if cutShort.Load() || errors.As(cause, &protocol) {
-				return cause
-			}
-			if acked || cleanPeerClose(cause) {
-				drained = true
-				return nil
-			}
-			return cause
+			endedInDrain = true
+			return context.Cause(ctx)
 		}
 		if err := control.WaitAcknowledged(ctx); err != nil {
 			if ctx.Err() != nil {
@@ -186,8 +179,8 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 		// received but not yet read, which some QUIC stacks discard on
 		// CONNECTION_CLOSE. The connection ending ends this, and so does the
 		// drain grace: then the deferred close ends it.
-		if config.Drained != nil {
-			config.Drained()
+		if config.drainedHook != nil {
+			config.drainedHook()
 		}
 		var grace <-chan time.Time
 		if config.DrainGrace > 0 {
@@ -199,6 +192,9 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 		case <-ctx.Done():
 			return ended()
 		case <-grace:
+			drained = true
+			return nil
+		case <-config.DrainCutoff:
 			drained = true
 			return nil
 		}
@@ -298,7 +294,7 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 			// the client read the response first. Release can report the close
 			// before ctx does.
 			delivered := stream.Release(ctx)
-			if delivered != nil && err == nil && goawaySent.Load() && (cleanPeerClose(delivered) || cleanPeerClose(context.Cause(ctx))) {
+			if delivered != nil && err == nil && goawaySent.Load() && (gracefulPeerClose(delivered) || gracefulPeerClose(context.Cause(ctx))) {
 				delivered = nil
 			}
 			if delivered != nil {
@@ -381,9 +377,24 @@ func (t *idleTimer) hasExpired() bool {
 	return t.expired
 }
 
-// cleanPeerClose reports whether err is the peer closing the connection with
-// H3_NO_ERROR.
-func cleanPeerClose(err error) bool {
-	var peer *transport.PeerCloseError
-	return errors.As(err, &peer) && peer.Application && peer.Code == 0x100
+// drainOutcome decides how a connection that ended during a drain's GOAWAY
+// went, once every request has returned. After GOAWAY the client closes once
+// its requests are done (RFC 9114 section 5.2). A request cut short by the
+// connection ending, or a local protocol error, fails the drain. The client's
+// H3_NO_ERROR close completes it. Once GOAWAY is acknowledged and every
+// request is done, so does any other ending but the peer closing with an
+// error, which is news the caller should see.
+func drainOutcome(cause error, cutShort, acked bool) error {
+	var protocol *h3.Error
+	if cutShort || errors.As(cause, &protocol) {
+		return cause
+	}
+	if gracefulPeerClose(cause) {
+		return nil
+	}
+	var peer *quic.PeerCloseError
+	if acked && !errors.As(cause, &peer) {
+		return nil
+	}
+	return cause
 }

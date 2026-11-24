@@ -242,3 +242,47 @@ func TestShutdownExpiryClosesDrainedConnection(t *testing.T) {
 		t.Fatal("close cause:", cause)
 	}
 }
+
+// A connection that drains only after Shutdown's deadline has expired is
+// closed as soon as it drains, not after the drain grace.
+func TestShutdownExpiryClosesLaterDrainedConnection(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	entered, finish := make(chan struct{}), make(chan struct{})
+	server := &Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(entered)
+		<-finish
+		io.WriteString(w, "late")
+	})}
+	defer server.Close()
+	client, origin := dialTestServer(ctx, t, server, nil)
+	responses := make(chan error, 1)
+	go func() {
+		request, _ := http.NewRequestWithContext(ctx, "GET", origin+"/", nil)
+		response, err := client.RoundTrip(request)
+		if err == nil {
+			_, err = io.Copy(io.Discard, response.Body)
+			response.Body.Close()
+		}
+		responses <- err
+	}()
+	select {
+	case <-entered:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	short, stop := context.WithTimeout(ctx, 100*time.Millisecond)
+	defer stop()
+	if err := server.Shutdown(short); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal("Shutdown:", err)
+	}
+	close(finish)
+	if err := <-responses; err != nil {
+		t.Fatal("response:", err)
+	}
+	select {
+	case <-client.Context().Done():
+	case <-time.After(maxDrainGrace / 2):
+		t.Fatal("connection drained after the deadline waited for the grace")
+	}
+}
