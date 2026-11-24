@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	quic "github.com/getlantern/photon"
+	h3 "github.com/getlantern/photon/internal/http3wire"
 	"net/http"
 	"testing"
 	"time"
@@ -259,6 +260,7 @@ func TestServeRequestsDrainEndingCause(t *testing.T) {
 		thenCancel bool
 		ownerOnly  bool // the owner cancels once requests are done; no client close
 		holdAck    bool // GOAWAY is never acknowledged, so the drain is not done
+		protocol   bool // a protocol error ends the connection once requests are done
 		clean      bool
 	}{
 		{name: "client close", code: 0x100, clean: true},
@@ -267,6 +269,7 @@ func TestServeRequestsDrainEndingCause(t *testing.T) {
 		{name: "client close before drained", code: 0x100, holdAck: true, clean: true},
 		{name: "client close mid-request", code: 0x100, midRequest: true},
 		{name: "owner cancel after requests done", ownerOnly: true, clean: true},
+		{name: "protocol error after requests done", protocol: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			entered := make(chan struct{})
@@ -292,7 +295,7 @@ func TestServeRequestsDrainEndingCause(t *testing.T) {
 			drained := make(chan struct{})
 			done := make(chan error, 1)
 			go func() {
-				done <- session.ServeRequests(parent, acceptor, ServeRequestsConfig{MaxActive: 1, Request: config, Drain: drain, drainedHook: func() { close(drained) }})
+				done <- session.ServeRequests(parent, acceptor, ServeRequestsConfig{MaxActive: 1, Request: config, Drain: drain, Drained: func() { close(drained) }})
 			}()
 			if tc.midRequest {
 				select {
@@ -307,13 +310,17 @@ func TestServeRequestsDrainEndingCause(t *testing.T) {
 			case <-ctx.Done():
 				t.Fatal(ctx.Err())
 			}
-			if tc.ownerOnly {
+			if tc.ownerOnly || tc.protocol {
 				select {
 				case <-drained:
 				case <-ctx.Done():
 					t.Fatal(ctx.Err())
 				}
-				cancelParent()
+				if tc.protocol {
+					session.cancel(&h3.Error{Code: h3.FrameUnexpected, Reason: "bad frame"})
+				} else {
+					cancelParent()
+				}
 			} else {
 				session.cancel(&quic.PeerCloseError{Application: true, Code: tc.code, Reason: "client done"})
 			}
@@ -327,10 +334,13 @@ func TestServeRequestsDrainEndingCause(t *testing.T) {
 				t.Fatal(ctx.Err())
 			}
 			var peer *quic.PeerCloseError
+			var protocol *h3.Error
 			switch {
 			case tc.clean && err != nil:
 				t.Fatal("drain reported failure", err)
-			case !tc.clean && !errors.As(err, &peer):
+			case tc.protocol && !errors.As(err, &protocol):
+				t.Fatal("drain hid the protocol error", err)
+			case !tc.clean && !tc.protocol && !errors.As(err, &peer):
 				t.Fatal("drain hid the connection's ending", err)
 			}
 		})
@@ -341,6 +351,19 @@ func TestServeRequestsDrainEndingCause(t *testing.T) {
 // response's last packets. After GOAWAY that close completes the drain, and
 // the request is not reported as failed.
 func TestServeRequestsDrainClientCloseBeforeFinalAck(t *testing.T) {
+	// releaseFirst: the stream reports the close before ctx does.
+	for _, releaseFirst := range []bool{false, true} {
+		name := "ctx-first"
+		if releaseFirst {
+			name = "release-first"
+		}
+		t.Run(name, func(t *testing.T) {
+			testDrainClientCloseBeforeFinalAck(t, releaseFirst)
+		})
+	}
+}
+
+func testDrainClientCloseBeforeFinalAck(t *testing.T, releaseFirst bool) {
 	entered := make(chan struct{})
 	config := serveConfig(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		close(entered)
@@ -354,6 +377,10 @@ func TestServeRequestsDrainClientCloseBeforeFinalAck(t *testing.T) {
 	releasing := make(chan struct{})
 	request.release = func(ctx context.Context) error {
 		close(releasing)
+		if releaseFirst {
+			<-control.ackEntered // GOAWAY is out
+			return &quic.PeerCloseError{Application: true, Code: 0x100, Reason: "client done"}
+		}
 		<-ctx.Done() // the final ACK never comes
 		return context.Cause(ctx)
 	}

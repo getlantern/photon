@@ -15,8 +15,9 @@ import (
 // itself. Create one with Server.NewRawServerConn.
 //
 // The connection is otherwise served like one passed to ServeQUICConn, and it
-// is closed when its HTTP/3 session ends: after Server.Shutdown has drained it,
-// on Server.Close, on a protocol error, or after Server.IdleTimeout.
+// is closed when its HTTP/3 session ends: by the client once Server.Shutdown
+// has drained it, or by the server after the drain grace or Shutdown's
+// deadline, on Server.Close, on a protocol error, or after Server.IdleTimeout.
 type RawServerConn struct {
 	conn     *quic.Conn
 	uni      chan *quic.ReceiveStream

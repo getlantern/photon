@@ -107,9 +107,9 @@ type Server struct {
 	altSvcHeader  string
 }
 type serverConnection struct {
-	conn        *quic.Conn
-	cancel      context.CancelCauseFunc
-	drain, done chan struct{}
+	conn                 *quic.Conn
+	cancel               context.CancelCauseFunc
+	drain, drained, done chan struct{}
 }
 
 // ServeQUICConn takes ownership of an accepted connection after validation and
@@ -167,7 +167,7 @@ func (s *Server) admit(parent context.Context, conn *quic.Conn) (admitted *serve
 		handler = http.DefaultServeMux
 	}
 	ctx, cancel := context.WithCancelCause(parent)
-	entry := &serverConnection{conn: conn, cancel: cancel, drain: make(chan struct{}), done: make(chan struct{})}
+	entry := &serverConnection{conn: conn, cancel: cancel, drain: make(chan struct{}), drained: make(chan struct{}), done: make(chan struct{})}
 	s.mu.Lock()
 	if s.stopping {
 		s.mu.Unlock()
@@ -302,7 +302,7 @@ func (c *servedConn) serve() (err error) {
 		return nil
 	}
 	return session.ServeRequests(ctx, acceptor, http3conn.ServeRequestsConfig{
-		MaxActive: requests, Drain: entry.drain, IdleTimeout: s.IdleTimeout, DrainGrace: s.drainGrace(), Report: s.requestReport(),
+		MaxActive: requests, Drain: entry.drain, Drained: func() { close(entry.drained) }, IdleTimeout: s.IdleTimeout, DrainGrace: s.drainGrace(), Report: s.requestReport(),
 		Request: http3conn.ServeRequestConfig{Priorities: priorities, HandlerError: httpError, HandlerPolicy: func(next http.Handler) http.Handler {
 			withSettings := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				next.ServeHTTP(&settingsResponseWriter{HTTPResponseWriter: w.(*http3conn.HTTPResponseWriter), settingsView: settingsFrom(sessionSettings{session})}, r)
@@ -316,7 +316,9 @@ func (c *servedConn) serve() (err error) {
 // It waits for handlers, delivery and protocol cleanup, then for each client to
 // close its connection as GOAWAY asks, bounded by ctx; a client that does not
 // close within 3 seconds (or IdleTimeout, if shorter) is closed with H3_NO_ERROR.
-// Expiry does not abort active connections; use Close for abortive shutdown. Listeners
+// When ctx expires, connections already drained and waiting for their client
+// are closed with H3_NO_ERROR, and Shutdown returns ctx's cause. Expiry does
+// not abort active connections; use Close for abortive shutdown. Listeners
 // passed to Serve stop accepting immediately and close after their workers join.
 // Listeners passed to ServeListener or used independently with ServeQUICConn
 // remain caller-owned and are not closed.
@@ -325,10 +327,17 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		return fmt.Errorf("http3: nil shutdown context")
 	}
 	entries, listeners := s.stopAdmission()
-	for _, entry := range entries {
+	for i, entry := range entries {
 		select {
 		case <-entry.done:
 		case <-ctx.Done():
+			for _, entry := range entries[i:] {
+				select {
+				case <-entry.drained:
+					entry.conn.CloseWithError(0x100, "HTTP3 server shutdown")
+				default:
+				}
+			}
 			return context.Cause(ctx)
 		}
 	}

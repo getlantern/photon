@@ -209,3 +209,36 @@ func TestServerCloseReachesPeerBeforeOwnedListenerCloses(t *testing.T) {
 		t.Fatal("close cause:", cause)
 	}
 }
+
+// When Shutdown's deadline expires before a drained client closes, the server
+// closes that connection at once rather than leaving it to the drain grace.
+func TestShutdownExpiryClosesDrainedConnection(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	server := &Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "ok") })}
+	defer server.Close()
+	client, origin := dialTestServer(ctx, t, server, nil)
+	request, _ := http.NewRequestWithContext(ctx, "GET", origin+"/", nil)
+	response, err := client.RoundTrip(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, response.Body)
+	response.Body.Close()
+	// The client never closes. Give the drain time to finish, well inside the
+	// grace, then let the deadline expire.
+	short, stop := context.WithTimeout(ctx, 300*time.Millisecond)
+	defer stop()
+	if err := server.Shutdown(short); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal("Shutdown:", err)
+	}
+	select {
+	case <-client.Context().Done():
+	case <-time.After(maxDrainGrace / 2):
+		t.Fatal("drained connection left open after Shutdown's deadline")
+	}
+	var closed *quic.PeerCloseError
+	if cause := context.Cause(client.Context()); !errors.As(cause, &closed) || !closed.Application || closed.Code != uint64(ErrCodeNoError) {
+		t.Fatal("close cause:", cause)
+	}
+}

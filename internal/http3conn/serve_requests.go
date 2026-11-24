@@ -47,8 +47,9 @@ type ServeRequestsConfig struct {
 	MaxActive  int
 	Request    ServeRequestConfig
 	Report     func(ctx context.Context, id uint64, err error)
-
-	drainedHook func() // tests: every request of a drain is done
+	// Drained, if set, is called once GOAWAY is acknowledged and every request
+	// of a drain is done, as the connection starts waiting for its client.
+	Drained func()
 }
 
 // ServeRequests runs the server session's sole request accept loop. It applies
@@ -60,8 +61,9 @@ type ServeRequestsConfig struct {
 // is abortive. A peer-initiated close remains a transport error (including a
 // normal application close) rather than proving acknowledgment of queued data,
 // except after a drain's GOAWAY: then the client's H3_NO_ERROR close completes
-// the drain unless it cut a request short, and once every request is done any
-// ending does. ServeRequests then returns nil.
+// the drain unless it cut a request short, and once GOAWAY is acknowledged and
+// every request is done any ending but a protocol error does. ServeRequests
+// then returns nil.
 // This loop exclusively owns server GOAWAY and its cutoff while
 // running; callers must not concurrently call SendGoaway.
 func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor, config ServeRequestsConfig) (result error) {
@@ -147,14 +149,21 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 		// No request starts after GOAWAY, and each returns once ctx ends.
 		done := make(chan struct{})
 		go func() { tasks.Wait(); close(done) }()
+		acked := false
 		// After GOAWAY the client closes once its requests are done (RFC 9114
-		// section 5.2), so its H3_NO_ERROR close completes the drain, whenever
-		// it arrives and whichever context ends first, provided no request was
-		// cut short by the connection ending. Any other ending keeps its cause.
+		// section 5.2). One rule decides every ending, whichever context or
+		// select case is seen first: a request cut short by the connection
+		// ending, or a protocol error found here, fails the drain; otherwise
+		// the client's H3_NO_ERROR close completes it, and so does any ending
+		// once GOAWAY is acknowledged and every request is done.
 		ended := func() error {
 			<-done
 			cause := context.Cause(ctx)
-			if !cutShort.Load() && cleanPeerClose(cause) {
+			var protocol *h3.Error
+			if cutShort.Load() || errors.As(cause, &protocol) {
+				return cause
+			}
+			if acked || cleanPeerClose(cause) {
 				drained = true
 				return nil
 			}
@@ -166,6 +175,7 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 			}
 			return err
 		}
+		acked = true
 		select {
 		case <-done:
 		case <-ctx.Done():
@@ -174,11 +184,10 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 		// Every request is done. Leave closing to the client, as quic-go's
 		// server does: closing here can cut off response data the client has
 		// received but not yet read, which some QUIC stacks discard on
-		// CONNECTION_CLOSE. The drain is complete, so however the connection
-		// now ends, by the client, Server.Close, an idle timeout or the drain
-		// grace (then the deferred close ends it), it is not a failure.
-		if config.drainedHook != nil {
-			config.drainedHook()
+		// CONNECTION_CLOSE. The connection ending ends this, and so does the
+		// drain grace: then the deferred close ends it.
+		if config.Drained != nil {
+			config.Drained()
 		}
 		var grace <-chan time.Time
 		if config.DrainGrace > 0 {
@@ -188,11 +197,7 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 		}
 		select {
 		case <-ctx.Done():
-			if cutShort.Load() { // ctx ended as the last request finished
-				return context.Cause(ctx)
-			}
-			drained = true
-			return nil
+			return ended()
 		case <-grace:
 			drained = true
 			return nil
@@ -288,8 +293,15 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 			err := ServeRequest(ctx, stream, request)
 			// After GOAWAY a client that has read its response closes with
 			// H3_NO_ERROR, and its CONNECTION_CLOSE need not acknowledge the
-			// response's last packets. That close is its word that it is done.
-			if delivered := stream.Release(ctx); delivered != nil && !(err == nil && goawaySent.Load() && cleanPeerClose(context.Cause(ctx))) {
+			// response's last packets. That close is its word that it is done,
+			// so it counts as delivery, though the server cannot tell whether
+			// the client read the response first. Release can report the close
+			// before ctx does.
+			delivered := stream.Release(ctx)
+			if delivered != nil && err == nil && goawaySent.Load() && (cleanPeerClose(delivered) || cleanPeerClose(context.Cause(ctx))) {
+				delivered = nil
+			}
+			if delivered != nil {
 				if ctx.Err() == nil {
 					s.cancel(delivered)
 				}
