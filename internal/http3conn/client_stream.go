@@ -92,11 +92,11 @@ func (s *Session) openRequestStream(parent context.Context, stream ClientExchang
 	observed := make(chan struct{})
 	observeLease := func() {
 		cause := context.Cause(lease.Context())
-		var closed *quic.PeerCloseError
-		goaway := s.goaway.Load()
-		// As for ExchangeRequest: a graceful close after a GOAWAY that kept this
-		// stream leaves a buffered response readable.
-		if errors.As(cause, &closed) && closed.Application && closed.Code == 0x100 && goaway != nil && !goaway.Rejects(uint64(stream.StreamID())) {
+		// As for ExchangeRequest: a graceful close leaves a buffered response
+		// readable, unless a GOAWAY already read rejects this stream. Only a
+		// response complete through FIN can still be read, so a stream still
+		// receiving (one used only for datagrams, say) releases its slot now.
+		if s.keptAfterClose(cause, uint64(stream.StreamID())) && receivedAll(stream, underlying) {
 			return
 		}
 		cancel(cause)
@@ -284,3 +284,17 @@ type streamedBody struct{}
 
 func (streamedBody) Read([]byte) (int, error) { return 0, io.EOF }
 func (streamedBody) Close() error             { return nil }
+
+// receivedAll reports whether every byte through FIN has arrived on stream,
+// asking the QUIC stream beneath it when the wrapper cannot say.
+func receivedAll(stream any, underlying *quic.Stream) bool {
+	var ctx context.Context
+	if receiving, ok := stream.(interface{ ReceiveContext() context.Context }); ok {
+		ctx = receiving.ReceiveContext()
+	} else if underlying != nil {
+		ctx = underlying.ReceiveContext()
+	} else {
+		return false
+	}
+	return ctx.Err() != nil && context.Cause(ctx) == io.EOF
+}

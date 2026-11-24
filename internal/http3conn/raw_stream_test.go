@@ -1655,3 +1655,86 @@ func TestCancelReadCodeBeatsWokenQPACKWait(t *testing.T) {
 		})
 	}
 }
+
+// Raw request streams and ExchangeRequest share this decision. A graceful peer
+// close keeps a response unless a GOAWAY already read rejects its stream; the
+// close can arrive before the control stream reader reaches the GOAWAY.
+func TestKeptAfterClose(t *testing.T) {
+	graceful := &quic.PeerCloseError{Application: true, Code: 0x100}
+	for _, row := range []struct {
+		name   string
+		cause  error
+		goaway *PeerGoaway
+		id     uint64
+		kept   bool
+	}{
+		{"graceful, GOAWAY unread", graceful, nil, 4, true},
+		{"graceful, GOAWAY keeps the stream", graceful, &PeerGoaway{ID: 8, RequestIDs: true}, 4, true},
+		{"graceful, GOAWAY rejects the stream", graceful, &PeerGoaway{ID: 4, RequestIDs: true}, 4, false},
+		{"error close", &quic.PeerCloseError{Application: true, Code: 0x102}, nil, 4, false},
+		{"transport close with the same code", &quic.PeerCloseError{Code: 0x100}, nil, 4, false},
+		{"local stop", errors.New("stopped"), nil, 4, false},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			session, _, _, _ := rawFixture(t, bytes.NewReader(nil))
+			if row.goaway != nil {
+				session.receiveGoaway(*row.goaway)
+			}
+			if kept := session.keptAfterClose(row.cause, row.id); kept != row.kept {
+				t.Fatalf("kept=%v, want %v", kept, row.kept)
+			}
+		})
+	}
+}
+
+// receivingRawStream reports when its receive side has ended, as a QUIC stream
+// does: io.EOF once every byte through FIN has arrived.
+type receivingRawStream struct {
+	*rawTestStream
+	receiveCtx context.Context
+}
+
+func (s *receivingRawStream) ReceiveContext() context.Context { return s.receiveCtx }
+
+// A graceful close keeps a raw request stream only while the transport can
+// still deliver its response: one complete through FIN. A stream still
+// receiving, such as one used only for datagrams, can never be read again,
+// so it releases its request slot and datagram state at once.
+func TestClientStreamGracefulCloseKeepsOnlyCompleteResponses(t *testing.T) {
+	for _, complete := range []bool{true, false} {
+		t.Run(fmt.Sprintf("complete=%v", complete), func(t *testing.T) {
+			wire := append(readerHeaders(t, responseFields("200")...), readerFrame(t, h3.Data, []byte("kept"))...)
+			session, raw, config, done := rawFixture(t, bytes.NewReader(wire))
+			receiveCtx, receiveCancel := context.WithCancelCause(context.Background())
+			defer receiveCancel(context.Canceled)
+			if complete {
+				receiveCancel(io.EOF)
+			}
+			stream, err := session.openRequestStream(context.Background(), &receivingRawStream{raw, receiveCtx}, nil, config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request, _ := http.NewRequest("GET", "https://example.com/", nil)
+			if err := stream.SendRequestHeader(request); err != nil {
+				t.Fatal(err)
+			}
+			if err := stream.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := stream.ReadResponse(); err != nil {
+				t.Fatal(err)
+			}
+			session.cancel(&quic.PeerCloseError{Application: true, Code: 0x100})
+			if !complete {
+				awaitDone(t, done)
+				return
+			}
+			body, err := io.ReadAll(stream)
+			if err != nil || string(body) != "kept" {
+				t.Fatalf("complete response lost after graceful close: %q %v", body, err)
+			}
+			// Both directions are finished now, so the kept stream is released.
+			awaitDone(t, done)
+		})
+	}
+}

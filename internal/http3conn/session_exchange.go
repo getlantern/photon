@@ -13,8 +13,9 @@ import (
 
 // ExchangeRequest admits one already allocated client request stream and binds
 // its exchange to request.Context and the session's GOAWAY-aware lease. A
-// graceful peer close after GOAWAY permits buffered active responses to drain;
-// request cancellation, rejected IDs and other session failures still abort.
+// graceful peer close permits buffered active responses to drain;
+// request cancellation, IDs rejected by a GOAWAY the session has read, and
+// other session failures still abort.
 // Encoder, Decoder and Abort in config are assigned by the session. Done remains
 // an optional endpoint cleanup callback. The stream ID must never be reused.
 // After argument validation, every failure closes Body and resets the stream;
@@ -64,12 +65,10 @@ func (s *Session) ExchangeRequest(request *http.Request, stream ClientExchangeSt
 	interrupted := make(chan struct{})
 	observeLease := func() {
 		cause := context.Cause(lease.Context())
-		var closed *quic.PeerCloseError
-		goaway := s.goaway.Load()
-		// A graceful peer close after GOAWAY ends admission, but complete response
-		// bytes may still be awaiting application reads. Transport reads continue
-		// to reject incomplete streams. Caller cancellation remains authoritative.
-		if errors.As(cause, &closed) && closed.Application && closed.Code == 0x100 && goaway != nil && !goaway.Rejects(uint64(stream.StreamID())) {
+		// A graceful peer close ends admission, but complete response bytes may
+		// still be awaiting application reads. Transport reads continue to reject
+		// incomplete streams. Caller cancellation remains authoritative.
+		if s.keptAfterClose(cause, uint64(stream.StreamID())) {
 			return
 		}
 		cancel(cause)

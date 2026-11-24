@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"testing"
@@ -14,7 +15,16 @@ import (
 	"github.com/getlantern/photon/internal/qpack"
 )
 
+// A graceful close keeps a fully buffered response readable whether or not the
+// session read the peer's GOAWAY first: QUIC acknowledging the GOAWAY says
+// nothing about when the control stream reader gets to it.
 func TestSessionGracefulCloseDecodesBufferedTrailers(t *testing.T) {
+	for _, goaway := range []bool{true, false} {
+		t.Run(fmt.Sprintf("goaway-read=%v", goaway), func(t *testing.T) { gracefulCloseDecodesBufferedTrailers(t, goaway) })
+	}
+}
+
+func gracefulCloseDecodesBufferedTrailers(t *testing.T, goaway bool) {
 	transport := &dispatchTransport{streams: make(chan ReceiveStream, 2)}
 	feedback := &fakeStream{interrupt: make(chan struct{})}
 	local := &LocalStreams{Control: &fakeStream{interrupt: make(chan struct{})}, Encoder: &fakeStream{interrupt: make(chan struct{})}, Decoder: feedback}
@@ -60,7 +70,9 @@ func TestSessionGracefulCloseDecodesBufferedTrailers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	session.receiveGoaway(PeerGoaway{ID: 4, RequestIDs: true})
+	if goaway {
+		session.receiveGoaway(PeerGoaway{ID: 4, RequestIDs: true})
+	}
 	peerClose := &quic.PeerCloseError{Application: true, Code: 0x100, Reason: "drained"}
 	stop(peerClose)
 	select {
@@ -120,5 +132,40 @@ func TestFieldDecoderDetach(t *testing.T) {
 	d.Close(terminal)
 	if _, err := d.Submit(12, []byte{0, 0}); err != terminal {
 		t.Fatal(err)
+	}
+}
+
+// A client's decoder outlives any graceful close, read GOAWAY or not. A
+// server's does only after the client's GOAWAY.
+func TestSessionDrained(t *testing.T) {
+	graceful := &quic.PeerCloseError{Application: true, Code: 0x100}
+	for _, row := range []struct {
+		server, goaway bool
+		cause          error
+		drained        bool
+	}{
+		{false, false, graceful, true},
+		{false, true, graceful, true},
+		{true, false, graceful, false},
+		{true, true, graceful, true},
+		{false, true, &quic.PeerCloseError{Application: true, Code: 0x102}, false},
+		{false, true, &quic.PeerCloseError{Code: 0x100}, false},
+	} {
+		name := fmt.Sprintf("server=%v,goaway=%v,cause=%v", row.server, row.goaway, row.cause)
+		var closed *quic.PeerCloseError
+		if errors.As(row.cause, &closed) {
+			name = fmt.Sprintf("server=%v,goaway=%v,app=%v,code=%#x", row.server, row.goaway, closed.Application, closed.Code)
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx, cancel := context.WithCancelCause(context.Background())
+			cancel(row.cause)
+			s := &Session{ctx: ctx, server: row.server}
+			if row.goaway {
+				s.goaway.Store(&PeerGoaway{ID: 4, RequestIDs: !row.server})
+			}
+			if err := s.drained(); (err != nil) != row.drained {
+				t.Fatalf("drained=%v, want %v", err, row.drained)
+			}
+		})
 	}
 }

@@ -78,7 +78,11 @@ request whose `Proto` is not `HTTP/1.1` is an Extended CONNECT with that
 `:protocol`. `ReadResponse` returns the final response; `Read` then reads its
 body. One goroutine per stream waits for both directions to finish as above,
 or for the lease or the client to end, and then releases the slot, lease and
-datagram registration; `ClientConn.Close` joins it. Closing `Response.Body`
+datagram registration; `ClientConn.Close` joins it. A graceful peer close
+(H3_NO_ERROR) ends the lease but keeps a stream whose response arrived
+complete through FIN, so the application can still read it, unless a GOAWAY
+the session has read rejects the stream. A stream still receiving, such as one
+used only for datagrams, is released at once. Closing `Response.Body`
 cancels reading, as upstream.
 
 ## Raw connections

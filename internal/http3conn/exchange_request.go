@@ -201,7 +201,7 @@ func ExchangeRequest(parent context.Context, request *http.Request, stream Clien
 
 // An H3_NO_ERROR connection close ends an unfinished upload like the same code
 // in STOP_SENDING. Whether the response outlives the connection is the parent
-// context's decision (Session keeps accepted responses after GOAWAY).
+// context's decision (Session keeps accepted responses after a graceful close).
 func normalUploadStop(err error) bool {
 	var closed *quic.PeerCloseError
 	if errors.As(err, &closed) {
