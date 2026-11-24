@@ -271,6 +271,11 @@ func (s *SendStream) Write(p []byte) (int, error) {
 // It does not wait for QUIC credit, queue capacity or another writer, and ignores
 // the write deadline. It can wait briefly for the connection owner to run.
 func (s *SendStream) TryWriteAll(p []byte) error {
+	// Nothing to queue: report only why sending ended, as an empty Write does,
+	// without contending for the gate.
+	if len(p) == 0 {
+		return s.sendEnded()
+	}
 	if !s.gate.tryAcquire() {
 		return ErrWouldBlock
 	}
@@ -302,9 +307,19 @@ func (s *SendStream) TryWriteAll(p []byte) error {
 // ErrWriteLimitReached. Retransmissions never invoke the limiter again.
 // The callback runs on the connection owner: it must be concurrency-safe,
 // must not block, and must not call QUIC methods. A nil limiter behaves as Write.
+//
+// Past the write deadline a write returns os.ErrDeadlineExceeded, unless
+// sending has already ended (CancelWrite, the peer's STOP_SENDING, rejected
+// early data or the connection closing): then it returns that cause, which no
+// retry can get past. An empty write sends nothing and waits for nothing, not
+// even earlier writes or a pending Close, so it ignores the deadline and
+// reports only why sending ended, if it has.
 func (s *SendStream) WriteWithLimit(p []byte, limiter func(int) int) (int, error) {
+	if len(p) == 0 {
+		return 0, s.sendEnded()
+	}
 	if err := s.deadline.run(s.gate.acquire); err != nil {
-		return 0, err
+		return 0, s.preferEnded(err)
 	}
 	defer s.gate.release()
 	if s.rejected.Load() {
@@ -314,9 +329,6 @@ func (s *SendStream) WriteWithLimit(p []byte, limiter func(int) int) (int, error
 		return 0, ErrStreamClosed
 	}
 	total := 0
-	if len(p) == 0 {
-		return 0, nil
-	}
 	// Keep one deadline context across partial commits. If the deadline changes,
 	// run resumes at total, preserving bytes already accepted by the owner.
 	err := s.deadline.run(func(ctx context.Context) error {
@@ -357,10 +369,49 @@ func (s *SendStream) WriteWithLimit(p []byte, limiter func(int) int) (int, error
 		}
 		return nil
 	})
-	return total, s.conn.connectionError(err)
+	return total, s.preferEnded(s.conn.connectionError(err))
 }
+
+// sendEnded reports why the send direction has ended, or nil while it has
+// not. It reads the send context, which ends with the cause as sending does
+// and with the connection, so it never waits for the connection owner.
+func (s *SendStream) sendEnded() error {
+	// Rejection overrides a send context that had already ended with FIN.
+	if s.rejected.Load() {
+		return Err0RTTRejected
+	}
+	ctx := s.sendContext
+	if ctx == nil || ctx.Err() == nil {
+		return nil
+	}
+	return s.conn.connectionError(context.Cause(ctx))
+}
+
+// preferEnded replaces an expired write deadline with the reason sending
+// ended, when it has: a reset or a closed connection is not a timeout, and a
+// caller must not be told the call may be retried. Write and Close past their
+// deadline report it this way.
+func (s *SendStream) preferEnded(err error) error {
+	if !errors.Is(err, os.ErrDeadlineExceeded) {
+		return err
+	}
+	if ended := s.sendEnded(); ended != nil {
+		return ended
+	}
+	return err
+}
+
+// Close queues FIN after earlier writes; it does not close the receive side.
+// Repeating it after it succeeded returns nil, unless the server has since
+// rejected early data (Err0RTTRejected). Past the write deadline it
+// reports, as a write does, why sending ended if it has.
 func (s *SendStream) Close() error {
 	if err := s.deadline.run(s.gate.acquire); err != nil {
+		// Sending that ended normally ended with this stream's own FIN, so a
+		// Close has already succeeded.
+		if err = s.preferEnded(err); errors.Is(err, ErrStreamClosed) {
+			return nil
+		}
 		return err
 	}
 	defer s.gate.release()
@@ -385,7 +436,7 @@ func (s *SendStream) Close() error {
 	if err == nil {
 		s.closed = true
 	}
-	return s.conn.connectionError(err)
+	return s.preferEnded(s.conn.connectionError(err))
 }
 
 // WaitAcknowledged waits for delivery of all previously committed bytes and FIN
