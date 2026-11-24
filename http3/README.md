@@ -82,9 +82,10 @@ callbacks must honor cancellation, and must not synchronously call Shutdown.
 A normal peer-initiated close is still returned as `*quic.PeerCloseError`; it does
 not prove acknowledgment of all queued transport bytes. After a Shutdown drain's
 GOAWAY, the client closing with H3_NO_ERROR is the expected outcome and returns
-nil. So does any other ending once GOAWAY is sent, unless a request running in
-the drain failed (each such failure is also logged to `Logger`) or a local
-protocol error ended it. The client's H3_NO_ERROR close counts as delivery of a
+nil. So does any other ending once GOAWAY is sent, including `Close` with
+nothing in flight and a peer's or transport's error close, unless a request
+running in the drain failed (its error is returned, and each such failure is
+also logged to `Logger`) or a local HTTP/3 protocol error ended it. The client's H3_NO_ERROR close counts as delivery of a
 response the server has finished sending even if it never acknowledged it,
 since the server cannot tell whether the client read it first. Shutdown itself
 waits for cleanup without aggregating per-connection serving errors.

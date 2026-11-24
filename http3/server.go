@@ -319,7 +319,7 @@ func (c *servedConn) serve() (err error) {
 // close within 3 seconds (or IdleTimeout, if shorter) is closed with H3_NO_ERROR.
 // When ctx expires, Shutdown returns ctx's cause, and from then on a drained
 // connection waiting for its client, now or once its requests are done, is
-// closed with H3_NO_ERROR. Even with no requests running, Shutdown can take
+// closed with H3_NO_ERROR, including during any later Shutdown call. Even with no requests running, Shutdown can take
 // that long, since it waits for clients to close. Expiry does not abort
 // active connections; use Close for abortive shutdown. Listeners
 // passed to Serve stop accepting immediately and close after their workers join.

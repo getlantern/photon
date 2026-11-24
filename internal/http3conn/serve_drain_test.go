@@ -7,6 +7,7 @@ import (
 	quic "github.com/getlantern/photon"
 	h3 "github.com/getlantern/photon/internal/http3wire"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -432,8 +433,8 @@ func testDrainRelease(t *testing.T, releaseFirst bool, resetErr error) {
 		if resetErr == nil && err != nil {
 			t.Fatal("drain reported failure", err)
 		}
-		if resetErr != nil && err == nil {
-			t.Fatal("drain hid a reset response")
+		if resetErr != nil && !errors.Is(err, resetErr) {
+			t.Fatal("drain did not return the reset response's error:", err)
 		}
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
@@ -572,5 +573,66 @@ func TestServeRequestsDrainCutoff(t *testing.T) {
 			}
 			transport.check(t, 0x100)
 		})
+	}
+}
+
+// A request that fails during the drain fails it on every path, with the
+// request's own error, including when the grace ends the wait.
+func TestServeRequestsDrainFailureOnGracePath(t *testing.T) {
+	proceed := make(chan struct{})
+	entered := make(chan struct{})
+	config := serveConfig(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(entered)
+		<-proceed
+		panic("handler failed during drain")
+	}))
+	session, _ := requestLoopSession(t, config)
+	control := &drainControl{ackEntered: make(chan struct{}), ackRelease: make(chan struct{})}
+	close(control.ackRelease)
+	session.control = control
+	acceptor := &requestAcceptor{streams: make(chan ServerRequestStream, 1)}
+	acceptor.streams <- requestStream(t, 0)
+	drain := make(chan struct{})
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- session.ServeRequests(ctx, acceptor, ServeRequestsConfig{MaxActive: 1, Request: config, Drain: drain, DrainGrace: 20 * time.Millisecond})
+	}()
+	select {
+	case <-entered:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	close(drain)
+	select {
+	case <-control.ackEntered:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	close(proceed)
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "handler panic") {
+			t.Fatal("grace hid a request that failed during the drain:", err)
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+}
+
+// A control-stream failure while the connection lives, such as STOP_SENDING,
+// is an error, not the connection ending.
+func TestServeRequestsDrainControlStreamFailure(t *testing.T) {
+	config := serveConfig(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("handler invoked") }))
+	session, _ := requestLoopSession(t, config)
+	stopped := errors.New("control stream stopped")
+	session.control = &drainControl{ackEntered: make(chan struct{}), ackRelease: make(chan struct{}), ackErr: stopped}
+	drain := make(chan struct{})
+	close(drain)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := session.ServeRequests(ctx, &requestAcceptor{streams: make(chan ServerRequestStream)}, ServeRequestsConfig{MaxActive: 1, Request: config, Drain: drain}); !errors.Is(err, stopped) {
+		t.Fatal(err)
 	}
 }

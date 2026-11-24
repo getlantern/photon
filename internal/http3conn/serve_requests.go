@@ -89,8 +89,9 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 		s.cancel(context.Cause(parent))
 	}
 	var tasks sync.WaitGroup
-	var draining atomic.Bool      // set before GOAWAY: the client may close once it arrives
-	var failedInDrain atomic.Bool // a request running in the drain failed
+	var draining atomic.Bool // set before GOAWAY: the client may close once it arrives
+	var failedMu sync.Mutex
+	var failedInDrain error // the first failure of a request running in the drain
 	var abortOnce sync.Once
 	abort := func(code uint64, reason string) { abortOnce.Do(func() { s.transport.Abort(code, reason) }) }
 	drained := false // a graceful drain completed; how the connection then ended does not matter
@@ -114,7 +115,9 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 		}
 		tasks.Wait()
 		if endedInDrain {
-			result = drainOutcome(result, failedInDrain.Load())
+			failedMu.Lock()
+			result = drainOutcome(result, failedInDrain)
+			failedMu.Unlock()
 		}
 	}()
 	acceptCtx, stopAccept := context.WithCancel(ctx)
@@ -163,7 +166,12 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 			return context.Cause(ctx)
 		}
 		if err := control.WaitAcknowledged(ctx); err != nil {
-			endedInDrain = true
+			// The stream can see the client's close before ctx does. Any other
+			// failure while the connection lives, such as STOP_SENDING on the
+			// control stream, is an error as before.
+			if ctx.Err() != nil || gracefulPeerClose(err) {
+				endedInDrain = true
+			}
 			return err
 		}
 		select {
@@ -189,12 +197,13 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 		case <-ctx.Done():
 			return ended()
 		case <-grace:
-			drained = true
-			return nil
 		case <-config.DrainCutoff:
-			drained = true
-			return nil
 		}
+		// Every request has returned, so their failures are all in.
+		drained = true
+		failedMu.Lock()
+		defer failedMu.Unlock()
+		return failedInDrain
 	}
 	encoder, err := s.WaitEncoder(acceptCtx)
 	if err != nil {
@@ -303,7 +312,11 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 				}
 			}
 			if err != nil && draining.Load() {
-				failedInDrain.Store(true)
+				failedMu.Lock()
+				if failedInDrain == nil {
+					failedInDrain = err
+				}
+				failedMu.Unlock()
 			}
 			if err != nil && config.Report != nil {
 				config.Report(ctx, uint64(stream.StreamID()), err)
@@ -375,12 +388,17 @@ func (t *idleTimer) hasExpired() bool {
 }
 
 // drainOutcome decides how a connection that ended after a drain's GOAWAY
-// went, once every request has returned: the drain fails if a request running
-// in it failed or a local protocol error ended it, and completes otherwise.
+// went, once every request has returned: failed, the first failure of a
+// request running in the drain, if any; else cause if a local protocol error
+// ended the connection; else nil, however else it ended, including a local
+// abort with nothing in flight and a peer's or transport's error close.
 // Per-request failures also reach Report.
-func drainOutcome(cause error, failed bool) error {
+func drainOutcome(cause, failed error) error {
+	if failed != nil {
+		return failed
+	}
 	var protocol *h3.Error
-	if failed || errors.As(cause, &protocol) {
+	if errors.As(cause, &protocol) {
 		return cause
 	}
 	return nil
