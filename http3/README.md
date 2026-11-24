@@ -97,8 +97,8 @@ first. Nor is a client's STOP_SENDING that arrives after the response's FIN
 reported as a failure, during a drain or otherwise: sending already ended with
 that FIN, and the client may have received every byte. A request stream the
 client opens before it sees GOAWAY is reset with H3_REQUEST_REJECTED, so it
-can retry elsewhere, at any point in the drain, including while the server
-waits for the client to close. Shutdown itself waits for cleanup without
+can retry elsewhere, until the drain closes the connection, including while
+the server waits for the client to close. Shutdown itself waits for cleanup without
 aggregating per-connection serving errors.
 
 Outgoing trailers require `PermitsTrailer`, a predicate over lowercase field
