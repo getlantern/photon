@@ -136,7 +136,7 @@ func TestHTTP3ClientAdditionalSettingsResumption(t *testing.T) {
 						wantEarly := round == 1 && policy == "same"
 						state := peer.ConnectionState()
 						if state.Used0RTT != wantEarly || state.TLS.DidResume != (round == 1) {
-							t.Fatalf("round=%d early=%v resume=%v", round, state.Used0RTT, state.TLS.DidResume)
+							t.Fatalf("round=%d early=%v resume=%v; %s", round, state.Used0RTT, state.TLS.DidResume, arrival.summary())
 						}
 						select {
 						case got := <-observed:
