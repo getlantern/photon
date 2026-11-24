@@ -148,7 +148,12 @@ func TestServeRequestsDrainBeforeSettingsAndCancellation(t *testing.T) {
 		drain := make(chan struct{})
 		close(drain)
 		ctx, cancel := context.WithCancel(context.Background())
-		acceptor := &requestAcceptor{streams: make(chan ServerRequestStream)}
+		// A stream waits to be accepted: the drain must reject it, never admit it.
+		late := requestStream(t, 0)
+		rejected := make(chan struct{})
+		late.release = func(context.Context) error { close(rejected); return nil }
+		acceptor := &requestAcceptor{streams: make(chan ServerRequestStream, 1)}
+		acceptor.streams <- late
 		done := make(chan error, 1)
 		go func() {
 			done <- session.ServeRequests(ctx, acceptor, ServeRequestsConfig{MaxActive: 1, Request: config, Drain: drain})
@@ -161,6 +166,12 @@ func TestServeRequestsDrainBeforeSettingsAndCancellation(t *testing.T) {
 		}
 		if !bytes.Equal(control.Bytes(), []byte{7, 1, 0}) {
 			t.Fatal(control.Bytes())
+		}
+		select {
+		case <-rejected:
+		case <-time.After(time.Second):
+			cancel()
+			t.Fatal("waiting request not rejected after GOAWAY")
 		}
 		if cancelDrain {
 			cancel()
@@ -181,8 +192,9 @@ func TestServeRequestsDrainBeforeSettingsAndCancellation(t *testing.T) {
 		}
 		cancel()
 		transport.check(t, 0x100)
-		// The drain's rejecting loop may call the acceptor; the handler
-		// fails the test if any request was admitted.
+		if len(late.writeCodes) != 1 || late.writeCodes[0] != 0x10b || len(late.readCodes) != 1 || late.readCodes[0] != 0x10b {
+			t.Fatal("waiting request not rejected", late.writeCodes, late.readCodes)
+		}
 	}
 }
 

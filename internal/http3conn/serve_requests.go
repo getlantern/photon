@@ -89,6 +89,9 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 		s.cancel(context.Cause(parent))
 	}
 	var tasks sync.WaitGroup
+	// releases waits on rejected streams' Release, joined once the connection
+	// is closed, so a peer slow to end a rejected stream holds nothing up.
+	var releases sync.WaitGroup
 	var draining atomic.Bool // set before GOAWAY: the client may close once it arrives
 	var failedMu sync.Mutex
 	var failedInDrain error // the first failure of a request running in the drain
@@ -114,6 +117,7 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 			<-interrupted
 		}
 		tasks.Wait()
+		releases.Wait()
 		if endedInDrain {
 			failedMu.Lock()
 			result = drainOutcome(result, failedInDrain)
@@ -143,6 +147,13 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 		defer idle.timer.Stop()
 	}
 	nextID := uint64(0)
+	releaseLater := func(stream ServerRequestStream) {
+		releases.Add(1)
+		go func() {
+			defer releases.Done()
+			_ = stream.Release(ctx)
+		}()
+	}
 	drain := func() error {
 		if ctx.Err() != nil {
 			return context.Cause(ctx)
@@ -159,13 +170,13 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 		// otherwise wait, unanswered, until the connection closes. Reject it
 		// so the client can retry it elsewhere (RFC 9114 section 5.2).
 		rejectCtx, stopRejecting := context.WithCancel(ctx)
-		var rejecting sync.WaitGroup
-		rejecting.Add(1)
+		rejectDone := make(chan struct{})
 		go func() {
-			defer rejecting.Done()
-			s.rejectRequests(rejectCtx, acceptor, &rejecting)
+			defer close(rejectDone)
+			s.rejectRequests(rejectCtx, acceptor, releaseLater)
 		}()
-		defer func() { stopRejecting(); rejecting.Wait() }()
+		stopRejector := func() { stopRejecting(); <-rejectDone }
+		defer stopRejector()
 		// No request starts after GOAWAY, and each returns once ctx ends.
 		done := make(chan struct{})
 		go func() { tasks.Wait(); close(done) }()
@@ -210,6 +221,8 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 		case <-grace:
 		case <-config.DrainCutoff:
 		}
+		// Stop rejecting first: a failure it hits must count below.
+		stopRejector()
 		// The connection may have ended as the grace or cutoff fired; select
 		// picks at random, so its ending, such as a protocol error, comes first.
 		if ctx.Err() != nil {
@@ -274,9 +287,8 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 			if err := s.decoder.Cancel(uint64(stream.StreamID())); err != nil {
 				return err
 			}
-			if err := stream.Release(ctx); err != nil {
-				return err
-			}
+			// Waiting for it here would hold back GOAWAY on the peer.
+			releaseLater(stream)
 			return drain()
 		}
 		if s.datagrams != nil {
@@ -314,7 +326,8 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 			// response's last packets. That close is its word that it is done,
 			// so it counts as delivery, though the server cannot tell whether
 			// the client read the response first. Release can report the close
-			// before ctx does; a stream reset or STOP_SENDING still fails.
+			// before ctx does. A reset Release reports still fails; one after
+			// the response's FIN is not reported (see http3/README.md).
 			delivered := stream.Release(ctx)
 			if delivered != nil && err == nil && draining.Load() && (gracefulPeerClose(delivered) || errors.Is(delivered, context.Canceled) && gracefulPeerClose(context.Cause(ctx))) {
 				delivered = nil
@@ -404,12 +417,26 @@ func (t *idleTimer) hasExpired() bool {
 }
 
 // rejectRequests resets every request stream accepted after GOAWAY with
-// H3_REQUEST_REJECTED until ctx ends. Each stream's Release runs on its own,
-// counted in releases, so a slow peer cannot hold up later rejections.
-func (s *Session) rejectRequests(ctx context.Context, acceptor RequestAcceptor, releases *sync.WaitGroup) {
+// H3_REQUEST_REJECTED until ctx ends. release runs each stream's Release on
+// its own, so a slow peer cannot hold up later rejections. Any other failure
+// fails the session, as it would the request loop.
+func (s *Session) rejectRequests(ctx context.Context, acceptor RequestAcceptor, release func(ServerRequestStream)) {
 	for {
 		stream, err := acceptor.AcceptRequest(ctx)
-		if err != nil || stream == nil {
+		if ctx.Err() != nil {
+			if stream != nil {
+				stream.CancelRead(0x10b)
+				stream.CancelWrite(0x10b)
+				release(stream)
+			}
+			return
+		}
+		if err != nil {
+			s.cancel(err)
+			return
+		}
+		if stream == nil {
+			s.cancel(fmt.Errorf("http3: acceptor returned nil request stream"))
 			return
 		}
 		if uint64(stream.StreamID())%4 != 0 || uint64(stream.StreamID()) > wire.MaxVarint {
@@ -422,11 +449,7 @@ func (s *Session) rejectRequests(ctx context.Context, acceptor RequestAcceptor, 
 			s.cancel(err)
 			return
 		}
-		releases.Add(1)
-		go func() {
-			defer releases.Done()
-			_ = stream.Release(ctx)
-		}()
+		release(stream)
 	}
 }
 
