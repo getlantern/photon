@@ -83,6 +83,7 @@ func TestHTTP3ClientAdditionalSettingsResumption(t *testing.T) {
 						}
 					}()
 					defer func() { server.Close(); listener.Close(); <-done }()
+					defer cancel() // first: a held handshake must not delay the teardown above
 					origin := "https://" + socket.LocalAddr().String()
 					config := &quic.Config{Versions: []quic.Version{v}, TokenStore: quic.NewLRUTokenStore(4, 4)}
 					for round := 0; round < 2; round++ {
@@ -106,7 +107,7 @@ func TestHTTP3ClientAdditionalSettingsResumption(t *testing.T) {
 						if mode == "direct" {
 							client, err = ownh3.DialEarly(ctx, origin, ct, config, &ownh3.ClientConfig{AdditionalSettings: extra})
 							if err != nil {
-								t.Fatal(err)
+								t.Fatal(err, ";", arrival.summary())
 							}
 						} else {
 							client = &ownh3.Transport{Enable0RTT: true, TLSClientConfig: ct, QUICConfig: config, AdditionalSettings: extra}
@@ -115,7 +116,7 @@ func TestHTTP3ClientAdditionalSettingsResumption(t *testing.T) {
 						request, _ := http.NewRequestWithContext(ctx, ownh3.MethodGet0RTT, origin, nil)
 						response, err := client.RoundTrip(request)
 						if err != nil {
-							t.Fatal(err)
+							t.Fatal(err, ";", arrival.summary())
 						}
 						body, err := io.ReadAll(response.Body)
 						response.Body.Close()

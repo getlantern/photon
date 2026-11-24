@@ -120,7 +120,11 @@ func testHTTP3TransportEarlyRecovery(t *testing.T, custom bool) {
 						// while early data was still its only option. Its body reports
 						// when the client has opened the stream and is sending it; the
 						// handshake is held until then. Without that, a slow client can
-						// open the stream after the handshake and send it as 1-RTT.
+						// open the stream after the handshake and send it as 1-RTT, which
+						// is correct: a request that never went early cannot be rejected,
+						// and with retries disabled it simply succeeds. A bodyless
+						// HEAD0RTT gives no such signal, so rejection is checked with a
+						// GET0RTT; it is handled the same way with or without a body.
 						var rejectedBody *cachedEarlyAdmissionBody
 						if round == 1 && !accept && !retry {
 							rejectedBody = &cachedEarlyAdmissionBody{entered: make(chan struct{})}
@@ -220,8 +224,11 @@ func testHTTP3TransportEarlyRecovery(t *testing.T, custom bool) {
 						if round == 1 && !accept && !retry {
 							if !errors.Is(got.err, quic.Err0RTTRejected) {
 								resumed, early := false, false
-								if got.response != nil && got.response.TLS != nil {
-									resumed = got.response.TLS.DidResume
+								if got.response != nil {
+									if got.response.TLS != nil {
+										resumed = got.response.TLS.DidResume
+									}
+									got.response.Body.Close()
 								}
 								select {
 								case <-arrival.seen:

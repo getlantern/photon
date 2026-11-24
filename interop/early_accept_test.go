@@ -64,7 +64,16 @@ func (o *earlyArrivalObserver) ReadFrom(b []byte) (int, net.Addr, error) {
 func (o *earlyArrivalObserver) summary() string {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	return fmt.Sprintf("arrivals: %d datagrams, packet types %v, %d unparsed (first: %s)", o.datagrams, o.types, o.unparsed, o.firstUnparsed)
+	names := map[wire.PacketType]string{wire.Initial: "Initial", wire.ZeroRTT: "0-RTT", wire.Handshake: "Handshake", wire.Retry: "Retry", wire.OneRTT: "1-RTT"}
+	counts := make(map[string]int, len(o.types))
+	for t, n := range o.types {
+		name, ok := names[t]
+		if !ok {
+			name = fmt.Sprintf("type %d", t)
+		}
+		counts[name] = n
+	}
+	return fmt.Sprintf("arrivals: %d datagrams, packets %v, %d unparsed (first: %s)", o.datagrams, counts, o.unparsed, o.firstUnparsed)
 }
 
 func TestEarlyClientAcceptanceUpstream(t *testing.T) {
