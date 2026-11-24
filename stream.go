@@ -302,7 +302,16 @@ func (s *SendStream) TryWriteAll(p []byte) error {
 // ErrWriteLimitReached. Retransmissions never invoke the limiter again.
 // The callback runs on the connection owner: it must be concurrency-safe,
 // must not block, and must not call QUIC methods. A nil limiter behaves as Write.
+//
+// Past the write deadline a write returns os.ErrDeadlineExceeded, unless
+// sending has already ended (CancelWrite, the peer's STOP_SENDING, rejected
+// early data or the connection closing): then it returns that cause, which no
+// retry can get past. An empty write sends nothing and waits for nothing, so it
+// ignores the deadline and reports only why sending ended, if it has.
 func (s *SendStream) WriteWithLimit(p []byte, limiter func(int) int) (int, error) {
+	if len(p) == 0 {
+		return 0, s.sendEnded()
+	}
 	if err := s.deadline.run(s.gate.acquire); err != nil {
 		return 0, s.preferEnded(err)
 	}
@@ -314,11 +323,6 @@ func (s *SendStream) WriteWithLimit(p []byte, limiter func(int) int) (int, error
 		return 0, ErrStreamClosed
 	}
 	total := 0
-	if len(p) == 0 {
-		// Nothing to send and nothing to wait for, so the deadline does not
-		// apply, but the call reports why sending ended if it has.
-		return 0, s.sendEnded()
-	}
 	// Keep one deadline context across partial commits. If the deadline changes,
 	// run resumes at total, preserving bytes already accepted by the owner.
 	err := s.deadline.run(func(ctx context.Context) error {
@@ -366,6 +370,10 @@ func (s *SendStream) WriteWithLimit(p []byte, limiter func(int) int) (int, error
 // not. It reads the send context, which ends with the cause as sending does
 // and with the connection, so it never waits for the connection owner.
 func (s *SendStream) sendEnded() error {
+	// Rejection overrides a send context that had already ended with FIN.
+	if s.rejected.Load() {
+		return Err0RTTRejected
+	}
 	ctx := s.sendContext
 	if ctx == nil || ctx.Err() == nil {
 		return nil
@@ -386,6 +394,10 @@ func (s *SendStream) preferEnded(err error) error {
 	}
 	return err
 }
+
+// Close queues FIN after earlier writes; it does not close the receive side.
+// Repeating it after it succeeded returns nil. Past the write deadline it
+// reports, as a write does, why sending ended if it has.
 func (s *SendStream) Close() error {
 	if err := s.deadline.run(s.gate.acquire); err != nil {
 		// Sending that ended normally ended with this stream's own FIN, so a
