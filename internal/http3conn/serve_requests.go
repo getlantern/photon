@@ -12,8 +12,11 @@ import (
 	"github.com/getlantern/photon/internal/wire"
 )
 
-// RequestAcceptor must interrupt AcceptRequest when ctx is canceled. The transport
-// enforces stream identity and flow-control limits for requests not yet accepted.
+// RequestAcceptor must interrupt AcceptRequest when ctx is canceled, and fail
+// only once ctx or the connection has ended: during a drain an accept error
+// ends rejection of late streams, and the session reports the ending. The
+// transport enforces stream identity and flow-control limits for requests not
+// yet accepted.
 type RequestAcceptor interface {
 	AcceptRequest(context.Context) (ServerRequestStream, error)
 }
@@ -89,6 +92,9 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 		s.cancel(context.Cause(parent))
 	}
 	var tasks sync.WaitGroup
+	// releases waits on rejected streams' Release, joined once the connection
+	// is closed, so a peer slow to end a rejected stream holds nothing up.
+	var releases sync.WaitGroup
 	var draining atomic.Bool // set before GOAWAY: the client may close once it arrives
 	var failedMu sync.Mutex
 	var failedInDrain error // the first failure of a request running in the drain
@@ -114,6 +120,7 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 			<-interrupted
 		}
 		tasks.Wait()
+		releases.Wait()
 		if endedInDrain {
 			failedMu.Lock()
 			result = drainOutcome(result, failedInDrain)
@@ -143,6 +150,16 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 		defer idle.timer.Stop()
 	}
 	nextID := uint64(0)
+	// releaseLater waits for a rejected stream off the loop. Its Release
+	// fails only once the connection or ctx has ended, which the session
+	// reports itself, so the error is not needed.
+	releaseLater := func(stream ServerRequestStream) {
+		releases.Add(1)
+		go func() {
+			defer releases.Done()
+			_ = stream.Release(ctx)
+		}()
+	}
 	drain := func() error {
 		if ctx.Err() != nil {
 			return context.Cause(ctx)
@@ -155,6 +172,17 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 		if err := s.SendGoaway(nextID); err != nil {
 			return err
 		}
+		// A request stream the client opened before it saw GOAWAY would
+		// otherwise wait, unanswered, until the connection closes. Reject it
+		// so the client can retry it elsewhere (RFC 9114 section 5.2).
+		rejectCtx, stopRejecting := context.WithCancel(ctx)
+		rejectDone := make(chan struct{})
+		go func() {
+			defer close(rejectDone)
+			s.rejectRequests(rejectCtx, acceptor, releaseLater)
+		}()
+		stopRejector := func() { stopRejecting(); <-rejectDone }
+		defer stopRejector()
 		// No request starts after GOAWAY, and each returns once ctx ends.
 		done := make(chan struct{})
 		go func() { tasks.Wait(); close(done) }()
@@ -199,6 +227,8 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 		case <-grace:
 		case <-config.DrainCutoff:
 		}
+		// Stop rejecting first: a failure it hits must count below.
+		stopRejector()
 		// The connection may have ended as the grace or cutoff fired; select
 		// picks at random, so its ending, such as a protocol error, comes first.
 		if ctx.Err() != nil {
@@ -246,7 +276,7 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 			return err
 		}
 		if stream == nil {
-			return fmt.Errorf("http3: acceptor returned nil request stream")
+			return &h3.Error{Code: 0x102, Reason: "acceptor returned nil request stream"}
 		}
 		if uint64(stream.StreamID())%4 != 0 || uint64(stream.StreamID()) > wire.MaxVarint {
 			return &h3.Error{Code: h3.StreamCreationError, Reason: "non-request stream in server request loop"}
@@ -263,9 +293,8 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 			if err := s.decoder.Cancel(uint64(stream.StreamID())); err != nil {
 				return err
 			}
-			if err := stream.Release(ctx); err != nil {
-				return err
-			}
+			// Waiting for it here would hold back GOAWAY on the peer.
+			releaseLater(stream)
 			return drain()
 		}
 		if s.datagrams != nil {
@@ -303,7 +332,8 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 			// response's last packets. That close is its word that it is done,
 			// so it counts as delivery, though the server cannot tell whether
 			// the client read the response first. Release can report the close
-			// before ctx does; a stream reset or STOP_SENDING still fails.
+			// before ctx does. A reset Release reports still fails; one after
+			// the response's FIN is not reported (see http3/README.md).
 			delivered := stream.Release(ctx)
 			if delivered != nil && err == nil && draining.Load() && (gracefulPeerClose(delivered) || errors.Is(delivered, context.Canceled) && gracefulPeerClose(context.Cause(ctx))) {
 				delivered = nil
@@ -390,6 +420,45 @@ func (t *idleTimer) hasExpired() bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.expired
+}
+
+// rejectRequests resets every request stream accepted after GOAWAY with
+// H3_REQUEST_REJECTED until ctx ends. release runs each stream's Release on
+// its own, so a slow peer cannot hold up later rejections. An accept error
+// means the connection or ctx has ended, which the session reports itself;
+// failing the session here would race it and could mask a clean close.
+// Failures after ctx ends are not reported: the drain has decided by then.
+func (s *Session) rejectRequests(ctx context.Context, acceptor RequestAcceptor, release func(ServerRequestStream)) {
+	for {
+		stream, err := acceptor.AcceptRequest(ctx)
+		if err != nil {
+			return
+		}
+		stopping := ctx.Err() != nil
+		fail := func(err error) {
+			if !stopping {
+				s.cancel(err)
+			}
+		}
+		if stream == nil {
+			fail(&h3.Error{Code: 0x102, Reason: "acceptor returned nil request stream"})
+			return
+		}
+		if uint64(stream.StreamID())%4 != 0 || uint64(stream.StreamID()) > wire.MaxVarint {
+			fail(&h3.Error{Code: h3.StreamCreationError, Reason: "non-request stream in server request loop"})
+			return
+		}
+		stream.CancelRead(0x10b)
+		stream.CancelWrite(0x10b)
+		if err := s.decoder.Cancel(uint64(stream.StreamID())); err != nil {
+			fail(err)
+			return
+		}
+		release(stream)
+		if stopping {
+			return
+		}
+	}
 }
 
 // drainOutcome decides how a connection that ended after a drain's GOAWAY
