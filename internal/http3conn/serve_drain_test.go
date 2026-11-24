@@ -8,6 +8,7 @@ import (
 	h3 "github.com/getlantern/photon/internal/http3wire"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -763,4 +764,95 @@ func TestServeRequestsDrainRejectsStreamDuringGrace(t *testing.T) {
 		t.Fatal("late request not rejected", late.writeCodes, late.readCodes)
 	}
 	transport.check(t, 0x100)
+}
+
+// firstThenAcceptor hands the request loop its stream on the first call;
+// later calls, from the drain's rejecting loop, get next's result.
+type firstThenAcceptor struct {
+	first  ServerRequestStream
+	served atomic.Bool
+	next   func(context.Context) (ServerRequestStream, error)
+}
+
+func (a *firstThenAcceptor) AcceptRequest(ctx context.Context) (ServerRequestStream, error) {
+	if a.served.CompareAndSwap(false, true) {
+		return a.first, nil
+	}
+	return a.next(ctx)
+}
+
+// An accept error in the rejecting loop means the connection is ending, so
+// the loop leaves the cause to the session: the client's clean close still
+// completes the drain for a request finishing in it.
+func TestServeRequestsDrainRejectorAcceptErrorKeepsCleanClose(t *testing.T) {
+	entered := make(chan struct{})
+	config := serveConfig(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(entered)
+		w.WriteHeader(204)
+	}))
+	session, _ := requestLoopSession(t, config)
+	control := &drainControl{ackEntered: make(chan struct{}), ackRelease: make(chan struct{})}
+	close(control.ackRelease)
+	session.control = control
+	request := requestStream(t, 0)
+	releasing := make(chan struct{})
+	request.release = func(ctx context.Context) error {
+		close(releasing)
+		<-ctx.Done() // the final ACK never comes
+		return ctx.Err()
+	}
+	rejectorFailed := make(chan struct{})
+	acceptor := &firstThenAcceptor{first: request, next: func(ctx context.Context) (ServerRequestStream, error) {
+		close(rejectorFailed)
+		return nil, errors.New("endpoint closed")
+	}}
+	drain := make(chan struct{})
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- session.ServeRequests(ctx, acceptor, ServeRequestsConfig{MaxActive: 1, Request: config, Drain: drain})
+	}()
+	for _, c := range []chan struct{}{entered, releasing} {
+		select {
+		case <-c:
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+	}
+	close(drain)
+	select {
+	case <-rejectorFailed:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	clientCloses(session)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal("clean close reported as failure:", err)
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+}
+
+// An acceptor that returns no stream and no error during the drain is a
+// local failure the drain's result keeps.
+func TestServeRequestsDrainRejectorNilStream(t *testing.T) {
+	config := serveConfig(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("handler invoked") }))
+	session, _ := requestLoopSession(t, config)
+	control := &drainControl{ackEntered: make(chan struct{}), ackRelease: make(chan struct{})}
+	session.control = control
+	acceptor := &firstThenAcceptor{next: func(context.Context) (ServerRequestStream, error) { return nil, nil }}
+	acceptor.served.Store(true)
+	drain := make(chan struct{})
+	close(drain)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	err := session.ServeRequests(ctx, acceptor, ServeRequestsConfig{MaxActive: 1, Request: config, Drain: drain})
+	var protocol *h3.Error
+	if !errors.As(err, &protocol) || protocol.Code != 0x102 {
+		t.Fatal(err)
+	}
 }

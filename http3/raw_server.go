@@ -62,6 +62,15 @@ func (s *Server) NewRawServerConn(conn *quic.Conn) (*RawServerConn, error) {
 func (c *RawServerConn) HandleRequestStream(str *quic.Stream) {
 	str.ReleaseStreamCredit()
 	handed := &handedRequestStream{Stream: str, released: make(chan struct{})}
+	// Once draining, reject here, at once, rather than through the request
+	// loop's rejecting accept, which would wait for the stream to complete.
+	select {
+	case <-c.drain:
+		str.CancelRead(quic.StreamErrorCode(ErrCodeRequestRejected))
+		str.CancelWrite(quic.StreamErrorCode(ErrCodeRequestRejected))
+		return
+	default:
+	}
 	select {
 	case c.requests <- handed:
 		select {

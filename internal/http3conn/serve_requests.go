@@ -147,6 +147,9 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 		defer idle.timer.Stop()
 	}
 	nextID := uint64(0)
+	// releaseLater waits for a rejected stream off the loop. Its Release
+	// fails only once the connection or ctx has ended, which the session
+	// reports itself, so the error is not needed.
 	releaseLater := func(stream ServerRequestStream) {
 		releases.Add(1)
 		go func() {
@@ -418,38 +421,40 @@ func (t *idleTimer) hasExpired() bool {
 
 // rejectRequests resets every request stream accepted after GOAWAY with
 // H3_REQUEST_REJECTED until ctx ends. release runs each stream's Release on
-// its own, so a slow peer cannot hold up later rejections. Any other failure
-// fails the session, as it would the request loop.
+// its own, so a slow peer cannot hold up later rejections. An accept error
+// means the connection or ctx has ended, which the session reports itself;
+// failing the session here would race it and could mask a clean close.
+// Failures after ctx ends are not reported: the drain has decided by then.
 func (s *Session) rejectRequests(ctx context.Context, acceptor RequestAcceptor, release func(ServerRequestStream)) {
 	for {
 		stream, err := acceptor.AcceptRequest(ctx)
-		if ctx.Err() != nil {
-			if stream != nil {
-				stream.CancelRead(0x10b)
-				stream.CancelWrite(0x10b)
-				release(stream)
-			}
+		if err != nil {
 			return
 		}
-		if err != nil {
-			s.cancel(err)
-			return
+		stopping := ctx.Err() != nil
+		fail := func(err error) {
+			if !stopping {
+				s.cancel(err)
+			}
 		}
 		if stream == nil {
-			s.cancel(fmt.Errorf("http3: acceptor returned nil request stream"))
+			fail(&h3.Error{Code: 0x102, Reason: "acceptor returned nil request stream"})
 			return
 		}
 		if uint64(stream.StreamID())%4 != 0 || uint64(stream.StreamID()) > wire.MaxVarint {
-			s.cancel(&h3.Error{Code: h3.StreamCreationError, Reason: "non-request stream in server request loop"})
+			fail(&h3.Error{Code: h3.StreamCreationError, Reason: "non-request stream in server request loop"})
 			return
 		}
 		stream.CancelRead(0x10b)
 		stream.CancelWrite(0x10b)
 		if err := s.decoder.Cancel(uint64(stream.StreamID())); err != nil {
-			s.cancel(err)
+			fail(err)
 			return
 		}
 		release(stream)
+		if stopping {
+			return
+		}
 	}
 }
 
