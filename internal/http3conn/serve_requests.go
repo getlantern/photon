@@ -199,6 +199,11 @@ func (s *Session) ServeRequests(parent context.Context, acceptor RequestAcceptor
 		case <-grace:
 		case <-config.DrainCutoff:
 		}
+		// The connection may have ended as the grace or cutoff fired; select
+		// picks at random, so its ending, such as a protocol error, comes first.
+		if ctx.Err() != nil {
+			return ended()
+		}
 		// Every request has returned, so their failures are all in.
 		drained = true
 		failedMu.Lock()

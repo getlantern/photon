@@ -638,3 +638,27 @@ func TestServeRequestsDrainControlStreamFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A local protocol error that ends the connection as the cutoff fires is
+// returned, whichever case the wait's select picks.
+func TestServeRequestsDrainProtocolErrorRacingCutoff(t *testing.T) {
+	for i := 0; i < 20; i++ {
+		config := serveConfig(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("handler invoked") }))
+		session, _ := requestLoopSession(t, config)
+		control := &drainControl{ackEntered: make(chan struct{}), ackRelease: make(chan struct{})}
+		close(control.ackRelease)
+		session.control = control
+		drain, cutoff := make(chan struct{}), make(chan struct{})
+		close(drain)
+		close(cutoff) // ready together with ctx below
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		err := session.ServeRequests(ctx, &requestAcceptor{streams: make(chan ServerRequestStream)}, ServeRequestsConfig{MaxActive: 1, Request: config, Drain: drain, DrainCutoff: cutoff, drainedHook: func() {
+			session.cancel(&h3.Error{Code: h3.FrameUnexpected, Reason: "bad frame"})
+		}})
+		cancel()
+		var protocol *h3.Error
+		if !errors.As(err, &protocol) {
+			t.Fatal("run", i, "protocol error hidden:", err)
+		}
+	}
+}
