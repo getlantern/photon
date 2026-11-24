@@ -20,16 +20,40 @@ type earlyArrivalObserver struct {
 	net.PacketConn
 	seen chan struct{}
 	once sync.Once
+
+	// What arrived, reported by summary when a test finds no early packet.
+	mu                  sync.Mutex
+	datagrams, unparsed int
+	types               map[wire.PacketType]int
+	firstUnparsed       string
 }
 
 func (o *earlyArrivalObserver) ReadFrom(b []byte) (int, net.Addr, error) {
 	n, a, err := o.PacketConn.ReadFrom(b)
 	if err == nil {
+		o.mu.Lock()
+		o.datagrams++
+		o.mu.Unlock()
 		for rest := b[:n]; len(rest) > 0; {
 			h, e := wire.ParseHeader(rest, 0)
 			if e != nil || h.PacketLen <= 0 {
+				if allZero(rest) {
+					break // padding after coalesced packets, not a packet
+				}
+				o.mu.Lock()
+				o.unparsed++
+				if o.firstUnparsed == "" {
+					o.firstUnparsed = fmt.Sprintf("%d bytes, first byte %#x: %v", len(rest), rest[0], e)
+				}
+				o.mu.Unlock()
 				break
 			}
+			o.mu.Lock()
+			if o.types == nil {
+				o.types = make(map[wire.PacketType]int)
+			}
+			o.types[h.Type]++
+			o.mu.Unlock()
 			if h.Type == wire.ZeroRTT {
 				o.once.Do(func() { close(o.seen) })
 			}
@@ -37,6 +61,31 @@ func (o *earlyArrivalObserver) ReadFrom(b []byte) (int, net.Addr, error) {
 		}
 	}
 	return n, a, err
+}
+
+func allZero(b []byte) bool {
+	for _, c := range b {
+		if c != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// summary describes every datagram the observer has read.
+func (o *earlyArrivalObserver) summary() string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	names := map[wire.PacketType]string{wire.Initial: "Initial", wire.ZeroRTT: "0-RTT", wire.Handshake: "Handshake", wire.Retry: "Retry", wire.OneRTT: "1-RTT"}
+	counts := make(map[string]int, len(o.types))
+	for t, n := range o.types {
+		name, ok := names[t]
+		if !ok {
+			name = fmt.Sprintf("type %d", t)
+		}
+		counts[name] = n
+	}
+	return fmt.Sprintf("arrivals: %d datagrams, packets %v, %d unparsed (first: %s)", o.datagrams, counts, o.unparsed, o.firstUnparsed)
 }
 
 func TestEarlyClientAcceptanceUpstream(t *testing.T) {

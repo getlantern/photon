@@ -116,6 +116,29 @@ func testHTTP3TransportEarlyRecovery(t *testing.T, custom bool) {
 							method = ownh3.MethodHead0RTT
 						}
 						request, _ := http.NewRequestWithContext(ctx, method, origin+"/", nil)
+						// A rejection is only certain for a request the client began
+						// while early data was still its only option. Its body reports
+						// when the client has opened the stream and is sending it; the
+						// handshake is held until then. Without that, a slow client can
+						// open the stream after the handshake and send it as 1-RTT, which
+						// is correct: a request that never went early cannot be rejected,
+						// and with retries disabled it simply succeeds. A bodyless
+						// HEAD0RTT gives no such signal, so rejection is checked with a
+						// GET0RTT; it is handled the same way with or without a body.
+						// It stays replayable, so a retry would happen if retries were
+						// not disabled, and the count below would show it.
+						var rejectedBody *cachedEarlyAdmissionBody
+						var rejectedReplays atomic.Int32
+						if round == 1 && !accept && !retry {
+							rejectedBody = &cachedEarlyAdmissionBody{entered: make(chan struct{})}
+							method = ownh3.MethodGet0RTT
+							request, _ = http.NewRequestWithContext(ctx, method, origin+"/", rejectedBody)
+							request.ContentLength = -1
+							request.GetBody = func() (io.ReadCloser, error) {
+								rejectedReplays.Add(1)
+								return &countedHTTPBody{Reader: strings.NewReader("")}, nil
+							}
+						}
 						type outcome struct {
 							response *http.Response
 							err      error
@@ -131,6 +154,13 @@ func testHTTP3TransportEarlyRecovery(t *testing.T, custom bool) {
 							case <-arrival.seen:
 							case <-ctx.Done():
 								t.Fatal("no pooled early wire packet", ctx.Err())
+							}
+							if rejectedBody != nil {
+								select {
+								case <-rejectedBody.entered:
+								case <-ctx.Done():
+									t.Fatal("early request never began sending", ctx.Err())
+								}
 							}
 							if strings.HasPrefix(mode.name, "cached-") {
 								cachedResult = make(chan outcome, 1)
@@ -200,10 +230,20 @@ func testHTTP3TransportEarlyRecovery(t *testing.T, custom bool) {
 						}
 						if round == 1 && !accept && !retry {
 							if !errors.Is(got.err, quic.Err0RTTRejected) {
-								t.Fatal("retries disabled", got.err)
+								resumed := false
+								if got.response != nil {
+									if got.response.TLS != nil {
+										resumed = got.response.TLS.DidResume
+									}
+									got.response.Body.Close()
+								}
+								t.Fatal("retries disabled", got.err, "; requests", requests.Load(), "hellos", hellos.Load(), "dials", dials.Load(), "resumed", resumed, ";", arrival.summary())
 							}
 							if requests.Load() != 0 {
 								t.Fatal("rejected request processed")
+							}
+							if replays := rejectedReplays.Load(); replays != 0 {
+								t.Fatal("rejected request replayed with retries disabled:", replays)
 							}
 							fresh, _ := http.NewRequestWithContext(ctx, http.MethodHead, origin+"/fresh", nil)
 							got.response, got.err = pool.RoundTrip(fresh)

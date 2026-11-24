@@ -105,8 +105,14 @@ func TestTransportDialedStatelessResetRestart(t *testing.T) {
 			if _, err := tr.init(16); err != nil {
 				t.Fatal(err)
 			}
+			// Any packet from the server after the restart draws the reset, so it
+			// can arrive before this write, which then fails with it: that is the
+			// outcome under test, not a failure.
 			if _, err := stream.Write(make([]byte, 1000)); err != nil {
-				t.Fatal(err)
+				var early *StatelessResetError
+				if !errors.As(err, &early) {
+					t.Fatal(err)
+				}
 			}
 			select {
 			case <-peer.Context().Done():

@@ -8,6 +8,7 @@ import (
 	"maps"
 	"net"
 	"net/http"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -35,6 +36,24 @@ func TestHTTP3ClientAdditionalSettingsResumption(t *testing.T) {
 						t.Fatal(err)
 					}
 					arrival := &earlyArrivalObserver{PacketConn: socket, seen: make(chan struct{})}
+					// Early data is expected, so hold the resumed handshake until some arrives:
+					// a client that is slow to write could otherwise finish the handshake first
+					// and send nothing early at all. The first 0-RTT packet of any kind releases
+					// it, so this guarantees only that early data was sent. A client that sends
+					// none is released after two seconds, to fail the early-evidence check.
+					if policy == "same" {
+						var hellos atomic.Int32
+						st.GetConfigForClient = func(*tls.ClientHelloInfo) (*tls.Config, error) {
+							if hellos.Add(1) > 1 {
+								select {
+								case <-arrival.seen:
+								case <-time.After(2 * time.Second):
+								case <-ctx.Done():
+								}
+							}
+							return nil, nil
+						}
+					}
 					transport := &upstream.Transport{Conn: arrival}
 					defer func() { socket.Close(); transport.Close() }()
 					listener, err := transport.ListenEarly(st, &upstream.Config{Allow0RTT: true, Versions: []upstream.Version{upstream.Version(v)}})
@@ -67,6 +86,7 @@ func TestHTTP3ClientAdditionalSettingsResumption(t *testing.T) {
 						}
 					}()
 					defer func() { server.Close(); listener.Close(); <-done }()
+					defer cancel() // first: a held handshake must not delay the teardown above
 					origin := "https://" + socket.LocalAddr().String()
 					config := &quic.Config{Versions: []quic.Version{v}, TokenStore: quic.NewLRUTokenStore(4, 4)}
 					for round := 0; round < 2; round++ {
@@ -90,7 +110,7 @@ func TestHTTP3ClientAdditionalSettingsResumption(t *testing.T) {
 						if mode == "direct" {
 							client, err = ownh3.DialEarly(ctx, origin, ct, config, &ownh3.ClientConfig{AdditionalSettings: extra})
 							if err != nil {
-								t.Fatal(err)
+								t.Fatal(err, ";", arrival.summary())
 							}
 						} else {
 							client = &ownh3.Transport{Enable0RTT: true, TLSClientConfig: ct, QUICConfig: config, AdditionalSettings: extra}
@@ -99,7 +119,7 @@ func TestHTTP3ClientAdditionalSettingsResumption(t *testing.T) {
 						request, _ := http.NewRequestWithContext(ctx, ownh3.MethodGet0RTT, origin, nil)
 						response, err := client.RoundTrip(request)
 						if err != nil {
-							t.Fatal(err)
+							t.Fatal(err, ";", arrival.summary())
 						}
 						body, err := io.ReadAll(response.Body)
 						response.Body.Close()
@@ -116,7 +136,7 @@ func TestHTTP3ClientAdditionalSettingsResumption(t *testing.T) {
 						wantEarly := round == 1 && policy == "same"
 						state := peer.ConnectionState()
 						if state.Used0RTT != wantEarly || state.TLS.DidResume != (round == 1) {
-							t.Fatalf("round=%d early=%v resume=%v", round, state.Used0RTT, state.TLS.DidResume)
+							t.Fatalf("round=%d early=%v resume=%v; %s", round, state.Used0RTT, state.TLS.DidResume, arrival.summary())
 						}
 						select {
 						case got := <-observed:
@@ -142,7 +162,7 @@ func TestHTTP3ClientAdditionalSettingsResumption(t *testing.T) {
 						}
 					default:
 						if policy == "same" {
-							t.Fatal("missing early packet evidence")
+							t.Fatal("missing early packet evidence;", arrival.summary())
 						}
 					}
 				})
