@@ -124,13 +124,13 @@ func ExchangeRequest(parent context.Context, request *http.Request, stream Clien
 		if errors.As(cause, &closed) {
 			stopUpload(cause)
 		}
+		// A peer's STOP_SENDING ends only the upload, whatever its code: the
+		// response stream's own FIN or reset decides the request's outcome,
+		// and a complete response is never discarded because the request was
+		// stopped (RFC 9114 section 4.1.1).
 		var reset *quic.StreamError
 		if errors.As(cause, &reset) && reset.Remote {
-			if reset.ErrorCode == 0x100 {
-				stopUpload(cause)
-			} else {
-				task.fail(cause, 0x10c)
-			}
+			stopUpload(cause)
 		}
 	})
 	uploadDone := make(chan struct{})
@@ -139,7 +139,7 @@ func ExchangeRequest(parent context.Context, request *http.Request, stream Clien
 		defer close(uploadDone)
 		err := WriteHTTPRequest(uploadCtx, &effective, writer, func() { stream.CancelWrite(0x10c) })
 		// A failed write can precede stopSend's report of why the peer ended it.
-		if err != nil && ctx.Err() == nil && !errors.Is(err, errUploadStopped) && !normalUploadStop(err) && !normalUploadStop(context.Cause(stream.Context())) {
+		if err != nil && ctx.Err() == nil && !errors.Is(err, errUploadStopped) && !normalUploadStop(err) && !peerStoppedUpload(context.Cause(stream.Context())) {
 			task.fail(err, 0x10c)
 		}
 	}()
@@ -202,6 +202,13 @@ func ExchangeRequest(parent context.Context, request *http.Request, stream Clien
 // An H3_NO_ERROR connection close ends an unfinished upload like the same code
 // in STOP_SENDING. Whether the response outlives the connection is the parent
 // context's decision (Session keeps accepted responses after a graceful close).
+// peerStoppedUpload reports whether the peer ended the upload, by closing the
+// connection normally or by STOP_SENDING with any code.
+func peerStoppedUpload(err error) bool {
+	var reset *quic.StreamError
+	return normalUploadStop(err) || errors.As(err, &reset) && reset.Remote
+}
+
 func normalUploadStop(err error) bool {
 	var closed *quic.PeerCloseError
 	if errors.As(err, &closed) {
