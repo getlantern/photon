@@ -32,7 +32,7 @@ func TestMigrationRecoveryPreservesReliableLateACK(t *testing.T) {
 	beforeBytes := c.queuedBytes
 	ledger, controller, timer, pacer := app.sent, app.congestion, app.timer, app.pacer
 	app.sent.RTT.Update(25*time.Millisecond, 0, 0, true)
-	app.congestion.OnACK([]recovery.Packet{{Bytes: 1200, InFlight: true}}, false)
+	app.congestion.OnACK(recovery.ACKEvent{Acked: []recovery.Packet{{Bytes: 1200, InFlight: true}}})
 	app.probePending = true
 	app.pacingAt = now.Add(time.Second)
 	app.migration, _ = app.space.migrationSelection(*app.network)

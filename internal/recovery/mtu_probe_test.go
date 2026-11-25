@@ -42,7 +42,7 @@ func TestMTUProbeRecoveryAccounting(t *testing.T) {
 			if err != nil || len(events.Acked) != 1 || !events.Acked[0].MTUProbe {
 				t.Fatal(events, err)
 			}
-			c.OnACK(events.Acked, false)
+			c.OnACK(ACKEvent{Acked: events.Acked})
 			if c.Window() != before+1400 {
 				t.Fatal("successful probe lost ACK accounting")
 			}

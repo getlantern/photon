@@ -13,8 +13,7 @@ import (
 func (a *pathApplication) resetMigrationRecovery() {
 	outstanding := a.sent.ResetForPathChange()
 	queueLostItems(a.space, a.space, outstanding[recovery.Application])
-	congestion, _ := recovery.NewCongestion(1200)
-	*a.congestion = *congestion
+	a.congestion.Reset(1200)
 	*a.timer = recovery.Timer{}
 	*a.pacer = recovery.Pacer{}
 	a.probePending = false

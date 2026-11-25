@@ -19,8 +19,16 @@ func NewCongestion(maxDatagram uint64) (*NewReno, error) {
 	if maxDatagram < 1200 || maxDatagram > 65527 {
 		return nil, errors.New("quic: invalid congestion datagram size")
 	}
-	return &NewReno{window: min(10*maxDatagram, max(14720, 2*maxDatagram)), threshold: math.MaxUint64, datagram: maxDatagram}, nil
+	c := new(NewReno)
+	c.Reset(maxDatagram)
+	return c, nil
 }
+
+// Reset returns the window to its initial value for maxDatagram.
+func (c *NewReno) Reset(maxDatagram uint64) {
+	*c = NewReno{window: min(10*maxDatagram, max(14720, 2*maxDatagram)), threshold: math.MaxUint64, datagram: maxDatagram}
+}
+
 func (c *NewReno) Window() uint64    { return c.window }
 func (c *NewReno) Threshold() uint64 { return c.threshold }
 func (c *NewReno) CanSend(flight uint64, size int, inFlight, probe bool) bool {
@@ -45,11 +53,11 @@ func saturatingAdd(a, b uint64) uint64 {
 // OnACK does not grow the window while application/flow-control limited, or
 // for packets sent before the current recovery epoch. Accumulating ACKed bytes
 // avoids rounding tiny packets down to zero growth in congestion avoidance.
-func (c *NewReno) OnACK(packets []Packet, limited bool) {
-	if limited {
+func (c *NewReno) OnACK(e ACKEvent) {
+	if e.Limited {
 		return
 	}
-	for _, p := range packets {
+	for _, p := range e.Acked {
 		if !p.InFlight || c.inRecovery(p.SentAt) {
 			continue
 		}
