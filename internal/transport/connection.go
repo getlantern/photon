@@ -212,6 +212,12 @@ type Conn struct {
 	// rejection that requeues the packet's data can restore both.
 	lastBaseACK, lastBaseACKSent bool
 	lastBaseACKPhase             uint64 // firstSent of the keys that packet used
+	// lastPathACK is lastBaseACK for the last multipath packet: the path and
+	// packet number that carried a bundled ACK.
+	lastPathACK struct {
+		bundled, ackSent      bool
+		pathID, number, phase uint64
+	}
 
 	allowConnectionWindowIncrease   func(uint64) bool
 	onHandshakeConfirmed            func()

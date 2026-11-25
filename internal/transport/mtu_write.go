@@ -15,6 +15,8 @@ type outboundMTUProbe struct {
 	pathID, number uint64
 	app            *pathApplication
 	size           int
+	ack, ackSent   bool   // a bundled ACK, and the key-phase ackSent before it
+	ackPhase       uint64 // firstSent of the keys the packet used
 }
 
 func (c *Conn) outboundMTUProbe(id uint64, size int) *outboundMTUProbe {
@@ -61,6 +63,9 @@ func (e *ServerEndpoint) HandleWriteError(out *Outbound, err error, now time.Tim
 		if app.mtu != nil && app.space.sent[packet.number] == packet.item && app.sent.RejectLargePacket(packet.number) {
 			queueLostItems(app.space, app.space, []recovery.Packet{{Number: packet.number}})
 			delete(app.space.sent, packet.number)
+			if packet.ack {
+				out.Conn.restoreBundledACK(app.space, packet.ackSent, packet.ackPhase)
+			}
 			app.resetMTU()
 			app.mtuNeedsValidation = true
 			app.mtu.upper = minimumQUICMTU
@@ -76,6 +81,9 @@ func (e *ServerEndpoint) HandleWriteError(out *Outbound, err error, now time.Tim
 		if app.mtu != nil && app.lastSentDatagram && app.space.nextPN == packet.number+1 && app.sent.RejectLargePacket(packet.number) {
 			// Payload and queue accounting were already released at commitment.
 			// DATAGRAM frames are never retransmitted after write rejection.
+			if packet.ack {
+				out.Conn.restoreBundledACK(app.space, packet.ackSent, packet.ackPhase)
+			}
 			app.resetMTU()
 			app.mtuNeedsValidation = true
 			app.mtu.upper = minimumQUICMTU
@@ -95,13 +103,7 @@ func (e *ServerEndpoint) HandleWriteError(out *Outbound, err error, now time.Tim
 				delete(s.sent, packet.number)
 			}
 			if packet.ack {
-				// The bundled ACK never left: owe it again, now. If it is
-				// what marked an ACK sent in this key phase, unmark it; a
-				// phase that has since moved on keeps its own state.
-				s.ackPending = true
-				if !packet.ackSent && c.applicationKeys.firstSent == packet.ackPhase {
-					c.applicationKeys.ackSent = false
-				}
+				c.restoreBundledACK(s, packet.ackSent, packet.ackPhase)
 			}
 			c.basePacketLimit, c.baseMTUNeedsValidation = minimumQUICMTU, true
 			c.baseMTUFallbackAt = now
@@ -150,7 +152,9 @@ func (c *Conn) outboundLargeStream(id uint64, size int) *outboundLargeStream {
 	if _, ok := item.frame.(wire.StreamFrame); !ok {
 		return nil
 	}
-	return &outboundLargeStream{outboundMTUProbe: outboundMTUProbe{idleRevision: c.idleRevision, pathID: id, number: number, app: app, size: size}, item: item}
+	probe := c.lastPathACKProbe(id, number)
+	probe.app, probe.size = app, size
+	return &outboundLargeStream{outboundMTUProbe: probe, item: item}
 }
 
 func (c *Conn) outboundLargeDatagram(id uint64, size int) *outboundMTUProbe {
@@ -165,7 +169,19 @@ func (c *Conn) outboundLargeDatagram(id uint64, size int) *outboundMTUProbe {
 	if app.mtu == nil || !app.lastSentDatagram || app.space.nextPN == 0 {
 		return nil
 	}
-	return &outboundMTUProbe{idleRevision: c.idleRevision, pathID: id, number: app.space.nextPN - 1, app: app, size: size}
+	probe := c.lastPathACKProbe(id, app.space.nextPN-1)
+	probe.app, probe.size = app, size
+	return &probe
+}
+
+// lastPathACKProbe describes the last multipath packet for a write-rejection
+// rollback, including the ACK it carried if it was sent on path id as number.
+func (c *Conn) lastPathACKProbe(id, number uint64) outboundMTUProbe {
+	probe := outboundMTUProbe{idleRevision: c.idleRevision, pathID: id, number: number}
+	if last := c.lastPathACK; last.bundled && last.pathID == id && last.number == number {
+		probe.ack, probe.ackSent, probe.ackPhase = true, last.ackSent, last.phase
+	}
+	return probe
 }
 
 type outboundBaseLarge struct {

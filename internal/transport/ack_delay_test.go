@@ -381,3 +381,139 @@ func testBundledACKRestored(t *testing.T, datagram, phaseMoved bool) {
 		t.Fatal("key-phase ackSent", got, "want", want)
 	}
 }
+
+// owePathACK has from send to on path 1 an ack-eliciting packet, which leaves
+// on owing a delayed PATH_ACK on that path.
+func owePathACK(t *testing.T, from, on *Conn, now time.Time) {
+	t.Helper()
+	from.multipath.paths[1].application.budget.Validate()
+	if err := from.queueFrameOnPath(1, wire.PingFrame{}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := from.nextPacketOnPath(1, now)
+	if err != nil || raw == nil {
+		t.Fatal("peer packet on path 1", err)
+	}
+	if err := on.handleMultipathPacket(raw, now); err != nil {
+		t.Fatal(err)
+	}
+	if s := on.multipath.paths[1].application.space; s.ackPending || s.ackDueAt.IsZero() {
+		t.Fatal("setup: want a delayed PATH_ACK owed on path 1")
+	}
+}
+
+// On a multipath path, an owed PATH_ACK rides ahead of the path's data, and
+// is then no longer owed.
+func TestMultipathACKBundledWithData(t *testing.T) {
+	for _, v := range []wire.Version{wire.Version1, wire.Version2} {
+		t.Run(vName(v), func(t *testing.T) {
+			client, server := sendingPathPair(t, v)
+			now := time.Unix(101, 0)
+			owePathACK(t, server, client, now)
+			client.multipath.paths[1].application.budget.Validate()
+			if err := client.queueFrameOnPath(1, wire.PingFrame{}); err != nil {
+				t.Fatal(err)
+			}
+			raw, err := client.nextPacketOnPath(1, now)
+			if err != nil || raw == nil {
+				t.Fatal("data packet", err)
+			}
+			if ackScheduled(client.multipath.paths[1].application.space) {
+				t.Fatal("PATH_ACK still owed after it was bundled")
+			}
+			if err := server.handleMultipathPacket(raw, now); err != nil {
+				t.Fatal(err)
+			}
+			if server.multipath.paths[1].application.sent.BytesInFlight != 0 {
+				t.Fatal("the data packet carried no PATH_ACK")
+			}
+			if !ackScheduled(server.multipath.paths[1].application.space) {
+				t.Fatal("the bundled packet was not ack-eliciting")
+			}
+		})
+	}
+}
+
+// A multipath packet whose write is rejected as too large owes its bundled
+// PATH_ACK again, for STREAM data and for a DATAGRAM.
+func TestMultipathBundledACKRestoredOnLargeWriteRejection(t *testing.T) {
+	for _, datagram := range []bool{false, true} {
+		t.Run(fmt.Sprintf("datagram=%t", datagram), func(t *testing.T) {
+			e, c, remote := mtuWriteEndpointPair(t, wire.Version1, 1500)
+			defer e.Close()
+			app := c.multipath.paths[1].application
+			now := time.Unix(101, 0)
+			owePathACK(t, remote, c, now)
+			if datagram {
+				c.peerParams.MaxDatagramFrameSize = 65535
+				c.config.InitialPacketSize = 1452
+				c.config.enablePathMTUDiscovery = true
+				c.seedInitialPathMTU(app)
+				if err := c.SendDatagram(make([]byte, 1300)); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				app.mtu.confirmed, app.mtu.upper = 3000, 3000
+				id, err := c.OpenStream(false)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := c.WriteStream(id, make([]byte, 2500), true); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ackSent := c.applicationKeys.ackSent
+			out, err := e.NextDatagram(now)
+			if err != nil || out == nil || len(out.Data) <= 1200 {
+				t.Fatal("large output", err)
+			}
+			probe := out.datagram
+			if !datagram && out.large != nil {
+				probe = &out.large.outboundMTUProbe
+			}
+			if probe == nil || !probe.ack {
+				t.Fatal("want a large packet carrying the PATH_ACK")
+			}
+			if ackScheduled(app.space) {
+				t.Fatal("setup: PATH_ACK still owed after bundling")
+			}
+			if ackSent {
+				t.Fatal("setup: want ackSent false before the bundled ACK")
+			}
+			c.applicationKeys.ackSent = true // as if the bundled ACK had set it
+			e.HandleWriteError(out, fmt.Errorf("socket: %w", syscall.EMSGSIZE), now)
+			if c.closed {
+				t.Fatal("rejection closed the connection")
+			}
+			if !app.space.ackPending {
+				t.Fatal("rejected packet's PATH_ACK not owed again")
+			}
+			if c.applicationKeys.ackSent {
+				t.Fatal("key-phase ackSent left set by an ACK that never left")
+			}
+		})
+	}
+}
+
+// With exactly enough congestion window for a path's data alone, the data
+// goes out without the PATH_ACK, which stays owed.
+func TestMultipathACKNotBundledPastCongestionWindow(t *testing.T) {
+	client, server := sendingPathPair(t, wire.Version1)
+	now := time.Unix(101, 0)
+	owePathACK(t, server, client, now)
+	app := client.multipath.paths[1].application
+	app.budget.Validate()
+	if err := client.queueFrameOnPath(1, wire.PingFrame{}); err != nil {
+		t.Fatal(err)
+	}
+	peer := client.multipath.paths[1].peer
+	alone := 1 + len(peer.active[peer.current].cid) + 4 + 1 + 16
+	app.sent.BytesInFlight = app.congestion.Window() - uint64(alone)
+	raw, err := client.nextPacketOnPath(1, now)
+	if err != nil || raw == nil {
+		t.Fatal("data held back by the bundled PATH_ACK", err)
+	}
+	if !ackScheduled(app.space) {
+		t.Fatal("PATH_ACK no longer owed")
+	}
+}
