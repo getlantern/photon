@@ -115,3 +115,48 @@ func TestIdleMultipathSchedulerAllocations(t *testing.T) {
 		t.Fatalf("idle scheduler allocated %g objects", allocations)
 	}
 }
+
+// A delayed ACK owed on a nonzero path wakes the owner through
+// RecoveryDeadline, is not sent early, and once due leaves as a PATH_ACK on a
+// surviving path after its own path is abandoned.
+func TestMultipathDelayedACKOnSurvivingPath(t *testing.T) {
+	for _, v := range []wire.Version{wire.Version1, wire.Version2} {
+		client, server := sendingPathPair(t, v)
+		now := time.Unix(101, 0)
+		server.multipath.paths[1].application.budget.Validate()
+		if err := server.queueFrameOnPath(1, wire.PingFrame{}); err != nil {
+			t.Fatal(err)
+		}
+		raw, err := server.nextPacketOnPath(1, now)
+		if err != nil || raw == nil {
+			t.Fatal(err)
+		}
+		if err := client.handleMultipathPacket(raw, now); err != nil {
+			t.Fatal(err)
+		}
+		due := now.Add(client.ackDelay())
+		if got := client.multipath.paths[1].application.space.ackDueAt; !got.Equal(due) {
+			t.Fatal("path 1 ACK deadline", got, "want", due)
+		}
+		if got := client.RecoveryDeadline(); got.IsZero() || got.After(due) {
+			t.Fatal("RecoveryDeadline misses path 1's delayed ACK", got, "want by", due)
+		}
+		if id, early, err := client.nextMultipathPacket(now); err != nil || early != nil {
+			t.Fatal("ACK sent before its deadline", id, err)
+		}
+		client.multipath.beginAbandon(1)
+		if err := client.HandleTimeout(due); err != nil {
+			t.Fatal(err)
+		}
+		id, ack, err := client.nextMultipathPacket(due)
+		if err != nil || id != 0 || ack == nil {
+			t.Fatal("delayed ACK did not use surviving path", id, err)
+		}
+		if err := server.handleMultipathPacket(ack, due); err != nil {
+			t.Fatal(err)
+		}
+		if server.multipath.paths[1].application.sent.BytesInFlight != 0 {
+			t.Fatal("delayed cross-path ACK did not acknowledge the original packet")
+		}
+	}
+}
