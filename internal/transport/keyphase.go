@@ -307,3 +307,64 @@ func (c *Conn) noteKeyPhaseWriteACK(f wire.Frame, now time.Time) {
 		k.writeAcknowledged = true
 	}
 }
+
+// elicitKeyUpdateACK queues a PING when the write keys near their AEAD limit
+// but the update that limit forces would be refused: after the peer updated
+// keys, RFC 9001 section 6.1 allows ours only once a packet sent with the
+// current keys is acknowledged, and an endpoint that has sent only ACKs since
+// (a one-way download, say) has nothing the peer will acknowledge. Without
+// this the connection fails at the limit. The PING starts at 15/16 of the
+// limit and is queued again if nothing ack-eliciting is left in flight.
+func (c *Conn) elicitKeyUpdateACK() error {
+	k := &c.applicationKeys
+	if !c.confirmed || !k.updated || (k.writeAcknowledged && !k.awaitingRead) {
+		return nil
+	}
+	keys := c.writeKeys(applicationSpace)
+	if keys == nil {
+		return nil
+	}
+	limit, _ := keys.UsageLimits()
+	if c.sealed[applicationSpace] < limit-limit/16 || c.applicationInFlight() || c.pingQueued() {
+		return nil
+	}
+	return c.enqueue(applicationSpace, wire.PingFrame{}, 1)
+}
+
+// applicationInFlight reports whether any application packet is in flight,
+// on any path.
+func (c *Conn) applicationInFlight() bool {
+	if c.multipath == nil || !c.confirmed {
+		return c.recovery.BytesInFlight > 0
+	}
+	for _, state := range c.multipath.paths {
+		if app := state.application; app != nil && app.sent.BytesInFlight > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// pingQueued reports whether a PING is already queued in the application
+// space, on any path.
+func (c *Conn) pingQueued() bool {
+	queued := func(queue []*sendItem) bool {
+		for _, item := range queue {
+			if _, ok := item.frame.(wire.PingFrame); ok && item.queued {
+				return true
+			}
+		}
+		return false
+	}
+	if queued(c.spaces[applicationSpace].queue) {
+		return true
+	}
+	if c.multipath != nil {
+		for _, state := range c.multipath.paths {
+			if app := state.application; app != nil && queued(app.space.queue) {
+				return true
+			}
+		}
+	}
+	return false
+}
