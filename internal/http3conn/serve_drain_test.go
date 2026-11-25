@@ -232,7 +232,8 @@ func TestServeRequestsRejectsAcceptRacingDrain(t *testing.T) {
 	session.control = control
 	stream := requestStream(t, 0)
 	// The rejected stream's Release waits until the connection ends, so the
-	// wait for GOAWAY below fails if anything waits for it first.
+	// wait for the drain to reach WaitAcknowledged, after GOAWAY is sent,
+	// times out if anything waits for it first.
 	stream.release = func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }
 	acceptor := &drainRaceAcceptor{stream: stream, entered: make(chan struct{})}
 	drain := make(chan struct{})
@@ -782,8 +783,10 @@ func TestServeRequestsDrainRejectsStreamDuringGrace(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
-	if len(late.writeCodes) != 1 || late.writeCodes[0] != 0x10b || len(late.readCodes) != 1 || late.readCodes[0] != 0x10b {
-		t.Fatal("late request not rejected", late.writeCodes, late.readCodes)
+	for _, stream := range []*numberedRequest{slow, late} {
+		if len(stream.writeCodes) != 1 || stream.writeCodes[0] != 0x10b || len(stream.readCodes) != 1 || stream.readCodes[0] != 0x10b {
+			t.Fatal("late request not rejected", stream.StreamID(), stream.writeCodes, stream.readCodes)
+		}
 	}
 	transport.check(t, 0x100)
 }
