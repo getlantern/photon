@@ -28,7 +28,7 @@ func TestHTTP3PublicServerShutdownTimeoutAndClose(t *testing.T) {
 			defer listener.Close()
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			client := &peerh3.Transport{TLSClientConfig: clientTLS, QUICConfig: &upstream.Config{Versions: []upstream.Version{upstream.Version(version)}}}
+			client := &peerh3.Transport{Dial: loopbackDial(t), TLSClientConfig: clientTLS, QUICConfig: &upstream.Config{Versions: []upstream.Version{upstream.Version(version)}}}
 			defer client.Close()
 			entered := make(chan context.Context, 1)
 			handlerDone := make(chan struct{})
@@ -175,7 +175,7 @@ func TestHTTP3ListenerShutdownPreservesActiveResponse(t *testing.T) {
 			t.Error("listener did not join")
 		}
 	}()
-	client := &peerh3.Transport{TLSClientConfig: clientTLS, QUICConfig: &upstream.Config{Versions: []upstream.Version{upstream.Version1}}}
+	client := &peerh3.Transport{Dial: loopbackDial(t), TLSClientConfig: clientTLS, QUICConfig: &upstream.Config{Versions: []upstream.Version{upstream.Version1}}}
 	defer client.Close()
 	clientDone := make(chan error, 1)
 	go func() {

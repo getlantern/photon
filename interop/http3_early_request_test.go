@@ -73,7 +73,7 @@ func TestHTTP3ServerEarlyRequestTLSState(t *testing.T) {
 						t.Fatal(err)
 					}
 					defer c.CloseWithError(0, "")
-					peerTransport := &peerh3.Transport{}
+					peerTransport := &peerh3.Transport{Dial: loopbackDial(t)}
 					defer peerTransport.Close()
 					client := peerTransport.NewClientConn(c)
 					accepted := make(chan *quic.Conn, 1)

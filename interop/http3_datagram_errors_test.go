@@ -130,7 +130,7 @@ func TestHTTPDatagramsPublicServerRequestAbort(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer peer.CloseWithError(0, "done")
-			peerTransport := &peerh3.Transport{EnableDatagrams: true}
+			peerTransport := &peerh3.Transport{Dial: loopbackDial(t), EnableDatagrams: true}
 			peerClient := peerTransport.NewClientConn(peer)
 			stream, err := peerClient.OpenRequestStream(ctx)
 			if err != nil {

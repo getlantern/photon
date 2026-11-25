@@ -55,7 +55,7 @@ func TestHTTP3ServerHandlerResetErrors(t *testing.T) {
 				served := make(chan struct{})
 				go func() { defer close(served); server.Serve(ctx, listener) }()
 				defer func() { server.Close(); listener.Close(); <-served }()
-				client := &peerh3.Transport{TLSClientConfig: ct, QUICConfig: &upstream.Config{Versions: []upstream.Version{upstream.Version(version)}}}
+				client := &peerh3.Transport{Dial: loopbackDial(t), TLSClientConfig: ct, QUICConfig: &upstream.Config{Versions: []upstream.Version{upstream.Version(version)}}}
 				defer client.Close()
 				input, output := io.Pipe()
 				defer input.Close()

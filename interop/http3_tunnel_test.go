@@ -285,7 +285,7 @@ func TestHTTPConnectTunnelIndependentClient(t *testing.T) {
 						t.Fatal(err)
 					}
 					defer peer.CloseWithError(0, "done")
-					peerTransport := &peerh3.Transport{}
+					peerTransport := &peerh3.Transport{Dial: loopbackDial(t)}
 					peerClient := peerTransport.NewClientConn(peer)
 					origin := "https://" + listener.Addr().String()
 					for _, half := range []bool{false, true} {

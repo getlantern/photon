@@ -55,7 +55,7 @@ func TestHTTP3SettingsSnapshotUpstream(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer peer.CloseWithError(0, "done")
-				transport := &peerh3.Transport{EnableDatagrams: datagrams}
+				transport := &peerh3.Transport{Dial: loopbackDial(t), EnableDatagrams: datagrams}
 				defer transport.Close()
 				reference := transport.NewClientConn(peer)
 				select {
@@ -175,7 +175,7 @@ func TestHTTP3ResponseWriterSettingsUpstream(t *testing.T) {
 				served := make(chan error, 1)
 				go func() { served <- server.Serve(ctx, listener) }()
 				defer func() { server.Close(); listener.Close(); <-served }()
-				transport := &peerh3.Transport{TLSClientConfig: ct, EnableDatagrams: datagrams, AdditionalSettings: extra, QUICConfig: &upstream.Config{EnableDatagrams: datagrams, Versions: []upstream.Version{upstream.Version(version)}}}
+				transport := &peerh3.Transport{Dial: loopbackDial(t), TLSClientConfig: ct, EnableDatagrams: datagrams, AdditionalSettings: extra, QUICConfig: &upstream.Config{EnableDatagrams: datagrams, Versions: []upstream.Version{upstream.Version(version)}}}
 				defer transport.Close()
 				req, _ := http.NewRequestWithContext(ctx, "GET", "https://"+listener.Addr().String(), nil)
 				response, err := transport.RoundTrip(req)

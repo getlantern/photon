@@ -38,7 +38,7 @@ func TestHTTP3PriorityHeadersIndependent(t *testing.T) {
 						t.Error("server failed to stop")
 					}
 				}()
-				client := &peerh3.Transport{TLSClientConfig: ct, EnableDatagrams: datagrams, QUICConfig: &upstream.Config{Versions: []upstream.Version{upstream.Version(version)}, EnableDatagrams: datagrams}}
+				client := &peerh3.Transport{Dial: loopbackDial(t), TLSClientConfig: ct, EnableDatagrams: datagrams, QUICConfig: &upstream.Config{Versions: []upstream.Version{upstream.Version(version)}, EnableDatagrams: datagrams}}
 				defer client.Close()
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()

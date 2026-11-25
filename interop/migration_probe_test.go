@@ -76,8 +76,14 @@ func testUpstreamStagedProbeServer(t *testing.T, abandon bool) {
 				if err != nil || string(data) != "staged migration" {
 					t.Fatal(string(data), err)
 				}
-				if server.RemoteAddr().String() != want.String() {
-					t.Fatal("wrong peer binding", server.RemoteAddr(), want)
+				// quic-go's Path.Switch takes effect on its next run-loop
+				// pass, so data written just after it can still leave on the
+				// old path; photon moves the binding when the first packet on
+				// the new path arrives.
+				for deadline := time.Now().Add(time.Second); server.RemoteAddr().String() != want.String(); time.Sleep(time.Millisecond) {
+					if time.Now().After(deadline) {
+						t.Fatal("wrong peer binding", server.RemoteAddr(), want)
+					}
 				}
 			}
 			transfer(original.Conn.LocalAddr())

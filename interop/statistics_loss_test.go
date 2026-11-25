@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -72,6 +73,31 @@ func TestStatisticsIndependentLateACK(t *testing.T) {
 					target *net.UDPAddr
 				}
 				held := make(chan heldPacket, 1)
+				// After withholding a packet, the relay forwards 3 more full-size
+				// packets from our endpoint, so the peer's ACKs prove the loss,
+				// then queues everything else ours until open. That keeps our ACK
+				// of the peer's ACK from reaching it before the late packet: the
+				// peer could then retire the late packet's number from its
+				// receive history (RFC 9000 section 13.2.4) and drop it as a
+				// duplicate.
+				var gate struct {
+					sync.Mutex
+					holding bool
+					after   int
+					queued  []heldPacket
+				}
+				open := func() error {
+					gate.Lock()
+					defer gate.Unlock()
+					gate.holding = false
+					for _, p := range gate.queued {
+						if _, err := socket.WriteToUDP(p.data, p.target); err != nil {
+							return err
+						}
+					}
+					gate.queued = nil
+					return nil
+				}
 				done := make(chan struct{})
 				go func() {
 					defer close(done)
@@ -92,11 +118,27 @@ func TestStatisticsIndependentLateACK(t *testing.T) {
 						} else {
 							client = from
 						}
+						ours, full := fromServer == ownServer, n > 1000 && buffer[0]&0x80 == 0
 						// Withhold a full-sized data packet from our endpoint only.
-						if fromServer == ownServer && n > 1000 && buffer[0]&0x80 == 0 && armed.CompareAndSwap(true, false) {
+						if ours && full && armed.CompareAndSwap(true, false) {
+							gate.Lock()
+							gate.holding = true
+							gate.Unlock()
 							held <- heldPacket{bytes.Clone(buffer[:n]), target}
 							continue
 						}
+						gate.Lock()
+						if ours && gate.holding {
+							if gate.after >= 3 {
+								gate.queued = append(gate.queued, heldPacket{bytes.Clone(buffer[:n]), target})
+								gate.Unlock()
+								continue
+							}
+							if full {
+								gate.after++
+							}
+						}
+						gate.Unlock()
 						if _, err := socket.WriteToUDP(buffer[:n], target); err != nil {
 							return
 						}
@@ -205,6 +247,9 @@ func TestStatisticsIndependentLateACK(t *testing.T) {
 					case <-ctx.Done():
 						t.Fatal("late peer ACK did not correct exact loss", lost, s, len(delayed.data), ctx.Err())
 					}
+				}
+				if err := open(); err != nil {
+					t.Fatal(err)
 				}
 				// The retransmission still completes the stream.
 				if err := tx.WaitAcknowledged(ctx); err != nil {

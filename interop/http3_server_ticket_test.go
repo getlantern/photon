@@ -100,7 +100,7 @@ func TestHTTP3ServerTicketSettingsUpstream(t *testing.T) {
 				seedDone := make(chan error, 1)
 				go func() { seedDone <- seedServer.ServeQUICConn(ctx, seedPeer) }()
 				defer func() { seedServer.Close(); <-seedDone }()
-				h3Transport := &peerh3.Transport{}
+				h3Transport := &peerh3.Transport{Dial: loopbackDial(t)}
 				defer h3Transport.Close()
 				origin := "https://" + listener.Addr().String()
 				request, _ := http.NewRequestWithContext(ctx, http.MethodGet, origin+"/seed", nil)

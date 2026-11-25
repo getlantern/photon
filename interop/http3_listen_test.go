@@ -103,7 +103,7 @@ func TestHTTP3ListenAndServeIndependent(t *testing.T) {
 						}
 					}
 					defer peer.CloseWithError(0, "")
-					transport := &peerh3.Transport{EnableDatagrams: true}
+					transport := &peerh3.Transport{Dial: loopbackDial(t), EnableDatagrams: true}
 					defer transport.Close()
 					client := transport.NewClientConn(peer)
 					request, _ := http.NewRequestWithContext(ctx, "GET", "https://"+address+"/", nil)
