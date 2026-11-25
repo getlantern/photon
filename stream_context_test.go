@@ -6,7 +6,6 @@ import (
 	"io"
 	"net"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -198,14 +197,13 @@ func TestPublicReceiveErrorsAfterCleanup(t *testing.T) {
 }
 
 // holdingRelay forwards UDP between one client and server, and can hold
-// server-to-client datagrams until released. It counts client datagrams.
+// server-to-client datagrams until released.
 type holdingRelay struct {
 	socket  *net.UDPConn
 	mu      sync.Mutex
 	holding bool
 	held    [][]byte
 	client  *net.UDPAddr
-	fromCli atomic.Int64
 }
 
 func newHoldingRelay(t *testing.T, server *net.UDPAddr) *holdingRelay {
@@ -229,7 +227,6 @@ func newHoldingRelay(t *testing.T, server *net.UDPAddr) *holdingRelay {
 				r.mu.Lock()
 				r.client = from
 				r.mu.Unlock()
-				r.fromCli.Add(1)
 				_, _ = socket.WriteToUDP(packet, server)
 				continue
 			}
@@ -266,8 +263,8 @@ func (r *holdingRelay) release() {
 // Context keeps the FIN as its cause. HTTP/3 relies on this, see
 // http3/README.md. A relay holds the server's datagrams, so the client cannot
 // have the FIN when it cancels and must send STOP_SENDING. The hold ends only
-// once a client datagram sent after CancelRead, which carries STOP_SENDING,
-// has reached the server, before the client could acknowledge the FIN.
+// once the server has processed it, before the client could acknowledge the
+// FIN.
 func TestReleaseAfterStopSendingFollowingFIN(t *testing.T) {
 	clientTLS, serverTLS := dialTLS(t)
 	l, err := ListenAddr("127.0.0.1:0", serverTLS, nil)
@@ -312,14 +309,13 @@ func TestReleaseAfterStopSendingFollowingFIN(t *testing.T) {
 		if err := ps.Close(); err != nil {
 			t.Fatal(err)
 		}
-		sent := relay.fromCli.Load()
 		s.CancelRead(0x10c) // the FIN is held, so this sends STOP_SENDING
-		for relay.fromCli.Load() == sent {
-			select {
-			case <-ctx.Done():
-				t.Fatal("round", round, "STOP_SENDING never sent", ctx.Err())
-			case <-time.After(time.Millisecond):
-			}
+		// Hold until the server has processed it: WaitAcknowledged reports
+		// the reset without waiting for its acknowledgment, and nothing else
+		// can end the wait while the FIN is held.
+		var reset *StreamError
+		if err := ps.WaitAcknowledged(ctx); !errors.As(err, &reset) || reset.ErrorCode != 0x10c {
+			t.Fatal("round", round, "STOP_SENDING not processed while the FIN was held:", err)
 		}
 		relay.release()
 		if err := ps.Release(ctx); err != nil {
@@ -334,7 +330,6 @@ func TestReleaseAfterStopSendingFollowingFIN(t *testing.T) {
 		if err := peer.server.Do(ctx, func(*transport.ServerEndpoint) error { terminal = ps.SendStream.sendTerminal; return nil }); err != nil {
 			t.Fatal(err)
 		}
-		var reset *StreamError
 		if !errors.As(terminal, &reset) || reset.ErrorCode != 0x10c {
 			t.Fatal("round", round, "STOP_SENDING not processed after FIN; recorded send outcome:", terminal)
 		}
