@@ -810,11 +810,20 @@ func TestResponseCompletesAfterRequestStopped(t *testing.T) {
 	taken := make(chan takenStream, 1)
 	client, origin := dialTestServer(ctx, t, &Server{Handler: takeOver(http.StatusOK, taken)}, nil)
 	// The request body never ends, so the upload is still running when the
-	// server stops it.
+	// server stops it. The client closes the body once its upload stops, which
+	// ends these writes.
 	input, output := io.Pipe()
 	defer output.Close()
 	request, _ := http.NewRequestWithContext(ctx, "POST", origin+"/", input)
-	go output.Write([]byte("partial"))
+	uploadStopped := make(chan struct{})
+	go func() {
+		defer close(uploadStopped)
+		for {
+			if _, err := output.Write([]byte("partial")); err != nil {
+				return
+			}
+		}
+	}()
 	response, err := client.RoundTrip(request)
 	if err != nil {
 		t.Fatal(err)
@@ -825,8 +834,9 @@ func TestResponseCompletesAfterRequestStopped(t *testing.T) {
 		t.Fatal(peer.err)
 	}
 	peer.stream.CancelRead(quic.StreamErrorCode(ErrCodeRequestCanceled))
-	// Let the STOP_SENDING reach the client before the rest of the response.
-	time.Sleep(20 * time.Millisecond)
+	// The client has handled the STOP_SENDING before the rest of the
+	// response is sent.
+	await(ctx, t, "upload stopped", uploadStopped)
 	if _, err := peer.stream.Write([]byte("complete")); err != nil {
 		t.Fatal(err)
 	}
