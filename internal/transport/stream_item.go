@@ -10,7 +10,7 @@ import "github.com/getlantern/photon/internal/wire"
 // committing flow-control credit.
 const maxStreamDeliveryItems = 128
 const streamDeliveryItemCharge = 128
-const streamGroupCharge = 256
+const streamGroupCharge = 384
 const streamBranchCharge = 128
 
 // streamGroupCreationCharge is a new split group's charge, for a ledger with
@@ -151,8 +151,16 @@ func streamSplitReservation(n int) int {
 	if n <= portableStreamPayload {
 		return 0
 	}
-	splits := (n+portableStreamPayload-1)/portableStreamPayload - 1
-	return streamGroupCreationCharge((n+63)/64) + splits*(2*streamDeliveryItemCharge+streamBranchCharge)
+	return streamGroupCreationCharge((n+63)/64) + streamSplitsCharge(n)
+}
+
+// streamSplitsCharge is what the splits of an n-byte frame into portable
+// fragments charge once its group exists.
+func streamSplitsCharge(n int) int {
+	if n <= portableStreamPayload {
+		return 0
+	}
+	return ((n+portableStreamPayload-1)/portableStreamPayload - 1) * (2*streamDeliveryItemCharge + streamBranchCharge)
 }
 
 // Charge full fallback capacity at admission, but materialize maps, coverage

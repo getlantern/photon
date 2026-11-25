@@ -177,37 +177,100 @@ func TestDeferredReservationFailureThenLateOriginalACK(t *testing.T) {
 	}
 }
 
-// A frame's split reservation covers the memory splitting it into portable
-// fragments actually allocates, so the send buffer's charge bounds memory.
+// A trim never takes the reservation a remaining split needs: after trimming
+// a reserved frame at a full buffer, splitting what is left into portable
+// fragments still succeeds.
+func TestTrimThenSplitAtFullBuffer(t *testing.T) {
+	c := &Conn{}
+	frame := wire.StreamFrame{Data: make([]byte, 2300), Fin: true}
+	if err := c.enqueue(applicationSpace, frame, len(frame.Data)+32+streamSplitReservation(len(frame.Data))); err != nil {
+		t.Fatal(err)
+	}
+	s := &c.spaces[applicationSpace]
+	root := s.queue[0]
+	c.queuedBytes = maxSendBytes
+	complete := func(item *sendItem) error { c.queuedBytes -= item.bytes; return nil }
+	// The trim's new item doesn't fit beside the two splits the prefix still
+	// needs, so at a full buffer it is refused, recoverably.
+	if err := c.retainStreamItemPrefix(root, 2299, complete); !errors.Is(err, ErrSendBuffer) {
+		t.Fatal("trim at a full buffer", err)
+	}
+	c.queuedBytes = maxSendBytes - (streamDeliveryItemCharge + streamBranchCharge)
+	if err := c.retainStreamItemPrefix(root, 2299, complete); err != nil {
+		t.Fatal("trim with room", err)
+	}
+	if c.queuedBytes != maxSendBytes {
+		t.Fatal("setup: buffer not full after the trim")
+	}
+	for idx := 0; idx < len(s.queue); idx++ {
+		if len(s.queue[idx].frame.(wire.StreamFrame).Data) > portableStreamPayload {
+			if err := c.splitQueuedStream(s, idx, portableStreamPayload); err != nil {
+				t.Fatal("split after the trim", err)
+			}
+		}
+	}
+}
+
+// liveBytesPer is the heap that n runs of work leave live, per run, after
+// collection.
+func liveBytesPer(n int, setup func(i int), work func(i int)) uint64 {
+	for i := range n {
+		setup(i)
+	}
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	for i := range n {
+		work(i)
+	}
+	runtime.GC()
+	runtime.ReadMemStats(&after)
+	if after.HeapAlloc < before.HeapAlloc {
+		return 0
+	}
+	return (after.HeapAlloc - before.HeapAlloc) / uint64(n)
+}
+
+// A frame's split reservation covers the memory that splitting it into
+// portable fragments, or trimming it to a prefix, leaves live, so the send
+// buffer's charges bound memory.
 func TestStreamSplitReservationCoversAllocation(t *testing.T) {
-	const n = 200
-	for _, size := range []int{portableStreamPayload + 1, 1239, 1411, 2500, 9000} {
+	const n = 500
+	for _, size := range []int{portableStreamPayload + 1, 1239, 1411, 2500, 9000, maximumUDPPayload} {
 		data := make([]byte, size)
-		spaces := make([]*numberSpace, n)
 		conns := make([]*Conn, n)
-		for i := range conns {
+		setup := func(i int) {
 			conns[i] = &Conn{}
-			if err := conns[i].enqueue(applicationSpace, wire.StreamFrame{Data: data}, size+32+streamSplitReservation(size)); err != nil {
+			if err := conns[i].enqueue(applicationSpace, wire.StreamFrame{Data: data, Fin: true}, size+32+streamSplitReservation(size)); err != nil {
 				t.Fatal(err)
 			}
-			spaces[i] = &conns[i].spaces[applicationSpace]
 		}
-		var before, after runtime.MemStats
-		runtime.GC()
-		runtime.ReadMemStats(&before)
-		for i, c := range conns {
-			s := spaces[i]
+		live := liveBytesPer(n, setup, func(i int) {
+			s := &conns[i].spaces[applicationSpace]
 			for idx := 0; idx < len(s.queue); idx++ {
 				if len(s.queue[idx].frame.(wire.StreamFrame).Data) > portableStreamPayload {
-					if err := c.splitQueuedStream(s, idx, portableStreamPayload); err != nil {
+					if err := conns[i].splitQueuedStream(s, idx, portableStreamPayload); err != nil {
 						t.Fatal(err)
 					}
 				}
 			}
+		})
+		if reserved := uint64(streamSplitReservation(size)); live > reserved {
+			t.Errorf("splitting %d bytes left %d live, more than its %d-byte reservation", size, live, reserved)
 		}
-		runtime.ReadMemStats(&after)
-		if allocated, reserved := (after.TotalAlloc-before.TotalAlloc)/n, uint64(streamSplitReservation(size)); allocated > reserved {
-			t.Errorf("splitting %d bytes allocated %d, more than its %d-byte reservation", size, allocated, reserved)
+		var charged []int
+		live = liveBytesPer(n, setup, func(i int) {
+			c := conns[i]
+			before := c.queuedBytes
+			root := c.spaces[applicationSpace].queue[0]
+			if err := c.retainStreamItemPrefix(root, uint64(size/2), func(*sendItem) error { return nil }); err != nil {
+				t.Fatal(err)
+			}
+			charged = append(charged, streamSplitReservation(size)-root.delivery.reserved+c.queuedBytes-before)
+		})
+		runtime.KeepAlive(conns)
+		if live > uint64(charged[0]) {
+			t.Errorf("trimming %d bytes left %d live, more than the %d bytes charged for it", size, live, charged[0])
 		}
 	}
 }
