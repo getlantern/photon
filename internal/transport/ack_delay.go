@@ -111,7 +111,7 @@ func (c *Conn) bundleACK(s *numberSpace, space int, early bool, item *sendItem, 
 	// The ACK must not hold back a packet that could leave without it, so the
 	// bundled size must also pass congestion, pacing and the address budget.
 	size := 1 + len(c.peerCID) + 4 + len(payload) + 16
-	if size <= c.basePacketPayloadLimit() && c.canSendBundled(size, wire.InFlightFrame(f), now) {
+	if size <= bundledSizeLimit(f, c.basePacketPayloadLimit()) && c.canSendBundled(size, wire.InFlightFrame(f), now) {
 		return payload, ack.Ranges[0].Largest, true, nil
 	}
 	payload, err = f.Append(payload[:0])
@@ -134,12 +134,24 @@ func (c *Conn) bundlePathACK(app *pathApplication, ackPath uint64, f wire.Frame,
 		return nil, 0, false, err
 	}
 	size := headerLen + len(payload) + 16
-	if size <= app.packetPayloadLimit() && app.budget.CanSend(size) && app.congestion.CanSend(app.sent.BytesInFlight, size, inFlight, probe) &&
+	if size <= bundledSizeLimit(f, app.packetPayloadLimit()) && app.budget.CanSend(size) && app.congestion.CanSend(app.sent.BytesInFlight, size, inFlight, probe) &&
 		(!inFlight || probe || app.pacer.Delay(now, app.congestion.Window(), app.sent.RTT.Smoothed, size) <= 0) {
 		return payload, ack.Ranges[0].Largest, true, nil
 	}
 	payload, err = f.Append(c.payloadScratch[:0])
 	return payload, 0, false, err
+}
+
+// bundledSizeLimit caps a packet grown by a bundled ACK. Only a STREAM or
+// DATAGRAM packet that a write rejects as too large can be rolled back (see
+// HandleWriteError), so any other frame may carry an ACK only if the packet
+// stays within the minimum QUIC MTU, which every path supports.
+func bundledSizeLimit(f wire.Frame, limit int) int {
+	switch f.(type) {
+	case wire.StreamFrame, wire.DatagramFrame:
+		return limit
+	}
+	return min(limit, minimumQUICMTU)
 }
 
 // ackBundleable reports whether the queued frame f may carry the ACK the
@@ -157,7 +169,9 @@ func ackBundleable(s *numberSpace, item *sendItem, f wire.Frame) bool {
 	return ok
 }
 
-// restoreBundledACK owes again an ACK whose packet a write rejected. If that
+// restoreBundledACK owes again an ACK whose packet a write rejected, at once
+// rather than at its old deadline: the rejection is rare, and an early ACK is
+// always allowed. If that
 // ACK is what marked an ACK sent in this key phase (ackSent was false before
 // it), it unmarks it; a key phase that has since moved on, identified by the
 // key generation, keeps its own state.

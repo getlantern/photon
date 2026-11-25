@@ -527,3 +527,79 @@ func TestMultipathACKNotBundledPastCongestionWindow(t *testing.T) {
 		t.Fatal("PATH_ACK no longer owed")
 	}
 }
+
+// newTokenOfPacketSize is a NEW_TOKEN frame that fills a 1-RTT packet to
+// size bytes on its own, for a peer CID of cidLen bytes.
+func newTokenOfPacketSize(size, cidLen int) wire.NewTokenFrame {
+	frame := size - (1 + cidLen + 4 + 16)
+	return wire.NewTokenFrame{Token: bytes.Repeat([]byte{7}, frame-3)} // type, 2-byte length
+}
+
+// An owed ACK is not bundled onto a frame other than STREAM or DATAGRAM if the
+// packet would then exceed the minimum QUIC MTU: only those two can be rolled
+// back if the write is rejected as too large.
+func TestControlFrameBundleStaysWithinMinimumMTU(t *testing.T) {
+	client, server := testPair(t, wire.Version1, streamParameters())
+	server.config.InitialPacketSize = 1452
+	drivePair(t, client, server, false, false)
+	now := time.Unix(200, 0)
+	ackNow(server)
+	drain(t, server, now)
+	next := client.spaces[applicationSpace].nextPN + 10
+	// A history of gaps gives the owed ACK some size; the last packet arrives
+	// in order, so the ACK is owed but not due.
+	for i := uint64(0); i < 20; i++ {
+		if err := server.HandleDatagram(makePeerPacket(t, client, applicationSpace, next+2*i, wire.PingFrame{}), now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ackNow(server)
+	drain(t, server, now)
+	if err := server.HandleDatagram(makePeerPacket(t, client, applicationSpace, next+39, wire.PingFrame{}), now); err != nil {
+		t.Fatal(err)
+	}
+	s := &server.spaces[applicationSpace]
+	if s.ackPending || s.ackDueAt.IsZero() {
+		t.Fatal("setup: want an ACK owed but not due")
+	}
+	f := newTokenOfPacketSize(minimumQUICMTU-8, len(server.peerCID))
+	if err := server.enqueue(applicationSpace, f, len(f.Token)); err != nil {
+		t.Fatal(err)
+	}
+	out := drain(t, server, now)
+	if len(out) == 0 || len(out[0]) > minimumQUICMTU {
+		t.Fatal("NEW_TOKEN packet grew past the minimum QUIC MTU", len(out))
+	}
+	if !ackScheduled(s) {
+		t.Fatal("ACK no longer owed")
+	}
+}
+
+// The same holds on a multipath path whose confirmed MTU allows more.
+func TestMultipathControlFrameBundleStaysWithinMinimumMTU(t *testing.T) {
+	client, server := sendingPathPair(t, wire.Version1)
+	now := time.Unix(101, 0)
+	owePathACK(t, client, server, now)
+	app := server.multipath.paths[1].application
+	app.budget.Validate()
+	app.validation.state = PathValidated
+	if err := server.startPathMTUSearch(1, 1500); err != nil {
+		t.Fatal(err)
+	}
+	app.mtu.confirmed = 1452
+	peer := server.multipath.paths[1].peer
+	f := newTokenOfPacketSize(minimumQUICMTU-2, len(peer.active[peer.current].cid))
+	if err := server.queueFrameOnPath(1, f); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := server.nextPacketOnPath(1, now)
+	if err != nil || raw == nil {
+		t.Fatal("NEW_TOKEN packet", err)
+	}
+	if len(raw) > minimumQUICMTU {
+		t.Fatal("NEW_TOKEN packet grew past the minimum QUIC MTU", len(raw))
+	}
+	if !ackScheduled(app.space) {
+		t.Fatal("PATH_ACK no longer owed")
+	}
+}

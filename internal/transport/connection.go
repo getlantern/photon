@@ -211,12 +211,12 @@ type Conn struct {
 	// ACK, and lastBaseACKSent the key-phase ackSent before it, so a write
 	// rejection that requeues the packet's data can restore both.
 	lastBaseACK, lastBaseACKSent bool
-	lastBaseACKPhase             uint64 // key generation that packet used
+	lastBaseACKGeneration        uint64 // key generation that packet used
 	// lastPathACK is lastBaseACK for the last multipath packet: the path and
 	// packet number that carried a bundled ACK.
 	lastPathACK struct {
-		bundled, ackSent      bool
-		pathID, number, phase uint64
+		bundled, ackSent           bool
+		pathID, number, generation uint64
 	}
 
 	allowConnectionWindowIncrease   func(uint64) bool
@@ -1409,7 +1409,7 @@ func (c *Conn) NextDatagram(now time.Time) ([]byte, error) {
 		}
 		c.lastBaseApplication = space == applicationSpace && !early
 		_, c.lastBaseDatagram = f.(wire.DatagramFrame)
-		c.lastBaseACK, c.lastBaseACKSent, c.lastBaseACKPhase = bundled, c.applicationKeys.ackSent, c.applicationKeys.generation
+		c.lastBaseACK, c.lastBaseACKSent, c.lastBaseACKGeneration = bundled, c.applicationKeys.ackSent, c.applicationKeys.generation
 		c.datagramECN = marking
 		c.datagramECNCommit = ecnCommit{c.recovery, recovery.Space(space), s.nextPN}
 		if space == applicationSpace && !early {

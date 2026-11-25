@@ -16,7 +16,7 @@ type outboundMTUProbe struct {
 	app            *pathApplication
 	size           int
 	ack, ackSent   bool   // a bundled ACK, and the key-phase ackSent before it
-	ackPhase       uint64 // key generation the packet used
+	ackGeneration  uint64 // key generation the packet used
 }
 
 func (c *Conn) outboundMTUProbe(id uint64, size int) *outboundMTUProbe {
@@ -64,7 +64,7 @@ func (e *ServerEndpoint) HandleWriteError(out *Outbound, err error, now time.Tim
 			queueLostItems(app.space, app.space, []recovery.Packet{{Number: packet.number}})
 			delete(app.space.sent, packet.number)
 			if packet.ack {
-				out.Conn.restoreBundledACK(app.space, packet.ackSent, packet.ackPhase)
+				out.Conn.restoreBundledACK(app.space, packet.ackSent, packet.ackGeneration)
 			}
 			app.resetMTU()
 			app.mtuNeedsValidation = true
@@ -82,7 +82,7 @@ func (e *ServerEndpoint) HandleWriteError(out *Outbound, err error, now time.Tim
 			// Payload and queue accounting were already released at commitment.
 			// DATAGRAM frames are never retransmitted after write rejection.
 			if packet.ack {
-				out.Conn.restoreBundledACK(app.space, packet.ackSent, packet.ackPhase)
+				out.Conn.restoreBundledACK(app.space, packet.ackSent, packet.ackGeneration)
 			}
 			app.resetMTU()
 			app.mtuNeedsValidation = true
@@ -103,7 +103,7 @@ func (e *ServerEndpoint) HandleWriteError(out *Outbound, err error, now time.Tim
 				delete(s.sent, packet.number)
 			}
 			if packet.ack {
-				c.restoreBundledACK(s, packet.ackSent, packet.ackPhase)
+				c.restoreBundledACK(s, packet.ackSent, packet.ackGeneration)
 			}
 			c.basePacketLimit, c.baseMTUNeedsValidation = minimumQUICMTU, true
 			c.baseMTUFallbackAt = now
@@ -179,19 +179,19 @@ func (c *Conn) outboundLargeDatagram(id uint64, size int) *outboundMTUProbe {
 func (c *Conn) lastPathACKProbe(id, number uint64) outboundMTUProbe {
 	probe := outboundMTUProbe{idleRevision: c.idleRevision, pathID: id, number: number}
 	if last := c.lastPathACK; last.bundled && last.pathID == id && last.number == number {
-		probe.ack, probe.ackSent, probe.ackPhase = true, last.ackSent, last.phase
+		probe.ack, probe.ackSent, probe.ackGeneration = true, last.ackSent, last.generation
 	}
 	return probe
 }
 
 type outboundBaseLarge struct {
-	idleBefore   idleActivity
-	idleRevision uint64
-	number       uint64
-	size         int
-	item         *sendItem // nil for unreliable DATAGRAM
-	ack, ackSent bool      // a bundled ACK, and the key-phase ackSent before it
-	ackPhase     uint64    // key generation the packet used
+	idleBefore    idleActivity
+	idleRevision  uint64
+	number        uint64
+	size          int
+	item          *sendItem // nil for unreliable DATAGRAM
+	ack, ackSent  bool      // a bundled ACK, and the key-phase ackSent before it
+	ackGeneration uint64    // key generation the packet used
 }
 
 func (c *Conn) outboundBaseLarge(size int, storage *outboundBaseLarge) *outboundBaseLarge {
@@ -214,6 +214,6 @@ func (c *Conn) outboundBaseLarge(size int, storage *outboundBaseLarge) *outbound
 	if storage == nil {
 		storage = new(outboundBaseLarge)
 	}
-	*storage = outboundBaseLarge{idleRevision: c.idleRevision, number: number, size: size, item: item, ack: c.lastBaseACK, ackSent: c.lastBaseACKSent, ackPhase: c.lastBaseACKPhase}
+	*storage = outboundBaseLarge{idleRevision: c.idleRevision, number: number, size: size, item: item, ack: c.lastBaseACK, ackSent: c.lastBaseACKSent, ackGeneration: c.lastBaseACKGeneration}
 	return storage
 }
