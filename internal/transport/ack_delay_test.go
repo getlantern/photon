@@ -222,9 +222,9 @@ func TestACKBundledWithData(t *testing.T) {
 	}
 }
 
-// A stream frame that no longer fits beside a large bundled ACK is split, and
-// every byte still arrives in order.
-func TestACKBundledWithFullStreamFrame(t *testing.T) {
+// An owed ACK too large to fit beside a full-size stream frame is not
+// bundled: the frame goes out whole and the ACK stays owed.
+func TestACKTooLargeToBundleStaysOwed(t *testing.T) {
 	client, server, now, next := settledPair(t, streamParameters())
 	// A history of gaps makes the owed ACK too large to fit beside a
 	// full-size stream frame.
@@ -252,61 +252,10 @@ func TestACKBundledWithFullStreamFrame(t *testing.T) {
 		payload[i] = byte(i * 7)
 	}
 	writeAll(t, client, id, payload)
-	out := drain(t, client, now)
-	if len(out) == 0 {
-		t.Fatal("nothing sent")
-	}
-	var got []byte
-	sawACK := false
-	for i, datagram := range out {
-		if len(datagram) > client.basePacketPayloadLimit() {
-			t.Fatal("datagram", i, "exceeds the packet limit", len(datagram))
-		}
-		for _, f := range framesIn(t, server, datagram) {
-			switch f := f.(type) {
-			case wire.AckFrame:
-				if i != 0 {
-					t.Fatal("ACK outside the first data packet")
-				}
-				sawACK = true
-			case wire.StreamFrame:
-				if f.Offset != uint64(len(got)) {
-					t.Fatal("stream offset", f.Offset, "want", len(got))
-				}
-				got = append(got, f.Data...)
-			}
-		}
-	}
-	if !sawACK || string(got) != string(payload) {
-		t.Fatal("bundled ACK or stream data missing", sawACK, len(got))
-	}
-}
-
-// If the split that would make room for a bundled ACK fails, the stream frame
-// goes out alone and the ACK stays owed; the connection does not fail.
-func TestACKBundleSplitFailureSendsFrameAlone(t *testing.T) {
-	client, server, now, next := settledPair(t, streamParameters())
-	const gaps = 40
-	for i := uint64(0); i < gaps; i++ {
-		if err := client.HandleDatagram(makePeerPacket(t, server, applicationSpace, next+2*i, wire.PingFrame{}), now); err != nil {
-			t.Fatal(err)
-		}
-	}
-	ackNow(client)
-	drain(t, client, now)
-	if err := client.HandleDatagram(makePeerPacket(t, server, applicationSpace, next+2*gaps-1, wire.PingFrame{}), now); err != nil {
-		t.Fatal(err)
-	}
-	id, err := client.OpenStream(false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	writeAll(t, client, id, make([]byte, 4000))
-	// Exhaust the send buffer so splitting a queued stream frame fails.
-	client.queuedBytes = maxSendBytes
+	queued := len(client.spaces[applicationSpace].queue)
 	b, err := client.NextDatagram(now)
-	if err != nil || client.err != nil {
-		t.Fatal("split failure failed the connection", err, client.err)
+	if err != nil || b == nil {
+		t.Fatal(err)
 	}
 	frames := framesIn(t, server, b)
 	if len(frames) != 1 {
@@ -315,7 +264,10 @@ func TestACKBundleSplitFailureSendsFrameAlone(t *testing.T) {
 	if _, ok := frames[0].(wire.StreamFrame); !ok {
 		t.Fatalf("frame %T, want the stream frame", frames[0])
 	}
+	if got := len(client.spaces[applicationSpace].queue); got != queued-1 {
+		t.Fatal("queue split for the ACK", queued, got)
+	}
 	if !ackScheduled(&client.spaces[applicationSpace]) {
-		t.Fatal("ACK no longer owed after the frame went alone")
+		t.Fatal("ACK no longer owed")
 	}
 }

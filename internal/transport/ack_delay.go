@@ -83,58 +83,44 @@ func (c *Conn) ackDeadline() time.Time {
 	return at
 }
 
-// bundleACK appends the queued frame *f to the packet payload, preceded by the
+// bundleACK appends the queued frame f to the packet payload, preceded by the
 // ACK the space owes, due or not, so the ACK rides on data instead of taking a
-// datagram of its own. It returns the bundled ACK, or nil when none was added.
-// A stream frame that no longer fits beside the ACK is split, which updates
-// *item and *f. Any other frame that does not fit, or a stream frame whose
-// split fails, is sent without the ACK.
-func (c *Conn) bundleACK(s *numberSpace, space int, early bool, item **sendItem, f *wire.Frame, now time.Time) ([]byte, *wire.AckFrame, error) {
-	payload := c.payloadScratch[:0]
+// datagram of its own. It bundles only an ACK that already fits beside f:
+// splitting f to make room would leave a small tail needing its own datagram,
+// cost a delivery ledger, and happen before the packet is known to be
+// sendable. An ACK that does not fit stays owed. bundled reports whether the
+// ACK was added, and largest is its largest acknowledged packet number; the
+// ACK itself is not returned, as it borrows the receive history's storage.
+func (c *Conn) bundleACK(s *numberSpace, space int, early bool, item *sendItem, f wire.Frame, now time.Time) (payload []byte, largest uint64, bundled bool, err error) {
+	payload = c.payloadScratch[:0]
 	owed := s.ackPending || s.unackedEliciting > 0
-	if *item == nil || space != applicationSpace || early || !owed || !wire.AckEliciting(*f) {
-		payload, err := (*f).Append(payload)
-		return payload, nil, err
+	if item == nil || space != applicationSpace || early || !owed || !wire.AckEliciting(f) {
+		payload, err = f.Append(payload)
+		return payload, 0, false, err
 	}
-	switch (*f).(type) {
+	switch f.(type) {
 	case wire.PathChallengeFrame, wire.PathResponseFrame:
-		payload, err := (*f).Append(payload)
-		return payload, nil, err
+		payload, err = f.Append(payload)
+		return payload, 0, false, err
 	}
 	ack, err := s.received.ackView(now, uint8(c.config.Parameters.AckDelayExponent))
 	if err != nil {
-		return nil, nil, err
+		return nil, 0, false, err
+	}
+	if len(ack.Ranges) == 0 {
+		payload, err = f.Append(payload)
+		return payload, 0, false, err
 	}
 	if payload, err = ack.Append(payload); err != nil {
-		return nil, nil, err
+		return nil, 0, false, err
 	}
-	ackLen := len(payload)
-	if payload, err = (*f).Append(payload); err != nil {
-		return nil, nil, err
+	if payload, err = f.Append(payload); err != nil {
+		return nil, 0, false, err
 	}
-	header, err := c.makeHeader(space, s.nextPN, len(payload)+16)
-	if err != nil {
-		return nil, nil, err
+	// A 1-RTT short header: first byte, the peer's CID, a 4-byte packet number.
+	if 1+len(c.peerCID)+4+len(payload)+16 <= c.basePacketPayloadLimit() {
+		return payload, ack.Ranges[0].Largest, true, nil
 	}
-	excess := len(header) + len(payload) + 16 - c.basePacketPayloadLimit()
-	if excess <= 0 {
-		return payload, &ack, nil
-	}
-	if frame, ok := (*f).(wire.StreamFrame); ok && len(frame.Data) > excess {
-		// The split is only to make room for an optional ACK: if it fails
-		// (its delivery or send-buffer bounds), which leaves the queue as it
-		// was, send the frame alone and keep the ACK owed. A peer that grows
-		// our ACK with gaps must not be able to fail the connection this way.
-		if err := c.splitQueuedStream(s, 0, len(frame.Data)-excess); err != nil {
-			payload, err = (*f).Append(payload[:0])
-			return payload, nil, err
-		}
-		*item, *f = s.queue[0], s.queue[0].frame
-		if payload, err = (*f).Append(payload[:ackLen]); err != nil {
-			return nil, nil, err
-		}
-		return payload, &ack, nil
-	}
-	payload, err = (*f).Append(payload[:0])
-	return payload, nil, err
+	payload, err = f.Append(payload[:0])
+	return payload, 0, false, err
 }
