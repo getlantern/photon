@@ -1,6 +1,10 @@
 package transport
 
-import "time"
+import (
+	"time"
+
+	"github.com/getlantern/photon/internal/wire"
+)
 
 // RFC 9000 section 13.2.1 lets a receiver hold the ACK for an ack-eliciting
 // application packet for up to its advertised max_ack_delay, but it SHOULD
@@ -77,4 +81,54 @@ func (c *Conn) ackDeadline() time.Time {
 		}
 	}
 	return at
+}
+
+// bundleACK appends the queued frame *f to the packet payload, preceded by the
+// ACK the space owes, due or not, so the ACK rides on data instead of taking a
+// datagram of its own. It returns the bundled ACK, or nil when none was added.
+// A stream frame that no longer fits beside the ACK is split, which updates
+// *item and *f; any other frame that does not fit is sent without the ACK.
+func (c *Conn) bundleACK(s *numberSpace, space int, early bool, item **sendItem, f *wire.Frame, now time.Time) ([]byte, *wire.AckFrame, error) {
+	payload := c.payloadScratch[:0]
+	owed := s.ackPending || s.unackedEliciting > 0
+	if *item == nil || space != applicationSpace || early || !owed || !wire.AckEliciting(*f) {
+		payload, err := (*f).Append(payload)
+		return payload, nil, err
+	}
+	switch (*f).(type) {
+	case wire.PathChallengeFrame, wire.PathResponseFrame:
+		payload, err := (*f).Append(payload)
+		return payload, nil, err
+	}
+	ack, err := s.received.ackView(now, uint8(c.config.Parameters.AckDelayExponent))
+	if err != nil {
+		return nil, nil, err
+	}
+	if payload, err = ack.Append(payload); err != nil {
+		return nil, nil, err
+	}
+	ackLen := len(payload)
+	if payload, err = (*f).Append(payload); err != nil {
+		return nil, nil, err
+	}
+	header, err := c.makeHeader(space, s.nextPN, len(payload)+16)
+	if err != nil {
+		return nil, nil, err
+	}
+	excess := len(header) + len(payload) + 16 - c.basePacketPayloadLimit()
+	if excess <= 0 {
+		return payload, &ack, nil
+	}
+	if frame, ok := (*f).(wire.StreamFrame); ok && len(frame.Data) > excess {
+		if err := c.splitQueuedStream(s, 0, len(frame.Data)-excess); err != nil {
+			return nil, nil, err
+		}
+		*item, *f = s.queue[0], s.queue[0].frame
+		if payload, err = (*f).Append(payload[:ackLen]); err != nil {
+			return nil, nil, err
+		}
+		return payload, &ack, nil
+	}
+	payload, err = (*f).Append(payload[:0])
+	return payload, nil, err
 }
