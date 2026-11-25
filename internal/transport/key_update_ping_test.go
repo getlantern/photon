@@ -40,24 +40,6 @@ func peerUpdatedPair(t *testing.T) (client, server *Conn, now time.Time) {
 	return client, server, now
 }
 
-// oneRTTFrames decodes the 1-RTT frames of datagram, sent to to.
-func oneRTTFrames(t *testing.T, to *Conn, datagram []byte) []wire.Frame {
-	t.Helper()
-	h, err := wire.ParseHeader(datagram, len(to.config.LocalCID))
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, plain, _, err := to.readKeys(applicationSpace).Open(datagram, h.PNOffset, to.spaces[applicationSpace].received.Expected())
-	if err != nil {
-		t.Fatal(err)
-	}
-	frames, _, err := parsePacketFrames(plain, wire.FrameContext{PacketType: wire.OneRTT})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return frames
-}
-
 func clientLimit(t *testing.T, c *Conn) uint64 {
 	t.Helper()
 	limit, _ := c.writeKeys(applicationSpace).UsageLimits()
@@ -112,7 +94,7 @@ func TestKeyUpdatePINGBeforeAEADLimit(t *testing.T) {
 	if len(out) != 1 {
 		t.Fatal("datagrams", len(out))
 	}
-	frames := oneRTTFrames(t, server, out[0])
+	frames := framesIn(t, server, out[0])
 	if len(frames) != 1 {
 		t.Fatalf("frames %d", len(frames))
 	}
