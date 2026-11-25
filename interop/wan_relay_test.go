@@ -241,7 +241,7 @@ func TestWANRelayBottleneckQueue(t *testing.T) {
 	// those that start within 50 ms of backlog: 6, or 7 if the burst spreads.
 	const size, rate = 1000, 100_000
 	p := newRelayProbe(t, wanLink{rate: rate, queue: 50 * time.Millisecond})
-	p.send(t, 20, size)
+	sent := p.send(t, 20, size)
 	p.collect(t, 20, 300*time.Millisecond)
 	if got := len(p.received); got < 6 || got > 7 {
 		t.Fatal("admitted", got, "of a 20-datagram burst, want 6 or 7")
@@ -249,9 +249,10 @@ func TestWANRelayBottleneckQueue(t *testing.T) {
 	if dropped := p.relay.dropped[0].Load(); int(dropped)+len(p.received) != 20 {
 		t.Fatal("dropped", dropped, "plus received", len(p.received), "is not 20")
 	}
-	// Serialization spaces arrivals: the last admitted datagram leaves at
-	// least (admitted-1) transmit times after the first.
-	if span, min := p.at[len(p.at)-1].Sub(p.at[0]), time.Duration(len(p.at)-1)*size*time.Second/rate; span < min*9/10 {
-		t.Fatal("arrivals spanned", span, "want at least", min)
+	// Serialization paces the admitted datagrams: the last can't arrive
+	// before every admitted one has been transmitted, counted from the first
+	// send. A late read only lengthens the measured span.
+	if span, min := p.at[len(p.at)-1].Sub(sent[0]), time.Duration(len(p.at))*size*time.Second/rate; span < min {
+		t.Fatal("admitted datagrams arrived within", span, "want at least", min)
 	}
 }
