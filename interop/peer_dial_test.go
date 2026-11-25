@@ -10,9 +10,10 @@ import (
 )
 
 // dialUpstreamAddr preserves upstream's single-use Dial transport, but binds
-// the socket in the destination's address family. On Darwin, DialAddr's IPv6
-// wildcard can share a port with an unrelated IPv4 listener that receives the
-// replies instead. See docs/diagnostics for the observed failure and OS probe.
+// the socket to the destination's own IP. On Darwin, a socket on a wildcard
+// address can share a port with an unrelated listener on a specific address,
+// which then receives the replies instead (see loopbackDial). See
+// docs/diagnostics for an observed failure and OS probe.
 func dialUpstreamAddr(t testing.TB, ctx context.Context, address string, tlsConfig *tls.Config, config *upstream.Config) (*upstream.Conn, error) {
 	t.Helper()
 	remote, err := net.ResolveUDPAddr("udp", address)
@@ -23,8 +24,7 @@ func dialUpstreamAddr(t testing.TB, ctx context.Context, address string, tlsConf
 	if remote.IP.To4() != nil {
 		network = "udp4"
 	}
-	// Bind to the server's address family's loopback, not the unspecified
-	// address: see loopbackDial.
+	// Bind to the server's own IP, not the unspecified address.
 	socket, err := net.ListenUDP(network, &net.UDPAddr{IP: remote.IP})
 	if err != nil {
 		return nil, err
