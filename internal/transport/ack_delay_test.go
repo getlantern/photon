@@ -368,7 +368,7 @@ func testBundledACKRestored(t *testing.T, datagram, phaseMoved bool) {
 	}
 	c.applicationKeys.ackSent = true // as if the bundled ACK had set it
 	if phaseMoved {
-		c.applicationKeys.firstSent++ // a later key phase
+		c.advanceKeyNumbers() // what a key update does
 	}
 	e.HandleWriteError(out, syscall.EMSGSIZE, now)
 	if c.closed {
@@ -438,60 +438,70 @@ func TestMultipathACKBundledWithData(t *testing.T) {
 // PATH_ACK again, for STREAM data and for a DATAGRAM.
 func TestMultipathBundledACKRestoredOnLargeWriteRejection(t *testing.T) {
 	for _, datagram := range []bool{false, true} {
-		t.Run(fmt.Sprintf("datagram=%t", datagram), func(t *testing.T) {
-			e, c, remote := mtuWriteEndpointPair(t, wire.Version1, 1500)
-			defer e.Close()
-			app := c.multipath.paths[1].application
-			now := time.Unix(101, 0)
-			owePathACK(t, remote, c, now)
-			if datagram {
-				c.peerParams.MaxDatagramFrameSize = 65535
-				c.config.InitialPacketSize = 1452
-				c.config.enablePathMTUDiscovery = true
-				c.seedInitialPathMTU(app)
-				if err := c.SendDatagram(make([]byte, 1300)); err != nil {
-					t.Fatal(err)
-				}
-			} else {
-				app.mtu.confirmed, app.mtu.upper = 3000, 3000
-				id, err := c.OpenStream(false)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if _, err := c.WriteStream(id, make([]byte, 2500), true); err != nil {
-					t.Fatal(err)
-				}
-			}
-			ackSent := c.applicationKeys.ackSent
-			out, err := e.NextDatagram(now)
-			if err != nil || out == nil || len(out.Data) <= 1200 {
-				t.Fatal("large output", err)
-			}
-			probe := out.datagram
-			if !datagram && out.large != nil {
-				probe = &out.large.outboundMTUProbe
-			}
-			if probe == nil || !probe.ack {
-				t.Fatal("want a large packet carrying the PATH_ACK")
-			}
-			if ackScheduled(app.space) {
-				t.Fatal("setup: PATH_ACK still owed after bundling")
-			}
-			if ackSent {
-				t.Fatal("setup: want ackSent false before the bundled ACK")
-			}
-			c.applicationKeys.ackSent = true // as if the bundled ACK had set it
-			e.HandleWriteError(out, fmt.Errorf("socket: %w", syscall.EMSGSIZE), now)
-			if c.closed {
-				t.Fatal("rejection closed the connection")
-			}
-			if !app.space.ackPending {
-				t.Fatal("rejected packet's PATH_ACK not owed again")
-			}
-			if c.applicationKeys.ackSent {
-				t.Fatal("key-phase ackSent left set by an ACK that never left")
-			}
-		})
+		t.Run(fmt.Sprintf("datagram=%t", datagram), func(t *testing.T) { testMultipathBundledACKRestored(t, datagram, false) })
+	}
+	// A key update while the write was pending leaves the new phase's ackSent
+	// alone, even though path 0, abandoned here, sent nothing in between.
+	t.Run("phase-moved", func(t *testing.T) { testMultipathBundledACKRestored(t, false, true) })
+}
+
+func testMultipathBundledACKRestored(t *testing.T, datagram, phaseMoved bool) {
+	e, c, remote := mtuWriteEndpointPair(t, wire.Version1, 1500)
+	defer e.Close()
+	app := c.multipath.paths[1].application
+	now := time.Unix(101, 0)
+	owePathACK(t, remote, c, now)
+	if datagram {
+		c.peerParams.MaxDatagramFrameSize = 65535
+		c.config.InitialPacketSize = 1452
+		c.config.enablePathMTUDiscovery = true
+		c.seedInitialPathMTU(app)
+		if err := c.SendDatagram(make([]byte, 1300)); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		app.mtu.confirmed, app.mtu.upper = 3000, 3000
+		id, err := c.OpenStream(false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.WriteStream(id, make([]byte, 2500), true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// An earlier key update, after which path 0 sends nothing.
+	c.advanceKeyNumbers()
+	ackSent := c.applicationKeys.ackSent
+	out, err := e.NextDatagram(now)
+	if err != nil || out == nil || len(out.Data) <= 1200 {
+		t.Fatal("large output", err)
+	}
+	probe := out.datagram
+	if !datagram && out.large != nil {
+		probe = &out.large.outboundMTUProbe
+	}
+	if probe == nil || !probe.ack {
+		t.Fatal("want a large packet carrying the PATH_ACK")
+	}
+	if ackScheduled(app.space) {
+		t.Fatal("setup: PATH_ACK still owed after bundling")
+	}
+	if ackSent {
+		t.Fatal("setup: want ackSent false before the bundled ACK")
+	}
+	c.applicationKeys.ackSent = true // as if the bundled ACK had set it
+	if phaseMoved {
+		c.advanceKeyNumbers() // what a key update does
+	}
+	e.HandleWriteError(out, fmt.Errorf("socket: %w", syscall.EMSGSIZE), now)
+	if c.closed {
+		t.Fatal("rejection closed the connection")
+	}
+	if !app.space.ackPending {
+		t.Fatal("rejected packet's PATH_ACK not owed again")
+	}
+	if got, want := c.applicationKeys.ackSent, phaseMoved; got != want {
+		t.Fatal("key-phase ackSent", got, "want", want)
 	}
 }
 

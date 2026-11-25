@@ -265,7 +265,7 @@ func (c *Conn) nextPacketOnPathSelection(id, ackPath uint64, now time.Time, allo
 	peer.used = true
 	state.peer.active[state.peer.current] = peer
 	c.noteKeyPhaseACK(f)
-	c.lastPathACK.bundled, c.lastPathACK.ackSent, c.lastPathACK.pathID, c.lastPathACK.number, c.lastPathACK.phase = bundled, c.applicationKeys.ackSent, id, pn, c.applicationKeys.firstSent
+	c.lastPathACK.bundled, c.lastPathACK.ackSent, c.lastPathACK.pathID, c.lastPathACK.number, c.lastPathACK.phase = bundled, c.applicationKeys.ackSent, id, pn, c.applicationKeys.generation
 	if bundled {
 		ackApp.space.clearACK()
 		c.noteKeyPhaseACKLargest(ackPath, bundledLargest)
