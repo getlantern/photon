@@ -104,6 +104,7 @@ func (c *Conn) bundleACK(s *numberSpace, space int, early bool, item *sendItem, 
 	if payload, err = ack.Append(payload); err != nil {
 		return nil, 0, false, err
 	}
+	ackBytes := len(payload)
 	if payload, err = f.Append(payload); err != nil {
 		return nil, 0, false, err
 	}
@@ -111,7 +112,8 @@ func (c *Conn) bundleACK(s *numberSpace, space int, early bool, item *sendItem, 
 	// The ACK must not hold back a packet that could leave without it, so the
 	// bundled size must also pass congestion, pacing and the address budget.
 	size := 1 + len(c.peerCID) + 4 + len(payload) + 16
-	if size <= bundledSizeLimit(f, c.basePacketPayloadLimit()) && c.canSendBundled(size, wire.InFlightFrame(f), now) {
+	// The base-path rollback applies only once the handshake is confirmed.
+	if size <= bundledSizeLimit(f, c.basePacketPayloadLimit(), size-ackBytes, c.confirmed) && c.canSendBundled(size, wire.InFlightFrame(f), now) {
 		return payload, ack.Ranges[0].Largest, true, nil
 	}
 	payload, err = f.Append(payload[:0])
@@ -130,11 +132,12 @@ func (c *Conn) bundlePathACK(app *pathApplication, ackPath uint64, f wire.Frame,
 	if payload, err = c.pathWireFrame(ack).Append(c.payloadScratch[:0]); err != nil {
 		return nil, 0, false, err
 	}
+	ackBytes := len(payload)
 	if payload, err = f.Append(payload); err != nil {
 		return nil, 0, false, err
 	}
 	size := headerLen + len(payload) + 16
-	if size <= bundledSizeLimit(f, app.packetPayloadLimit()) && app.budget.CanSend(size) && app.congestion.CanSend(app.sent.BytesInFlight, size, inFlight, probe) &&
+	if size <= bundledSizeLimit(f, app.packetPayloadLimit(), size-ackBytes, true) && app.budget.CanSend(size) && app.congestion.CanSend(app.sent.BytesInFlight, size, inFlight, probe) &&
 		(!inFlight || probe || app.pacer.Delay(now, app.congestion.Window(), app.sent.RTT.Smoothed, size) <= 0) {
 		return payload, ack.Ranges[0].Largest, true, nil
 	}
@@ -142,13 +145,19 @@ func (c *Conn) bundlePathACK(app *pathApplication, ackPath uint64, f wire.Frame,
 	return payload, 0, false, err
 }
 
-// bundledSizeLimit caps a packet grown by a bundled ACK. Only a STREAM or
-// DATAGRAM packet that a write rejects as too large can be rolled back (see
-// HandleWriteError), so any other frame may carry an ACK only if the packet
-// stays within the minimum QUIC MTU, which every path supports.
-func bundledSizeLimit(f wire.Frame, limit int) int {
-	switch f.(type) {
-	case wire.StreamFrame, wire.DatagramFrame:
+// bundledSizeLimit caps a packet grown by a bundled ACK, where alone is the
+// packet's size without the ACK. A packet within the minimum QUIC MTU, which
+// every path supports, must stay within it unless its frame is STREAM data
+// that a write rejected as too large can requeue (rollback, see
+// HandleWriteError). A rejected DATAGRAM is dropped and any other frame's
+// rejection removes the connection, so for those the ACK must not be what
+// makes the packet too large. A packet already past the minimum MTU without
+// the ACK may grow to limit, since its rejection does not depend on the ACK.
+func bundledSizeLimit(f wire.Frame, limit, alone int, rollback bool) int {
+	if alone > minimumQUICMTU {
+		return limit
+	}
+	if _, stream := f.(wire.StreamFrame); stream && rollback {
 		return limit
 	}
 	return min(limit, minimumQUICMTU)
@@ -171,10 +180,9 @@ func ackBundleable(s *numberSpace, item *sendItem, f wire.Frame) bool {
 
 // restoreBundledACK owes again an ACK whose packet a write rejected, at once
 // rather than at its old deadline: the rejection is rare, and an early ACK is
-// always allowed. If that
-// ACK is what marked an ACK sent in this key phase (ackSent was false before
-// it), it unmarks it; a key phase that has since moved on, identified by the
-// key generation, keeps its own state.
+// always allowed. If that ACK is what marked an ACK sent in this key phase
+// (ackSent was false before it), it unmarks it; a key phase that has since
+// moved on, identified by the key generation, keeps its own state.
 func (c *Conn) restoreBundledACK(s *numberSpace, ackSent bool, generation uint64) {
 	s.ackPending = true
 	if !ackSent && c.applicationKeys.generation == generation {

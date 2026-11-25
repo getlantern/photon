@@ -603,3 +603,85 @@ func TestMultipathControlFrameBundleStaysWithinMinimumMTU(t *testing.T) {
 		t.Fatal("PATH_ACK no longer owed")
 	}
 }
+
+func TestBundledSizeLimit(t *testing.T) {
+	stream, datagram, token := wire.StreamFrame{}, wire.DatagramFrame{}, wire.NewTokenFrame{}
+	for _, c := range []struct {
+		name     string
+		f        wire.Frame
+		alone    int
+		rollback bool
+		want     int
+	}{
+		{"stream", stream, 1000, true, 1452},
+		{"stream without rollback", stream, 1000, false, minimumQUICMTU},
+		{"datagram", datagram, 1000, true, minimumQUICMTU},
+		{"control", token, 1000, true, minimumQUICMTU},
+		{"datagram already large", datagram, 1300, true, 1452},
+		{"control already large", token, 1300, false, 1452},
+	} {
+		if got := bundledSizeLimit(c.f, 1452, c.alone, c.rollback); got != c.want {
+			t.Errorf("%s: limit %d, want %d", c.name, got, c.want)
+		}
+	}
+}
+
+// A DATAGRAM that fits the minimum QUIC MTU alone does not carry an ACK that
+// would take it past: a rejected DATAGRAM is dropped, not retransmitted.
+func TestMultipathDatagramBundleStaysWithinMinimumMTU(t *testing.T) {
+	client, server := sendingPathPair(t, wire.Version1)
+	now := time.Unix(101, 0)
+	owePathACK(t, client, server, now)
+	app := server.multipath.paths[1].application
+	app.budget.Validate()
+	app.validation.state = PathValidated
+	if err := server.startPathMTUSearch(1, 1500); err != nil {
+		t.Fatal(err)
+	}
+	app.mtu.confirmed = 1452
+	peer := server.multipath.paths[1].peer
+	// Alone, the packet is 2 bytes short of the minimum MTU: header, the type
+	// byte of a DATAGRAM without a length, payload, AEAD tag.
+	payload := minimumQUICMTU - 2 - (1 + len(peer.active[peer.current].cid) + 4 + 16) - 1
+	if err := server.queueFrameOnPath(1, wire.DatagramFrame{Data: make([]byte, payload), OmitLength: true}); err != nil {
+		t.Fatal(err)
+	}
+	server.pendingDatagrams++ // as SendDatagram counts it
+	raw, err := server.nextPacketOnPath(1, now)
+	if err != nil || raw == nil {
+		t.Fatal("DATAGRAM packet", err)
+	}
+	if len(raw) > minimumQUICMTU {
+		t.Fatal("DATAGRAM packet grew past the minimum QUIC MTU", len(raw))
+	}
+	if !ackScheduled(app.space) {
+		t.Fatal("PATH_ACK no longer owed")
+	}
+}
+
+// A bundled PATH_ACK counts as an ACK sent in the current key phase, which
+// the peer's next key update requires.
+func TestMultipathBundledACKMarksKeyPhaseACKSent(t *testing.T) {
+	client, server := sendingPathPair(t, wire.Version1)
+	now := time.Unix(101, 0)
+	owePathACK(t, server, client, now)
+	// As after a peer key update whose first packet on path 1 came before the
+	// one now owed an ACK.
+	k := &client.applicationKeys
+	k.updated, k.ackSent, k.awaitingRead = true, false, false
+	numbers := client.keyNumbers(1)
+	numbers.haveFirst, numbers.first = true, 0
+	client.multipath.paths[1].application.budget.Validate()
+	if err := client.queueFrameOnPath(1, wire.PingFrame{}); err != nil {
+		t.Fatal(err)
+	}
+	if raw, err := client.nextPacketOnPath(1, now); err != nil || raw == nil {
+		t.Fatal("data packet", err)
+	}
+	if ackScheduled(client.multipath.paths[1].application.space) {
+		t.Fatal("setup: PATH_ACK not bundled")
+	}
+	if !k.ackSent {
+		t.Fatal("bundled PATH_ACK did not mark an ACK sent in this key phase")
+	}
+}
