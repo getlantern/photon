@@ -848,3 +848,39 @@ func TestResponseCompletesAfterRequestStopped(t *testing.T) {
 		t.Fatalf("body %q, err %v; want the complete response", body, err)
 	}
 }
+
+// A server that stops the request with H3_REQUEST_REJECTED and leaves the
+// response open fails the request at once, as rejected, rather than leaving
+// the client to wait: no response follows a rejection.
+func TestRequestRejectedByStopSendingFailsAtOnce(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	taken := make(chan takenStream, 1)
+	client, origin := dialTestServer(ctx, t, &Server{Handler: takeOver(0, taken)}, nil)
+	input, output := io.Pipe()
+	defer output.Close()
+	request, _ := http.NewRequestWithContext(ctx, "POST", origin+"/", input)
+	go output.Write([]byte("partial"))
+	result := make(chan error, 1)
+	go func() {
+		response, err := client.RoundTrip(request)
+		if err == nil {
+			response.Body.Close()
+		}
+		result <- err
+	}()
+	peer := await(ctx, t, "takeover", taken)
+	if peer.err != nil {
+		t.Fatal(peer.err)
+	}
+	defer peer.stream.CancelWrite(quic.StreamErrorCode(ErrCodeRequestRejected))
+	peer.stream.CancelRead(quic.StreamErrorCode(ErrCodeRequestRejected))
+	select {
+	case err := <-result:
+		if want := (&Error{Remote: true, ErrorCode: ErrCodeRequestRejected}); !errors.Is(err, want) {
+			t.Fatal("RoundTrip error", err, "want", want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("RoundTrip still waiting after the request was rejected")
+	}
+}
