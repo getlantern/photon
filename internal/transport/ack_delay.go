@@ -159,11 +159,11 @@ func ackBundleable(s *numberSpace, item *sendItem, f wire.Frame) bool {
 
 // restoreBundledACK owes again an ACK whose packet a write rejected. If that
 // ACK is what marked an ACK sent in this key phase (ackSent was false before
-// it), it unmarks it; a phase that has since moved on, identified by its
-// firstSent, keeps its own state.
-func (c *Conn) restoreBundledACK(s *numberSpace, ackSent bool, phase uint64) {
+// it), it unmarks it; a key phase that has since moved on, identified by the
+// key generation, keeps its own state.
+func (c *Conn) restoreBundledACK(s *numberSpace, ackSent bool, generation uint64) {
 	s.ackPending = true
-	if !ackSent && c.applicationKeys.firstSent == phase {
+	if !ackSent && c.applicationKeys.generation == generation {
 		c.applicationKeys.ackSent = false
 	}
 }

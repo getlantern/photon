@@ -32,6 +32,7 @@ type applicationKeys struct {
 	previousExpiry                  time.Time
 	updateNotBefore                 time.Time
 	elicitedAt                      time.Time // last PING queued to unblock an update
+	generation                      uint64    // counts key updates, local and peer
 }
 
 func (c *Conn) keyNumbers(pathID uint32) *keyPhaseNumbers {
@@ -47,6 +48,7 @@ func (c *Conn) keyNumbers(pathID uint32) *keyPhaseNumbers {
 }
 
 func (c *Conn) advanceKeyNumbers() {
+	c.applicationKeys.generation++
 	advance := func(n *keyPhaseNumbers, nextPN uint64) {
 		n.previousLargest, n.havePrevious = n.largest, n.haveLargest
 		n.firstSent = nextPN
