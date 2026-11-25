@@ -96,8 +96,9 @@ func (d *deliveryRate) acked(s *rateSampler, p Packet, now time.Time) {
 
 // sample finishes one ACK's sample. An interval shorter than minRTT is
 // discarded: it can only come from ACK compression or reordering, and would
-// overstate the rate.
-func (d *deliveryRate) sample(s *rateSampler, now time.Time, minRTT time.Duration) RateSample {
+// overstate the rate. Without an RTT sample (sampled false) there is nothing
+// to check it against, so no sample is valid.
+func (d *deliveryRate) sample(s *rateSampler, now time.Time, minRTT time.Duration, sampled bool) RateSample {
 	if d.appLimitedUntil != 0 && d.delivered > d.appLimitedUntil {
 		d.appLimitedUntil = 0
 	}
@@ -111,7 +112,7 @@ func (d *deliveryRate) sample(s *rateSampler, now time.Time, minRTT time.Duratio
 	rs.AppLimited = p.AppLimited
 	rs.RTT = now.Sub(s.newest.SentAt)
 	rs.InFlight = p.InFlight
-	if rs.Interval <= 0 || rs.Interval < minRTT {
+	if rs.Interval <= 0 || !sampled || rs.Interval < minRTT {
 		return rs
 	}
 	rs.Valid = true
