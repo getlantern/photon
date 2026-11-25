@@ -142,7 +142,9 @@ func TestUDPRuntimeECN(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				readACK := func(number uint64, want [3]uint64) {
+				// marked requires the ACK's datagram to carry ECT(0): true while the
+				// path is still marking its ECN test flight.
+				readACK := func(number uint64, want [3]uint64, marked bool) {
 					t.Helper()
 					deadline, _ := ctx.Deadline()
 					if err := sender.SetReadDeadline(deadline); err != nil {
@@ -155,7 +157,7 @@ func TestUDPRuntimeECN(t *testing.T) {
 						if err != nil {
 							t.Fatal("wire ACK", err)
 						}
-						if mark := receivedECN(oob[:on], flags); mark != ECNECT0 {
+						if mark := receivedECN(oob[:on], flags); marked && mark != ECNECT0 {
 							t.Fatalf("runtime did not mark ECN probe: %v", mark)
 						}
 						h, err := wire.ParseHeader(buffer[:n], len(peer.config.LocalCID))
@@ -189,12 +191,12 @@ func TestUDPRuntimeECN(t *testing.T) {
 						}
 					}
 				}
-				readACK(100, [3]uint64{0, 0, 1})
+				readACK(100, [3]uint64{0, 0, 1}, true)
 				// Retransmitting the same protected packet must not inflate CE.
 				if _, err := sender.WriteToUDP(packet, receiver.LocalAddr().(*net.UDPAddr)); err != nil {
 					t.Fatal(err)
 				}
-				readACK(100, [3]uint64{0, 0, 1})
+				readACK(100, [3]uint64{0, 0, 1}, true)
 				err = raw.Control(func(fd uintptr) {
 					level, option := unix.IPPROTO_IP, unix.IP_TOS
 					if addr.IP.To4() == nil {
@@ -211,7 +213,15 @@ func TestUDPRuntimeECN(t *testing.T) {
 				if _, err := sender.WriteToUDP(fresh, receiver.LocalAddr().(*net.UDPAddr)); err != nil {
 					t.Fatal(err)
 				}
-				readACK(102, [3]uint64{1, 0, 1})
+				readACK(102, [3]uint64{1, 0, 1}, true)
+				// An in-order packet's ACK is delayed and sent by the runtime's
+				// timer. It still reports the counts, but may leave after the ECN
+				// test period ends, unmarked.
+				inOrder := makePeerPacket(t, peer, applicationSpace, 103, wire.PingFrame{})
+				if _, err := sender.WriteToUDP(inOrder, receiver.LocalAddr().(*net.UDPAddr)); err != nil {
+					t.Fatal(err)
+				}
+				readACK(103, [3]uint64{2, 0, 1}, false)
 			})
 		}
 	}

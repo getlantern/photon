@@ -8,10 +8,13 @@ import (
 	"github.com/getlantern/photon/internal/wire"
 )
 
-// ErrKeyUpdate reports a key update that is not allowed now: before the
-// handshake is confirmed, or before the current keys' first packet from the
-// peer arrives and a packet sent with them is acknowledged (RFC 9001 section
-// 6.1), or a key phase change the peer was not allowed to make.
+// ErrKeyUpdate reports a key update that is not allowed now, or a key phase
+// change the peer was not allowed to make. A local update is refused before
+// the handshake is confirmed; before the current keys' first packet from the
+// peer arrives; until a packet sent with the current keys is acknowledged (RFC
+// 9001 section 6.1); with a zero time; and, on a multipath connection, until
+// three PTOs have passed since that acknowledgment. Only the acknowledgment
+// case is helped by sending ack-eliciting data.
 var ErrKeyUpdate = errors.New("quic: invalid application key update")
 
 // keyPhaseNumbers contains only one path's packet-number observations. Keys,
