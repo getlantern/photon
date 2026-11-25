@@ -60,7 +60,10 @@ func prepareStreamItemPrefix(root *sendItem, end uint64) (*streamItemPrefixPlan,
 		items = group.items
 	}
 	plan.changes = make([]streamPrefixReplacement, 0, len(items))
-	newItems := 0
+	// A split at send time cannot fail for want of buffer or item slots, so
+	// the trim leaves the reservation and the item table room for splitting
+	// each live fragment of the prefix that remains into portable fragments.
+	newItems, splits := 0, 0
 	for _, item := range items {
 		if item.acked {
 			continue
@@ -76,6 +79,7 @@ func prepareStreamItemPrefix(root *sendItem, end uint64) (*streamItemPrefixPlan,
 			continue
 		}
 		n := int(min(uint64(len(f.Data)), end-f.Offset))
+		splits += streamSplits(n)
 		if n == len(f.Data) && !f.Fin {
 			continue
 		}
@@ -83,7 +87,7 @@ func prepareStreamItemPrefix(root *sendItem, end uint64) (*streamItemPrefixPlan,
 		plan.changes = append(plan.changes, streamPrefixReplacement{old: item, fresh: &sendItem{frame: f, queued: item.queued, transmitted: item.transmitted}})
 		newItems++
 	}
-	if len(items)+newItems > maxStreamDeliveryItems {
+	if len(items)+newItems+2*splits > maxStreamDeliveryItems {
 		return nil, ErrSendBuffer
 	}
 	// commit adds a branch entry for each new item.
@@ -95,15 +99,9 @@ func prepareStreamItemPrefix(root *sendItem, end uint64) (*streamItemPrefixPlan,
 	if materialize {
 		extra += streamGroupCreationCharge(len(ledger.covered))
 	}
-	// The reservation must still cover splitting what remains of the frame
-	// into portable fragments, since a split at send time cannot fail for
-	// want of buffer. The trim takes only the rest; anything beyond it is
-	// charged as admission, which can fail recoverably.
-	remaining := 0
-	if end > frame.Offset {
-		remaining = int(min(uint64(len(frame.Data)), end-frame.Offset))
-	}
-	plan.usedReservation = min(extra, max(0, reserved-streamSplitsCharge(remaining)))
+	// The trim takes only the reservation beyond what those splits need;
+	// anything more is charged as admission, which can fail recoverably.
+	plan.usedReservation = min(extra, max(0, reserved-splits*(2*streamDeliveryItemCharge+streamBranchCharge)))
 	plan.additional = extra - plan.usedReservation
 	if materialize {
 		plan.group = &streamItemDelivery{root: root, ledger: ledger, reserved: reserved, branches: make(map[*sendItem][2]*sendItem), items: make([]*sendItem, 1, 1+len(plan.changes))}

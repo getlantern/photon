@@ -211,24 +211,65 @@ func TestTrimThenSplitAtFullBuffer(t *testing.T) {
 	}
 }
 
+// Repeated trims of a frame that still needs many splits stop, recoverably,
+// before they take the item-table slots those splits need: the splits then
+// all succeed.
+func TestTrimsLeaveSplitItemSlots(t *testing.T) {
+	c := &Conn{}
+	size := maximumUDPPayload
+	frame := wire.StreamFrame{Data: make([]byte, size), Fin: true}
+	if err := c.enqueue(applicationSpace, frame, size+32+streamSplitReservation(size)); err != nil {
+		t.Fatal(err)
+	}
+	s := &c.spaces[applicationSpace]
+	root := s.queue[0]
+	complete := func(item *sendItem) error { c.queuedBytes -= item.bytes; return nil }
+	refused := false
+	for end := uint64(size - 1); end > uint64(size-200); end-- {
+		err := c.retainStreamItemPrefix(root, end, complete)
+		if errors.Is(err, ErrSendBuffer) {
+			refused = true
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !refused {
+		t.Fatal("setup: no trim was refused")
+	}
+	for idx := 0; idx < len(s.queue); idx++ {
+		if len(s.queue[idx].frame.(wire.StreamFrame).Data) > portableStreamPayload {
+			if err := c.splitQueuedStream(s, idx, portableStreamPayload); err != nil {
+				t.Fatal("split after the trims", err)
+			}
+		}
+	}
+}
+
 // liveBytesPer is the heap that n runs of work leave live, per run, after
-// collection.
-func liveBytesPer(n int, setup func(i int), work func(i int)) uint64 {
-	for i := range n {
-		setup(i)
+// collection. Other goroutines can allocate or free during the window, so a
+// heap that shrank is inconclusive and the measurement is retried.
+func liveBytesPer(t *testing.T, n int, setup func(i int), work func(i int)) uint64 {
+	t.Helper()
+	for range 3 {
+		for i := range n {
+			setup(i)
+		}
+		var before, after runtime.MemStats
+		runtime.GC()
+		runtime.ReadMemStats(&before)
+		for i := range n {
+			work(i)
+		}
+		runtime.GC()
+		runtime.ReadMemStats(&after)
+		if after.HeapAlloc >= before.HeapAlloc {
+			return (after.HeapAlloc - before.HeapAlloc) / uint64(n)
+		}
 	}
-	var before, after runtime.MemStats
-	runtime.GC()
-	runtime.ReadMemStats(&before)
-	for i := range n {
-		work(i)
-	}
-	runtime.GC()
-	runtime.ReadMemStats(&after)
-	if after.HeapAlloc < before.HeapAlloc {
-		return 0
-	}
-	return (after.HeapAlloc - before.HeapAlloc) / uint64(n)
+	t.Skip("heap shrank in every measurement window")
+	return 0
 }
 
 // A frame's split reservation covers the memory that splitting it into
@@ -245,7 +286,7 @@ func TestStreamSplitReservationCoversAllocation(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		live := liveBytesPer(n, setup, func(i int) {
+		live := liveBytesPer(t, n, setup, func(i int) {
 			s := &conns[i].spaces[applicationSpace]
 			for idx := 0; idx < len(s.queue); idx++ {
 				if len(s.queue[idx].frame.(wire.StreamFrame).Data) > portableStreamPayload {
@@ -258,19 +299,19 @@ func TestStreamSplitReservationCoversAllocation(t *testing.T) {
 		if reserved := uint64(streamSplitReservation(size)); live > reserved {
 			t.Errorf("splitting %d bytes left %d live, more than its %d-byte reservation", size, live, reserved)
 		}
-		var charged []int
-		live = liveBytesPer(n, setup, func(i int) {
-			c := conns[i]
-			before := c.queuedBytes
-			root := c.spaces[applicationSpace].queue[0]
-			if err := c.retainStreamItemPrefix(root, uint64(size/2), func(*sendItem) error { return nil }); err != nil {
+		live = liveBytesPer(t, n, setup, func(i int) {
+			root := conns[i].spaces[applicationSpace].queue[0]
+			if err := conns[i].retainStreamItemPrefix(root, uint64(size/2), func(*sendItem) error { return nil }); err != nil {
 				t.Fatal(err)
 			}
-			charged = append(charged, streamSplitReservation(size)-root.delivery.reserved+c.queuedBytes-before)
 		})
+		// The trim's charge: reservation it used, plus any admitted beyond.
+		c := conns[0]
+		root := c.spaces[applicationSpace].queue[0]
+		charged := streamSplitReservation(size) - root.delivery.reserved + c.queuedBytes - (size + 32 + streamSplitReservation(size))
 		runtime.KeepAlive(conns)
-		if live > uint64(charged[0]) {
-			t.Errorf("trimming %d bytes left %d live, more than the %d bytes charged for it", size, live, charged[0])
+		if live > uint64(charged) {
+			t.Errorf("trimming %d bytes left %d live, more than the %d bytes charged for it", size, live, charged)
 		}
 	}
 }

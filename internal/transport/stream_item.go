@@ -154,13 +154,19 @@ func streamSplitReservation(n int) int {
 	return streamGroupCreationCharge((n+63)/64) + streamSplitsCharge(n)
 }
 
-// streamSplitsCharge is what the splits of an n-byte frame into portable
-// fragments charge once its group exists.
-func streamSplitsCharge(n int) int {
+// streamSplits is how many splits an n-byte frame needs to reach portable
+// fragments.
+func streamSplits(n int) int {
 	if n <= portableStreamPayload {
 		return 0
 	}
-	return ((n+portableStreamPayload-1)/portableStreamPayload - 1) * (2*streamDeliveryItemCharge + streamBranchCharge)
+	return (n+portableStreamPayload-1)/portableStreamPayload - 1
+}
+
+// streamSplitsCharge is what the splits of an n-byte frame into portable
+// fragments charge once its group exists.
+func streamSplitsCharge(n int) int {
+	return streamSplits(n) * (2*streamDeliveryItemCharge + streamBranchCharge)
 }
 
 // Charge full fallback capacity at admission, but materialize maps, coverage
