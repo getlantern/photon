@@ -73,7 +73,7 @@ func (c *Conn) handleRetry(raw []byte, h wire.Header, now time.Time) error {
 	c.queueLost(applicationSpace, c.recovery.Abandon(recovery.Application))
 	c.spaces[applicationSpace].sent = make(map[uint64]*sendItem)
 	c.recovery.ResetForRetry()
-	c.congestion, _ = recovery.NewCongestion(uint64(packetSize))
+	c.congestion.Reset(uint64(packetSize))
 	c.pacer = recovery.Pacer{}
 	c.pacingAt = time.Time{}
 	c.timer.DiscardKeys()

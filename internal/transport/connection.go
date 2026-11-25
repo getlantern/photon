@@ -480,7 +480,14 @@ func NewConn(config Config) (*Conn, error) {
 		return nil, err
 	}
 	c.recovery, _ = recovery.NewSent(maxSentPackets)
-	c.congestion, _ = recovery.NewCongestion(uint64(config.InitialPacketSize))
+	congestion, err := recovery.NewCongestion(uint64(config.InitialPacketSize))
+	if err != nil {
+		h.Close()
+		return nil, err
+	}
+	// Assigned only on success: a nil *NewReno in the interface would not
+	// compare nil.
+	c.congestion = congestion
 	if config.Server {
 		c.initialPeerCID = clone(config.PeerCID)
 		c.peerIDs = newPeerIDs(config.PeerCID, config.Parameters.ActiveConnectionIDLimit)
@@ -1213,6 +1220,24 @@ func (c *Conn) RTTStats() recovery.RTT { return c.recovery.RTT }
 // a write failure. Returned packets must never be edited or resealed.
 // Nil means no output, no write keys, or insufficient path credit.
 func (c *Conn) NextDatagram(now time.Time) ([]byte, error) {
+	b, err := c.nextBaseDatagram(now)
+	if b == nil && err == nil {
+		c.noteBaseSendIdle()
+	}
+	return b, err
+}
+
+// noteBaseSendIdle marks the base path application limited when a send pass
+// found nothing to send though the window had room, so rate samples from
+// packets sent until the current flight is delivered are known to understate
+// what the path can carry (draft-cheng-iccrg-delivery-rate-estimation).
+func (c *Conn) noteBaseSendIdle() {
+	if c.multipath == nil && c.recovery != nil && c.congestion != nil && c.recovery.BytesInFlight < c.congestion.Window() && !c.hasQueuedData() {
+		c.recovery.MarkAppLimited()
+	}
+}
+
+func (c *Conn) nextBaseDatagram(now time.Time) ([]byte, error) {
 	if c.pendingWrite != nil && !c.Closing() && !c.Draining() && !c.closed {
 		return nil, nil
 	}
