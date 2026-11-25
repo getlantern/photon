@@ -32,7 +32,7 @@ func TestMultipathAuthenticationBeforeAdmission(t *testing.T) {
 		if err != nil || auth == nil || !auth.ackEliciting || len(auth.packet.frames) != 1 {
 			t.Fatal("missing authenticated evidence", err)
 		}
-		if app.space.received.Expected() != beforeExpected || app.space.ackPending || app.budget.credit != beforeCredit || app.space.haveNonProbing {
+		if app.space.received.Expected() != beforeExpected || ackScheduled(app.space) || app.budget.credit != beforeCredit || app.space.haveNonProbing {
 			t.Fatal("authentication committed address/receipt state")
 		}
 		if _, err := server.AcceptStream(false); err == nil {
@@ -44,7 +44,7 @@ func TestMultipathAuthenticationBeforeAdmission(t *testing.T) {
 			t.Fatal(err)
 		}
 		decoded, err := server.recordMultipathPacket(repeated, now)
-		if err != nil || decoded == nil || decoded.receipt != NewPacket || !app.space.ackPending {
+		if err != nil || decoded == nil || decoded.receipt != NewPacket || !ackScheduled(app.space) {
 			t.Fatal("admission failed", err)
 		}
 		if err := server.dispatchMultipathPacket(decoded, now); err != nil {

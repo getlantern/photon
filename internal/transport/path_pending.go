@@ -40,6 +40,7 @@ func (c *Conn) retainMultipathBeforeActivationECN(cid []byte, pn uint64, frames 
 		return nil
 	}
 	s := &c.spaces[applicationSpace]
+	previous, hadPrevious := s.received.Largest()
 	receipt, err := s.received.RecordECN(pn, now, marking)
 	if err != nil {
 		return c.fail(err)
@@ -48,7 +49,7 @@ func (c *Conn) retainMultipathBeforeActivationECN(cid []byte, pn uint64, frames 
 		return nil
 	}
 	if eliciting {
-		s.ackPending = true
+		s.scheduleACK(applicationSpace, pn, previous, hadPrevious, marking, now, c.ackDelay())
 	}
 	if receipt != NewPacket {
 		return nil

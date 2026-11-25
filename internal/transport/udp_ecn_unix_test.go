@@ -205,11 +205,13 @@ func TestUDPRuntimeECN(t *testing.T) {
 				if err != nil || optionErr != nil {
 					t.Fatal(err, optionErr)
 				}
-				fresh := makePeerPacket(t, peer, applicationSpace, 101, wire.PingFrame{})
+				// Out of order (101 skipped), so it is acknowledged at once, while
+				// the path is still marking its ECN test flight.
+				fresh := makePeerPacket(t, peer, applicationSpace, 102, wire.PingFrame{})
 				if _, err := sender.WriteToUDP(fresh, receiver.LocalAddr().(*net.UDPAddr)); err != nil {
 					t.Fatal(err)
 				}
-				readACK(101, [3]uint64{1, 0, 1})
+				readACK(102, [3]uint64{1, 0, 1})
 			})
 		}
 	}

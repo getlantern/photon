@@ -48,6 +48,7 @@ func TestUnequalMTUPathFailureTransfer(t *testing.T) {
 					t.Fatal("probe", len(b))
 				}
 				now = now.Add(time.Millisecond)
+				ackNow(peer)
 				send(peer, c, 1)
 				if a.mtu.confirmed != 3000 {
 					t.Fatal("MTU not confirmed")
@@ -76,6 +77,7 @@ func TestUnequalMTUPathFailureTransfer(t *testing.T) {
 						t.Fatal(err)
 					}
 					now = now.Add(time.Millisecond)
+					ackNow(peer)
 					delayed, err = peer.nextPacketOnPath(1, now)
 					if err != nil || delayed == nil {
 						t.Fatal("delayed ACK", err)
@@ -150,6 +152,7 @@ func TestUnequalMTUConcurrentScheduling(t *testing.T) {
 				t.Fatal(err)
 			}
 			now = now.Add(time.Millisecond)
+			ackNow(peer)
 			b, err = peer.nextPacketOnPath(1, now)
 			if err != nil || b == nil {
 				t.Fatal("probe ACK", err)

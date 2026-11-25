@@ -51,6 +51,7 @@ func TestEncryptedMTUBlackholeRecovery(t *testing.T) {
 				t.Fatal("discovery probe", len(b))
 			}
 			now = now.Add(time.Millisecond)
+			ackNow(peer)
 			if b := deliver(peer, c); b == nil || a.mtu.confirmed != 3000 {
 				t.Fatal("confirmed size missing")
 			}

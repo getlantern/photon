@@ -183,6 +183,8 @@ type numberSpace struct {
 	sent                  map[uint64]*sendItem
 	queue                 []*sendItem
 	ackPending, discarded bool
+	unackedEliciting      int       // ack-eliciting packets since the last ACK
+	ackDueAt              time.Time // when a delayed ACK must be sent; zero if none
 }
 type deferredPacket struct {
 	marking ECN
@@ -746,7 +748,7 @@ func (c *Conn) discard(space int) {
 	c.recovery.Discard(recovery.Space(space))
 	c.timer.DiscardKeys()
 	c.probeAllowance[space] = false
-	s.ackPending = false
+	s.clearACK()
 	// Several transmissions can refer to one item, including a queued probe.
 	seen := make(map[*sendItem]bool)
 	for _, item := range s.queue {
@@ -982,6 +984,7 @@ func (c *Conn) receiveECN(raw []byte, h wire.Header, now time.Time, buffer bool,
 	if space == applicationSpace && c.multipath == nil && c.multipathNegotiated() {
 		return true, c.retainMultipathBeforeActivationECN(h.DCID, pn, frames, eliciting, len(raw), now, marking)
 	}
+	previous, hadPrevious := s.received.Largest()
 	receipt, err := s.received.RecordECN(pn, now, marking)
 	if err != nil {
 		return true, c.fail(err)
@@ -990,7 +993,7 @@ func (c *Conn) receiveECN(raw []byte, h wire.Header, now time.Time, buffer bool,
 		return true, nil
 	}
 	if eliciting {
-		s.ackPending = true
+		s.scheduleACK(space, pn, previous, hadPrevious, marking, now, c.ackDelay())
 	}
 	if receipt == DuplicatePacket {
 		return true, nil
@@ -1254,6 +1257,7 @@ func (c *Conn) NextDatagram(now time.Time) ([]byte, error) {
 		var f wire.Frame
 		var item *sendItem
 		early := space == applicationSpace && c.sendingEarly()
+		s.expireACKDelay(now) // a send at or after the deadline carries the ACK
 		if s.ackPending && !early && !(c.probeAllowance[space] && haveQueued) {
 			ack, err := s.received.ackView(now, uint8(c.config.Parameters.AckDelayExponent))
 			if err != nil {
@@ -1430,7 +1434,7 @@ func (c *Conn) NextDatagram(now time.Time) ([]byte, error) {
 			c.sentPathChallenge(challenge, len(out), now)
 			c.baseMTUChallenge = nil
 		} else {
-			s.ackPending = false
+			s.clearACK()
 		}
 		s.nextPN++
 		if !c.config.Server && space == handshakeSpace {

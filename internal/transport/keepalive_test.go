@@ -89,6 +89,7 @@ func TestKeepAliveEncryptedExchangeAndSilentExpiry(t *testing.T) {
 		if err := peer.HandleDatagram(packet, at); err != nil {
 			t.Fatal(err)
 		}
+		ackNow(peer)
 		replies := drain(t, peer, at.Add(time.Millisecond))
 		if len(replies) == 0 {
 			t.Fatal("PING elicited no ACK")
@@ -265,6 +266,7 @@ func TestKeepAlivePTOFloor(t *testing.T) {
 			if err := peer.HandleDatagram(packet, want); err != nil {
 				t.Fatal(err)
 			}
+			ackNow(peer)
 			replies := drain(t, peer, want.Add(time.Millisecond))
 			if len(replies) == 0 {
 				t.Fatal("keepalive elicited no ACK")

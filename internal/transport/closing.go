@@ -162,7 +162,7 @@ func (c *Conn) startClosing(frame wire.ConnectionCloseFrame, now time.Time, caus
 		for _, state := range c.multipath.paths {
 			if app := state.application; app != nil {
 				app.space.queue, app.space.sent = nil, nil
-				app.space.ackPending = false
+				app.space.clearACK()
 				app.sent.Discard(recovery.Application)
 				app.timer.DiscardKeys()
 				*app.validation = pathValidation{}
@@ -180,7 +180,7 @@ func (c *Conn) startClosing(frame wire.ConnectionCloseFrame, now time.Time, caus
 	for i := range c.spaces {
 		c.spaces[i].queue = nil
 		c.spaces[i].sent = nil
-		c.spaces[i].ackPending = false
+		c.spaces[i].clearACK()
 		c.recovery.Discard(recovery.Space(i))
 	}
 	c.streams = streamSet{}

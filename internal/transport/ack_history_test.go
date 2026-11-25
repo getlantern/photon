@@ -17,6 +17,7 @@ func TestSustainedPureACKOutput(t *testing.T) {
 		if err := client.HandleDatagram(b, now); err != nil {
 			t.Fatal(pn, err)
 		}
+		ackNow(client) // the history, not the delay, is under test
 		ack, err := client.NextDatagram(now)
 		if err != nil || len(ack) == 0 {
 			t.Fatal("ACK history stopped output", pn, err)

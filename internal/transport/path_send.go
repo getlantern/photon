@@ -99,6 +99,7 @@ func (c *Conn) nextPacketOnPathSelection(id, ackPath uint64, now time.Time, allo
 		return nil, errNoPathForControl
 	}
 	ackApp := ackState.application
+	ackApp.space.expireACKDelay(now) // a send at or after the deadline carries the ACK
 	if ackPath != id && !ackApp.space.ackPending {
 		return nil, nil
 	}
@@ -289,7 +290,7 @@ func (c *Conn) nextPacketOnPathSelection(id, ackPath uint64, now time.Time, allo
 		app.validation.recordSent(challenge, len(out), now)
 		app.mtuChallenge = nil
 	} else if mtuSize == 0 {
-		ackApp.space.ackPending = false
+		ackApp.space.clearACK()
 	}
 	c.sentIdleActivity(now, wire.AckEliciting(f))
 	if probe {

@@ -23,6 +23,7 @@ func TestMultipathACKOnSurvivingPath(t *testing.T) {
 			t.Fatal(err)
 		}
 		client.multipath.beginAbandon(1)
+		ackNow(client)
 		before := client.spaces[applicationSpace].nextPN
 		id, ack, err := client.nextMultipathPacket(now.Add(time.Millisecond))
 		if err != nil || id != 0 || ack == nil {

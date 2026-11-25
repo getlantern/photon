@@ -187,6 +187,7 @@ func TestEndpointLargeStreamWriteFallbackTransfer(t *testing.T) {
 					t.Fatal(err)
 				}
 				now = now.Add(time.Millisecond)
+				ackNow(peer)
 				receive()
 				if a.mtu.confirmed != 3000 {
 					t.Fatal("probe not confirmed")

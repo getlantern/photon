@@ -35,7 +35,7 @@ func TestBoundCoalescedPostConfirmation(t *testing.T) {
 					}
 					app := server.multipath.paths[0].application
 					*app.budget = Amplification{}
-					app.space.ackPending = false
+					app.space.clearACK()
 					if err := client.prepareApplicationKeys(); err != nil {
 						t.Fatal(err)
 					}
@@ -87,14 +87,14 @@ func TestBoundCoalescedPostConfirmation(t *testing.T) {
 						t.Fatal(err)
 					}
 					if scenario == "valid" || scenario == "other-known-version" {
-						if server.authenticatedPackets != before+1 || !app.space.ackPending || app.budget.credit != uint64(3*len(datagram)) {
+						if server.authenticatedPackets != before+1 || !ackScheduled(app.space) || app.budget.credit != uint64(3*len(datagram)) {
 							t.Fatal("trailing packet not admitted or datagram credit wrong")
 						}
 					} else if scenario == "candidate" {
-						if app.migration == nil || app.migration.candidate == nil || app.migration.candidate.budget.credit != uint64(3*len(datagram)) || app.budget.credit != 0 || app.space.ackPending {
+						if app.migration == nil || app.migration.candidate == nil || app.migration.candidate.budget.credit != uint64(3*len(datagram)) || app.budget.credit != 0 || ackScheduled(app.space) {
 							t.Fatal("candidate coalescing crossed admission boundary")
 						}
-					} else if server.authenticatedPackets != before || app.budget.credit != 0 || app.space.ackPending {
+					} else if server.authenticatedPackets != before || app.budget.credit != 0 || ackScheduled(app.space) {
 						t.Fatal("invalid coalesced datagram mutated authenticated state")
 					}
 				})

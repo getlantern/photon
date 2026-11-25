@@ -62,6 +62,7 @@ func (c *Conn) nextMultipathPacket(now time.Time) (uint64, []byte, error) {
 	}
 	// Retained abandoned receive spaces remain eligible ACK sources.
 	for _, source := range ids {
+		p.paths[source].application.space.expireACKDelay(now)
 		if !p.paths[source].application.space.ackPending {
 			continue
 		}

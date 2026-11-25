@@ -105,6 +105,7 @@ func (c *Conn) recordMultipathPacket(authenticated *authenticatedPathPacket, now
 		return nil, errPathBinding
 	}
 	app := state.application
+	previous, hadPrevious := app.space.received.Largest()
 	receipt, err := app.space.received.RecordECN(decoded.number, now, authenticated.marking)
 	if err != nil {
 		return nil, c.fail(err)
@@ -113,7 +114,7 @@ func (c *Conn) recordMultipathPacket(authenticated *authenticatedPathPacket, now
 		return nil, nil
 	}
 	if authenticated.ackEliciting {
-		app.space.ackPending = true
+		app.space.scheduleACK(applicationSpace, decoded.number, previous, hadPrevious, authenticated.marking, now, c.ackDelay())
 	}
 	decoded.receipt = receipt
 	if receipt != NewPacket {
