@@ -197,6 +197,11 @@ func newPacketServerWithOwnership(sockets []net.PacketConn, endpoint *ServerEndp
 	go s.run(packets)
 	return s, nil
 }
+
+// maxReceiveBurst bounds how many waiting datagrams the owner handles before
+// its next send pass, so input cannot starve output or commands.
+const maxReceiveBurst = 16
+
 func (s *UDPServer) Addr() net.Addr { return s.packetConn.LocalAddr() }
 func (s *UDPServer) Close() error {
 	// Stopping closes the sockets at once. First send the owner a no-op: each
@@ -376,6 +381,19 @@ func (s *UDPServer) run(packets <-chan receivedUDP) {
 		case p := <-packets:
 			if !s.handleReceived(lifetime, p) {
 				return
+			}
+			// Handle the rest of a burst before the next send pass, so one ACK
+			// can cover it (RFC 9000 section 13.2.2) rather than one per pair.
+		burst:
+			for range maxReceiveBurst - 1 {
+				select {
+				case p := <-packets:
+					if !s.handleReceived(lifetime, p) {
+						return
+					}
+				default:
+					break burst
+				}
 			}
 			signal()
 		case p := <-s.forwarded:

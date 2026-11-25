@@ -31,6 +31,24 @@ func settledPair(t *testing.T, parameters ...wire.TransportParameters) (client, 
 	return client, server, now, largest + 1
 }
 
+// framesIn decodes the 1-RTT frames of datagram, sent to to.
+func framesIn(t *testing.T, to *Conn, datagram []byte) []wire.Frame {
+	t.Helper()
+	h, err := wire.ParseHeader(datagram, len(to.config.LocalCID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, plain, _, err := to.readKeys(applicationSpace).Open(datagram, h.PNOffset, to.spaces[applicationSpace].received.Expected())
+	if err != nil {
+		t.Fatal(err)
+	}
+	frames, _, err := parsePacketFrames(plain, wire.FrameContext{PacketType: wire.OneRTT})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return frames
+}
+
 // ackFrameIn reports whether datagram, sent to to, carries an ACK.
 func ackFrameIn(t *testing.T, to *Conn, datagram []byte, now time.Time) bool {
 	t.Helper()
@@ -168,5 +186,98 @@ func TestDelayedACKDeadlineClearsWithoutSend(t *testing.T) {
 	}
 	if got := client.RecoveryDeadline(); !got.IsZero() && !got.After(due) {
 		t.Fatal("RecoveryDeadline still reports the past ACK deadline", got)
+	}
+}
+
+// An ACK owed but not yet due rides on the next data packet, ahead of the
+// data, and is then no longer owed.
+func TestACKBundledWithData(t *testing.T) {
+	client, server, now, next := settledPair(t, streamParameters())
+	if err := client.HandleDatagram(makePeerPacket(t, server, applicationSpace, next, wire.PingFrame{}), now); err != nil {
+		t.Fatal(err)
+	}
+	id, err := client.OpenStream(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.WriteStream(id, []byte("data"), true); err != nil {
+		t.Fatal(err)
+	}
+	out := drain(t, client, now)
+	if len(out) != 1 {
+		t.Fatal("datagrams", len(out))
+	}
+	frames := framesIn(t, server, out[0])
+	if len(frames) != 2 {
+		t.Fatalf("frames %T", frames)
+	}
+	if _, ok := frames[0].(wire.AckFrame); !ok {
+		t.Fatalf("first frame %T, want the owed ACK", frames[0])
+	}
+	if f, ok := frames[1].(wire.StreamFrame); !ok || string(f.Data) != "data" {
+		t.Fatalf("second frame %T, want the data", frames[1])
+	}
+	if !client.ackDeadline().IsZero() || ackScheduled(&client.spaces[applicationSpace]) {
+		t.Fatal("ACK still owed after it was bundled")
+	}
+}
+
+// A stream frame that no longer fits beside a large bundled ACK is split, and
+// every byte still arrives in order.
+func TestACKBundledWithFullStreamFrame(t *testing.T) {
+	client, server, now, next := settledPair(t, streamParameters())
+	// A history of gaps makes the owed ACK too large to fit beside a
+	// full-size stream frame.
+	const gaps = 40
+	for i := uint64(0); i < gaps; i++ {
+		if err := client.HandleDatagram(makePeerPacket(t, server, applicationSpace, next+2*i, wire.PingFrame{}), now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ackNow(client)
+	drain(t, client, now)
+	// One in-order packet leaves an ACK owed but not yet due.
+	if err := client.HandleDatagram(makePeerPacket(t, server, applicationSpace, next+2*gaps-1, wire.PingFrame{}), now); err != nil {
+		t.Fatal(err)
+	}
+	if client.spaces[applicationSpace].ackPending || client.ackDeadline().IsZero() {
+		t.Fatal("setup: want an ACK owed but not due")
+	}
+	id, err := client.OpenStream(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := make([]byte, 4000)
+	for i := range payload {
+		payload[i] = byte(i * 7)
+	}
+	writeAll(t, client, id, payload)
+	out := drain(t, client, now)
+	if len(out) == 0 {
+		t.Fatal("nothing sent")
+	}
+	var got []byte
+	sawACK := false
+	for i, datagram := range out {
+		if len(datagram) > client.basePacketPayloadLimit() {
+			t.Fatal("datagram", i, "exceeds the packet limit", len(datagram))
+		}
+		for _, f := range framesIn(t, server, datagram) {
+			switch f := f.(type) {
+			case wire.AckFrame:
+				if i != 0 {
+					t.Fatal("ACK outside the first data packet")
+				}
+				sawACK = true
+			case wire.StreamFrame:
+				if f.Offset != uint64(len(got)) {
+					t.Fatal("stream offset", f.Offset, "want", len(got))
+				}
+				got = append(got, f.Data...)
+			}
+		}
+	}
+	if !sawACK || string(got) != string(payload) {
+		t.Fatal("bundled ACK or stream data missing", sawACK, len(got))
 	}
 }
