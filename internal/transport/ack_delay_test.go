@@ -469,9 +469,13 @@ func testMultipathBundledACKRestored(t *testing.T, datagram, phaseMoved bool) {
 			t.Fatal(err)
 		}
 	}
-	// An earlier key update, after which path 0 sends nothing.
+	// An earlier key update, after which path 0 sends nothing, and the peer's
+	// first packet in the new phase on path 1 came before the one owed an ACK.
 	c.advanceKeyNumbers()
-	ackSent := c.applicationKeys.ackSent
+	k := &c.applicationKeys
+	k.updated, k.ackSent, k.awaitingRead = true, false, false
+	numbers := c.keyNumbers(1)
+	numbers.haveFirst, numbers.first = true, 0
 	out, err := e.NextDatagram(now)
 	if err != nil || out == nil || len(out.Data) <= 1200 {
 		t.Fatal("large output", err)
@@ -486,10 +490,9 @@ func testMultipathBundledACKRestored(t *testing.T, datagram, phaseMoved bool) {
 	if ackScheduled(app.space) {
 		t.Fatal("setup: PATH_ACK still owed after bundling")
 	}
-	if ackSent {
-		t.Fatal("setup: want ackSent false before the bundled ACK")
+	if !k.ackSent {
+		t.Fatal("setup: the bundled ACK did not mark an ACK sent in this key phase")
 	}
-	c.applicationKeys.ackSent = true // as if the bundled ACK had set it
 	if phaseMoved {
 		c.advanceKeyNumbers() // what a key update does
 	}
