@@ -231,6 +231,10 @@ func TestServeRequestsRejectsAcceptRacingDrain(t *testing.T) {
 	close(control.ackRelease)
 	session.control = control
 	stream := requestStream(t, 0)
+	// The rejected stream's Release waits until the connection ends, so the
+	// wait for the drain to reach WaitAcknowledged, after GOAWAY is sent,
+	// times out if anything waits for it first.
+	stream.release = func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }
 	acceptor := &drainRaceAcceptor{stream: stream, entered: make(chan struct{})}
 	drain := make(chan struct{})
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -732,7 +736,12 @@ func TestServeRequestsDrainRejectsStreamDuringGrace(t *testing.T) {
 	close(control.ackRelease)
 	session.control = control
 	acceptor := &requestAcceptor{streams: make(chan ServerRequestStream)}
-	late := requestStream(t, 0)
+	// The first late stream's Release waits until the connection ends; the
+	// second must still be rejected, so no rejection waits on another.
+	slow := requestStream(t, 0)
+	slowReleasing := make(chan struct{})
+	slow.release = func(ctx context.Context) error { close(slowReleasing); <-ctx.Done(); return ctx.Err() }
+	late := requestStream(t, 4)
 	rejected := make(chan struct{})
 	late.release = func(context.Context) error { close(rejected); return nil }
 	drain, drained := make(chan struct{}), make(chan struct{})
@@ -748,10 +757,17 @@ func TestServeRequestsDrainRejectsStreamDuringGrace(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
+	for _, stream := range []ServerRequestStream{slow, late} {
+		select {
+		case acceptor.streams <- stream:
+		case <-ctx.Done():
+			t.Fatal("stream not accepted during the grace", ctx.Err())
+		}
+	}
 	select {
-	case acceptor.streams <- late:
+	case <-slowReleasing:
 	case <-ctx.Done():
-		t.Fatal("stream not accepted during the grace", ctx.Err())
+		t.Fatal("slow stream not rejected during the grace", ctx.Err())
 	}
 	select {
 	case <-rejected:
@@ -767,8 +783,10 @@ func TestServeRequestsDrainRejectsStreamDuringGrace(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
-	if len(late.writeCodes) != 1 || late.writeCodes[0] != 0x10b || len(late.readCodes) != 1 || late.readCodes[0] != 0x10b {
-		t.Fatal("late request not rejected", late.writeCodes, late.readCodes)
+	for _, stream := range []*numberedRequest{slow, late} {
+		if len(stream.writeCodes) != 1 || stream.writeCodes[0] != 0x10b || len(stream.readCodes) != 1 || stream.readCodes[0] != 0x10b {
+			t.Fatal("late request not rejected", stream.StreamID(), stream.writeCodes, stream.readCodes)
+		}
 	}
 	transport.check(t, 0x100)
 }

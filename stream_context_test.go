@@ -4,8 +4,12 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/getlantern/photon/internal/transport"
 )
 
 func TestPublicStreamContexts(t *testing.T) {
@@ -192,10 +196,75 @@ func TestPublicReceiveErrorsAfterCleanup(t *testing.T) {
 	}
 }
 
-// STOP_SENDING that arrives after a stream's FIN does not make Release report
-// a failure: sending had already ended with the FIN, and Release waits only
-// for completion, an acknowledged reset included. The send Context keeps the
-// FIN as its cause. HTTP/3 relies on this, see http3/README.md.
+// holdingRelay forwards UDP between one client and server, and can hold
+// server-to-client datagrams until released.
+type holdingRelay struct {
+	socket  *net.UDPConn
+	mu      sync.Mutex
+	holding bool
+	held    [][]byte
+	client  *net.UDPAddr
+}
+
+func newHoldingRelay(t *testing.T, server *net.UDPAddr) *holdingRelay {
+	t.Helper()
+	socket, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := &holdingRelay{socket: socket}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		buffer := make([]byte, 65535)
+		for {
+			n, from, err := socket.ReadFromUDP(buffer)
+			if err != nil {
+				return
+			}
+			packet := append([]byte(nil), buffer[:n]...)
+			if from.AddrPort() != server.AddrPort() {
+				r.mu.Lock()
+				r.client = from
+				r.mu.Unlock()
+				_, _ = socket.WriteToUDP(packet, server)
+				continue
+			}
+			r.mu.Lock()
+			client := r.client
+			if r.holding || client == nil {
+				r.held = append(r.held, packet)
+				r.mu.Unlock()
+				continue
+			}
+			r.mu.Unlock()
+			_, _ = socket.WriteToUDP(packet, client)
+		}
+	}()
+	t.Cleanup(func() { socket.Close(); <-done })
+	return r
+}
+
+func (r *holdingRelay) hold() { r.mu.Lock(); r.holding = true; r.mu.Unlock() }
+
+func (r *holdingRelay) release() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.holding = false
+	for _, packet := range r.held {
+		_, _ = r.socket.WriteToUDP(packet, r.client)
+	}
+	r.held = nil
+}
+
+// STOP_SENDING that arrives after a stream's FIN is queued does not make
+// Release report a failure: sending had already ended with the FIN, and
+// Release waits only for completion, an acknowledged reset included. The send
+// Context keeps the FIN as its cause. HTTP/3 relies on this, see
+// http3/README.md. A relay holds the server's datagrams, so the client cannot
+// have the FIN when it cancels and must send STOP_SENDING. The hold ends only
+// once the server has processed it, before the client could acknowledge the
+// FIN.
 func TestReleaseAfterStopSendingFollowingFIN(t *testing.T) {
 	clientTLS, serverTLS := dialTLS(t)
 	l, err := ListenAddr("127.0.0.1:0", serverTLS, nil)
@@ -203,9 +272,10 @@ func TestReleaseAfterStopSendingFollowingFIN(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer l.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	relay := newHoldingRelay(t, l.Addr().(*net.UDPAddr))
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	c, err := DialAddr(ctx, l.Addr().String(), clientTLS, nil)
+	c, err := DialAddr(ctx, relay.socket.LocalAddr().String(), clientTLS, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,34 +284,54 @@ func TestReleaseAfterStopSendingFollowingFIN(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := c.OpenStream()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.Write([]byte("request")); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Close(); err != nil {
-		t.Fatal(err)
-	}
-	ps, err := peer.AcceptStream(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := io.ReadAll(ps); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ps.Write([]byte("response")); err != nil {
-		t.Fatal(err)
-	}
-	if err := ps.Close(); err != nil {
-		t.Fatal(err)
-	}
-	s.CancelRead(0x10c) // STOP_SENDING after the response's FIN was queued
-	if err := ps.Release(ctx); err != nil {
-		t.Fatal("Release after STOP_SENDING following FIN:", err)
-	}
-	if cause := context.Cause(ps.Context()); cause != ErrStreamClosed {
-		t.Fatal("send context cause:", cause)
+	for round := 0; round < 5; round++ {
+		s, err := c.OpenStream()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Write([]byte("request")); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Close(); err != nil {
+			t.Fatal(err)
+		}
+		ps, err := peer.AcceptStream(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := io.ReadAll(ps); err != nil {
+			t.Fatal(err)
+		}
+		relay.hold()
+		if _, err := ps.Write([]byte("response")); err != nil {
+			t.Fatal(err)
+		}
+		if err := ps.Close(); err != nil {
+			t.Fatal(err)
+		}
+		s.CancelRead(0x10c) // the FIN is held, so this sends STOP_SENDING
+		// Hold until the server has processed it: WaitAcknowledged reports
+		// the reset without waiting for its acknowledgment, and nothing else
+		// can end the wait while the FIN is held.
+		var reset *StreamError
+		if err := ps.WaitAcknowledged(ctx); !errors.As(err, &reset) || reset.ErrorCode != 0x10c {
+			t.Fatal("round", round, "STOP_SENDING not processed while the FIN was held:", err)
+		}
+		relay.release()
+		if err := ps.Release(ctx); err != nil {
+			t.Fatal("round", round, "Release after STOP_SENDING following FIN:", err)
+		}
+		if cause := context.Cause(ps.Context()); cause != ErrStreamClosed {
+			t.Fatal("round", round, "send context cause:", cause)
+		}
+		// The server processed the client's STOP_SENDING: the reset it
+		// answered with is the stream's recorded send outcome.
+		var terminal error
+		if err := peer.server.Do(ctx, func(*transport.ServerEndpoint) error { terminal = ps.SendStream.sendTerminal; return nil }); err != nil {
+			t.Fatal(err)
+		}
+		if !errors.As(terminal, &reset) || reset.ErrorCode != 0x10c {
+			t.Fatal("round", round, "STOP_SENDING not processed after FIN; recorded send outcome:", terminal)
+		}
 	}
 }
