@@ -32,11 +32,11 @@ func TestSlowStartAndRecovery(t *testing.T) {
 	c := congestion(t)
 	start := time.Unix(1000, 0)
 	p := Packet{SentAt: start, Bytes: 1200, InFlight: true, AckEliciting: true}
-	c.OnACK([]Packet{p}, true)
+	c.OnACK(ACKEvent{Acked: []Packet{p}, Limited: true})
 	if c.Window() != 12000 {
 		t.Fatal("application limited growth")
 	}
-	c.OnACK([]Packet{p}, false)
+	c.OnACK(ACKEvent{Acked: []Packet{p}, Limited: false})
 	if c.Window() != 13200 {
 		t.Fatal("slow start")
 	}
@@ -45,7 +45,7 @@ func TestSlowStartAndRecovery(t *testing.T) {
 		t.Fatal("loss reduction")
 	}
 	c.OnLoss([]Packet{p}, start.Add(2*time.Second))
-	c.OnACK([]Packet{p}, false)
+	c.OnACK(ACKEvent{Acked: []Packet{p}, Limited: false})
 	if c.Window() != 6600 {
 		t.Fatal("recovery changed window twice")
 	}
@@ -54,7 +54,7 @@ func TestSlowStartAndRecovery(t *testing.T) {
 	// packets eventually grow it too, without integer-division starvation.
 	p.Bytes = 1
 	for i := 0; i < 6600; i++ {
-		c.OnACK([]Packet{p}, false)
+		c.OnACK(ACKEvent{Acked: []Packet{p}, Limited: false})
 	}
 	if c.Window() != 7800 {
 		t.Fatal("congestion avoidance", c.Window())
@@ -72,7 +72,7 @@ func TestSlowStartAndRecovery(t *testing.T) {
 func TestACKOnlyDoesNotAffectCongestion(t *testing.T) {
 	c := congestion(t)
 	p := Packet{SentAt: time.Unix(1000, 0), Bytes: 1200}
-	c.OnACK([]Packet{p}, false)
+	c.OnACK(ACKEvent{Acked: []Packet{p}, Limited: false})
 	c.OnLoss([]Packet{p}, p.SentAt.Add(time.Second))
 	if c.Window() != 12000 {
 		t.Fatal("ACK-only changed window")
@@ -89,11 +89,11 @@ func TestPersistentCongestionEndsRecovery(t *testing.T) {
 	if c.Window() != 2400 || c.recovering || c.credit != 0 {
 		t.Fatal("persistent congestion state", c)
 	}
-	c.OnACK([]Packet{p}, true)
+	c.OnACK(ACKEvent{Acked: []Packet{p}, Limited: true})
 	if c.Window() != 2400 {
 		t.Fatal("application-limited growth")
 	}
-	c.OnACK([]Packet{p}, false)
+	c.OnACK(ACKEvent{Acked: []Packet{p}, Limited: false})
 	if c.Window() != 3600 {
 		t.Fatal("slow start suppressed", c.Window())
 	}

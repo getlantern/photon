@@ -39,7 +39,7 @@ type pathApplication struct {
 	keyNumbers        keyPhaseNumbers
 	space             *numberSpace
 	sent              *recovery.Sent
-	congestion        *recovery.NewReno
+	congestion        recovery.Controller
 	timer             *recovery.Timer
 	pacer             *recovery.Pacer
 }
@@ -116,6 +116,9 @@ func (p *pathCIDs) receiveACK(frame wire.Frame, now time.Time, exponent uint8, m
 		return recovery.Events{}, pathCIDViolation(frame.Type(), "ACK for path without sent packets")
 	}
 	a := s.application
+	if limited {
+		a.sent.MarkAppLimited()
+	}
 	events, err := a.sent.OnACK(recovery.Application, ack, now, recovery.DecodeACKDelay(ack.Delay, exponent), maxDelay, true)
 	if err != nil {
 		return recovery.Events{}, pathCIDViolation(frame.Type(), err.Error())
@@ -142,7 +145,7 @@ func (p *pathCIDs) receiveACK(frame wire.Frame, now time.Time, exponent uint8, m
 		a.congestion.OnPersistentCongestion()
 		a.sent.RTT.OnPersistentCongestion()
 	}
-	a.congestion.OnACK(events.Acked, limited)
+	a.congestion.OnACK(recovery.ACKEvent{Acked: events.Acked, Rate: events.Rate, Limited: limited, Now: now})
 	return events, nil
 }
 

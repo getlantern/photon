@@ -115,7 +115,7 @@ func TestPersistentCongestionFromACK(t *testing.T) {
 		t.Fatal(c.Window())
 	}
 	// Persistent congestion ends the recovery epoch (RFC 9002 Appendix B.8).
-	c.OnACK(ev.Acked, false)
+	c.OnACK(ACKEvent{Acked: ev.Acked})
 	if c.Window() != 3600 {
 		t.Fatal(c.Window())
 	}

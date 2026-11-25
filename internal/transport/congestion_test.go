@@ -116,3 +116,106 @@ func TestPersistentCongestionRefreshesPathRTT(t *testing.T) {
 		t.Fatal("path minimum not refreshed")
 	}
 }
+
+// recordingController records each ACK event its wrapped controller receives.
+type recordingController struct {
+	recovery.Controller
+	events []recovery.ACKEvent
+}
+
+func (r *recordingController) OnACK(e recovery.ACKEvent) {
+	r.events = append(r.events, e)
+	r.Controller.OnACK(e)
+}
+
+// lastValidRate is the last valid rate sample the controller received.
+func (r *recordingController) lastValidRate() (recovery.ACKEvent, bool) {
+	for i := len(r.events) - 1; i >= 0; i-- {
+		if r.events[i].Rate.Valid {
+			return r.events[i], true
+		}
+	}
+	return recovery.ACKEvent{}, false
+}
+
+// The congestion controller receives each ACK's delivery-rate sample. Data
+// that crosses a 30 ms round trip and is then acknowledged measures its own
+// delivery, application limited once nothing is left to send.
+func TestControllerReceivesRateSamples(t *testing.T) {
+	client, server, now, _ := settledPair(t, streamParameters())
+	recorder := &recordingController{Controller: client.congestion}
+	client.congestion = recorder
+	id, err := client.OpenStream(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// WriteStream admits a frame at a time.
+	for data := make([]byte, 6000); len(data) > 0; {
+		n, err := client.WriteStream(id, data, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data = data[n:]
+	}
+	for _, d := range drain(t, client, now) {
+		if err := server.HandleDatagram(d, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ackNow(server)
+	later := now.Add(30 * time.Millisecond)
+	for _, d := range drain(t, server, now) {
+		if err := client.HandleDatagram(d, later); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e, ok := recorder.lastValidRate()
+	if !ok {
+		t.Fatal("no valid rate sample reached the controller", len(recorder.events))
+	}
+	if e.Rate.Delivered < 6000 || e.Rate.Interval != 30*time.Millisecond || e.Rate.Rate == 0 || !e.Now.Equal(later) {
+		t.Fatalf("sample %+v, want the 6000 bytes over 30ms", e.Rate)
+	}
+	if !e.Limited {
+		t.Fatal("ACK with nothing left to send not reported as limited")
+	}
+}
+
+// On a multipath connection each path's controller receives its own samples.
+func TestMultipathControllerReceivesRateSamples(t *testing.T) {
+	client, server := sendingPathPair(t, wire.Version1)
+	now := time.Unix(101, 0)
+	app := client.multipath.paths[1].application
+	app.budget.Validate()
+	app.validation.state = PathValidated
+	recorder := &recordingController{Controller: app.congestion}
+	app.congestion = recorder
+	id, err := client.OpenStream(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.queueFrameOnPath(1, wire.StreamFrame{StreamID: id, Data: make([]byte, 1000)}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := client.nextPacketOnPath(1, now)
+	if err != nil || raw == nil {
+		t.Fatal("stream packet", err)
+	}
+	if err := server.handleMultipathPacket(raw, now); err != nil {
+		t.Fatal(err)
+	}
+	ackNow(server)
+	server.multipath.paths[1].application.budget.Validate()
+	ack, err := server.nextPacketOnPath(1, now)
+	if err != nil || ack == nil {
+		t.Fatal("PATH_ACK", err)
+	}
+	later := now.Add(30 * time.Millisecond)
+	if err := client.handleMultipathPacket(ack, later); err != nil {
+		t.Fatal(err)
+	}
+	e, ok := recorder.lastValidRate()
+	if !ok || e.Rate.Interval != 30*time.Millisecond || e.Rate.Delivered == 0 || !e.Limited {
+		t.Fatalf("path 1 sample %+v (limited %t), valid %t", e.Rate, e.Limited, ok)
+	}
+}

@@ -279,7 +279,7 @@ type Conn struct {
 	budget                               Amplification
 	recovery                             *recovery.Sent
 	timer                                recovery.Timer
-	congestion                           *recovery.NewReno
+	congestion                           recovery.Controller
 	probeAllowance                       [3]bool
 	handshakeACK                         bool
 	peerCID                              []byte
@@ -1135,6 +1135,11 @@ func (c *Conn) handleAck(space int, f wire.AckFrame, now time.Time) error {
 	}
 	s := &c.spaces[space]
 	limited := !c.hasQueuedData() && c.recovery.BytesInFlight < c.congestion.Window()
+	if limited {
+		// Rate samples from packets sent until the current flight is
+		// delivered then understate what the path can carry.
+		c.recovery.MarkAppLimited()
+	}
 	exponent := uint8(3)
 	maxDelay := 25 * time.Millisecond
 	if c.peerParams != nil {
@@ -1157,7 +1162,7 @@ func (c *Conn) handleAck(space int, f wire.AckFrame, now time.Time) error {
 		c.congestion.OnECN(events.ECNSentAt, now)
 	}
 	c.onCongestionLoss(events.Lost, now)
-	c.congestion.OnACK(events.Acked, limited)
+	c.congestion.OnACK(recovery.ACKEvent{Acked: events.Acked, Rate: events.Rate, Limited: limited, Now: now})
 	if len(events.Acked) > 0 {
 		c.probeAllowance[space] = false
 	}

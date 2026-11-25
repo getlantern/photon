@@ -26,7 +26,7 @@ func TestECNAndLossShareRecovery(t *testing.T) {
 		// A larger CE total might acknowledge another pre-recovery packet. It must
 		// not begin a fresh recovery epoch merely because its ACK arrived later.
 		c.OnECN(start.Add(time.Second), start.Add(3*time.Second))
-		c.OnACK([]Packet{p}, false)
+		c.OnACK(ACKEvent{Acked: []Packet{p}, Limited: false})
 		if c.Window() != 6000 {
 			t.Fatal("same epoch reduced or grew twice", c.Window())
 		}
@@ -46,12 +46,12 @@ func TestECNResetsGrowthCreditAndIsPathLocal(t *testing.T) {
 	c := congestion(t)
 	other := congestion(t)
 	c.OnECN(start, start.Add(time.Second))
-	c.OnACK([]Packet{{SentAt: start.Add(2 * time.Second), Bytes: 5999, InFlight: true}}, false)
+	c.OnACK(ACKEvent{Acked: []Packet{{SentAt: start.Add(2 * time.Second), Bytes: 5999, InFlight: true}}, Limited: false})
 	if c.Window() != 6000 {
 		t.Fatal("premature additive increase")
 	}
 	c.OnECN(start.Add(2*time.Second), start.Add(3*time.Second))
-	c.OnACK([]Packet{{SentAt: start.Add(4 * time.Second), Bytes: 1, InFlight: true}}, false)
+	c.OnACK(ACKEvent{Acked: []Packet{{SentAt: start.Add(4 * time.Second), Bytes: 1, InFlight: true}}, Limited: false})
 	if c.Window() != 3000 {
 		t.Fatal("old credit survived ECN reduction")
 	}
@@ -59,7 +59,7 @@ func TestECNResetsGrowthCreditAndIsPathLocal(t *testing.T) {
 		t.Fatal("another path changed")
 	}
 	// Application-limited ACK growth does not suppress a congestion signal.
-	c.OnACK([]Packet{{SentAt: start.Add(4 * time.Second), Bytes: 1200, InFlight: true}}, true)
+	c.OnACK(ACKEvent{Acked: []Packet{{SentAt: start.Add(4 * time.Second), Bytes: 1200, InFlight: true}}, Limited: true})
 	c.OnECN(start.Add(4*time.Second), start.Add(5*time.Second))
 	if c.Window() != 2400 {
 		t.Fatal("application-limited CE ignored")

@@ -27,6 +27,8 @@ type Packet struct {
 	Bytes                  int
 	AckEliciting, InFlight bool
 	MTUProbe               bool // dedicated padded size probe; loss is not congestion evidence
+	// Delivery is set by Sent.OnSent for in-flight packets.
+	Delivery DeliveryState
 }
 type Events struct {
 	Acked, Lost []Packet
@@ -44,6 +46,8 @@ type Events struct {
 	// from the current network path, suitable for congestion recovery epochs.
 	ECNCongestion bool
 	ECNSentAt     time.Time
+	// Rate is the delivery rate the ACK measured.
+	Rate RateSample
 }
 type packetSpace struct {
 	ecnFeedback       ECNFeedback
@@ -68,6 +72,7 @@ type Sent struct {
 	ecnTestUntil  time.Time
 	ecnPath       ECNPath
 	history       congestionHistory
+	rate          deliveryRate
 	RTT           RTT
 	spaces        [3]packetSpace
 	BytesInFlight uint64
@@ -113,6 +118,9 @@ func (r *Sent) OnSent(space Space, p Packet) error {
 	if !r.CanTrack(space) && s.ackOnly.Len() > 0 {
 		old := s.ackOnly.Front().number
 		r.remove(s, s.packets[old])
+	}
+	if p.InFlight {
+		r.rate.stamp(&p, r.BytesInFlight)
 	}
 	// A full in-flight ledger must not prevent pure congestion feedback.
 	if r.CanTrack(space) {
@@ -230,7 +238,9 @@ func (r *Sent) OnACK(space Space, f wire.AckFrame, now time.Time, delay, maxDela
 		events.Acked = make([]Packet, 0, count)
 	}
 	eliciting := false
+	var sampler rateSampler
 	retire := func(p Packet) {
+		r.rate.acked(&sampler, p, now)
 		events.Acked = append(events.Acked, p)
 		eliciting = eliciting || p.AckEliciting
 		r.remove(s, p)
@@ -259,6 +269,7 @@ func (r *Sent) OnACK(space Space, f wire.AckFrame, now time.Time, delay, maxDela
 		}
 		r.RTT.Update(now.Sub(largestPacket.SentAt), delay, maxDelay, confirmed)
 	}
+	events.Rate = r.rate.sample(&sampler, now, r.RTT.Minimum)
 	if !s.hasAck || largest > s.largestAcked {
 		s.largestAcked = largest
 		s.hasAck = true
