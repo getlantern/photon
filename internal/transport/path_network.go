@@ -252,6 +252,9 @@ func (c *Conn) nextBoundMultipathPacket(now time.Time) (uint64, pathTuple, []byt
 		}
 	}
 	id, raw, err := c.nextMultipathPacket(now)
+	if err == nil && raw == nil {
+		c.noteMultipathSendIdle()
+	}
 	if err != nil || raw == nil {
 		return id, pathTuple{}, raw, err
 	}

@@ -219,3 +219,47 @@ func TestMultipathControllerReceivesRateSamples(t *testing.T) {
 		t.Fatalf("path 1 sample %+v (limited %t), valid %t", e.Rate, e.Limited, ok)
 	}
 }
+
+// A send pass that finds nothing to send while the window has room marks the
+// path application limited, without waiting for an ACK to notice.
+func TestIdleSendMarksAppLimited(t *testing.T) {
+	client, _, now, _ := settledPair(t, streamParameters())
+	drain(t, client, now)
+	fresh, _ := recovery.NewSent(maxSentPackets)
+	client.recovery = fresh
+	if client.recovery.AppLimited() {
+		t.Fatal("setup: fresh path already app limited")
+	}
+	if b, err := client.NextDatagram(now); err != nil || b != nil {
+		t.Fatal("setup: idle connection sent", len(b), err)
+	}
+	if !client.recovery.AppLimited() {
+		t.Fatal("idle send pass did not mark the path app limited")
+	}
+}
+
+func TestMultipathIdleSendMarksAppLimited(t *testing.T) {
+	e, client, _ := mtuWriteEndpointPair(t, wire.Version1, 1500)
+	defer e.Close()
+	now := time.Unix(101, 0)
+	for client.nextBoundOrNil(t, now) {
+	}
+	app := client.multipath.paths[1].application
+	app.sent, _ = recovery.NewSent(maxSentPackets)
+	if _, _, b, err := client.nextBoundMultipathPacket(now); err != nil || b != nil {
+		t.Fatal("setup: idle connection sent", len(b), err)
+	}
+	if !app.sent.AppLimited() {
+		t.Fatal("idle send pass did not mark path 1 app limited")
+	}
+}
+
+// nextBoundOrNil sends one multipath packet, reporting whether there was one.
+func (c *Conn) nextBoundOrNil(t *testing.T, now time.Time) bool {
+	t.Helper()
+	_, _, b, err := c.nextBoundMultipathPacket(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b != nil
+}

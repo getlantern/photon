@@ -11,7 +11,8 @@ import "time"
 // DeliveryState is what an in-flight packet records about the path when sent.
 type DeliveryState struct {
 	// Delivered is the bytes the path had delivered, and DeliveredAt when
-	// the last of them was acknowledged.
+	// the last of them was acknowledged, or, for a flight started from idle,
+	// when its first packet was sent.
 	Delivered   uint64
 	DeliveredAt time.Time
 	// FirstSentAt is when the first packet of the current flight was sent.
@@ -76,7 +77,10 @@ type rateSampler struct {
 }
 
 // acked counts an in-flight packet as delivered and keeps the most recently
-// sent one as the sample's packet.
+// sent one as the sample's packet. A packet already declared lost and then
+// acknowledged late is not counted, as the draft does for spurious
+// retransmissions: its retransmission carries its data, so counting both
+// would overstate delivery, and its loss already reached the controller.
 func (d *deliveryRate) acked(s *rateSampler, p Packet, now time.Time) {
 	if !p.InFlight {
 		return
@@ -114,6 +118,10 @@ func (d *deliveryRate) sample(s *rateSampler, now time.Time, minRTT time.Duratio
 	rs.Rate = uint64(float64(rs.Delivered) * float64(time.Second) / float64(rs.Interval))
 	return rs
 }
+
+// AppLimited reports whether the path is in an application-limited phase:
+// packets sent now are marked so their samples are known to understate it.
+func (r *Sent) AppLimited() bool { return r.rate.appLimitedUntil != 0 }
 
 // MarkAppLimited records that the sender has nothing more to send although
 // the window has room. Samples from packets sent until the data now in flight

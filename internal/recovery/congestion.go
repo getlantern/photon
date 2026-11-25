@@ -24,8 +24,10 @@ func NewCongestion(maxDatagram uint64) (*NewReno, error) {
 	return c, nil
 }
 
-// Reset returns the window to its initial value for maxDatagram.
+// Reset returns the window to its initial value for maxDatagram, clamped to
+// the sizes NewCongestion accepts.
 func (c *NewReno) Reset(maxDatagram uint64) {
+	maxDatagram = min(max(maxDatagram, 1200), 65527)
 	*c = NewReno{window: min(10*maxDatagram, max(14720, 2*maxDatagram)), threshold: math.MaxUint64, datagram: maxDatagram}
 }
 

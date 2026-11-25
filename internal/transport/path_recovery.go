@@ -149,6 +149,20 @@ func (p *pathCIDs) receiveACK(frame wire.Frame, now time.Time, exponent uint8, m
 	return events, nil
 }
 
+// noteMultipathSendIdle marks each path application limited when a send pass
+// found nothing to send on it though its window had room (see
+// noteBaseSendIdle).
+func (c *Conn) noteMultipathSendIdle() {
+	if c.multipath == nil {
+		return
+	}
+	for id, state := range c.multipath.paths {
+		if app := state.application; app != nil && c.multipath.abandoned[id] == nil && len(app.space.queue) == 0 && app.sent.BytesInFlight < app.congestion.Window() {
+			app.sent.MarkAppLimited()
+		}
+	}
+}
+
 // arm runs after send/ACK/credit changes. For post-handshake paths, no Initial
 // anti-deadlock timer is needed; path validation probes belong to the owner.
 func (a *pathApplication) arm(now time.Time, maxDelay time.Duration, amplificationBlocked bool) {
