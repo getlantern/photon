@@ -78,7 +78,7 @@ func TestHTTP3ExtensionReplayPolicy(t *testing.T) {
 						t.Fatal(err)
 					}
 					defer peer.CloseWithError(0, "done")
-					transport := &peerh3.Transport{EnableDatagrams: datagrams}
+					transport := &peerh3.Transport{Dial: loopbackDial(t), EnableDatagrams: datagrams}
 					client := transport.NewClientConn(peer)
 					for _, forwarded := range []bool{true, false} {
 						stream, err := client.OpenRequestStream(ctx)

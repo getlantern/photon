@@ -53,7 +53,7 @@ func TestHTTP3AdditionalSettingsUpstream(t *testing.T) {
 						t.Fatal(err)
 					}
 					defer peer.CloseWithError(0, "done")
-					transport := &peerh3.Transport{}
+					transport := &peerh3.Transport{Dial: loopbackDial(t)}
 					defer transport.Close()
 					client := transport.NewClientConn(peer)
 					select {

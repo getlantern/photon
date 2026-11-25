@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/getlantern/photon/internal/recovery"
 	"github.com/getlantern/photon/internal/wire"
 	"net"
 	"testing"
@@ -86,6 +87,11 @@ func TestUDPRuntimeECN(t *testing.T) {
 			t.Run(fmt.Sprintf("%x/%s", v, address), func(t *testing.T) {
 				c, peer := testPair(t, v)
 				drivePair(t, c, peer, false, false)
+				// drivePair runs on a frozen clock, so its RTT is about zero and
+				// the ECN validation window, three PTOs from the first marked
+				// packet, would be a few milliseconds of real time. A realistic
+				// RTT keeps a stall on a loaded runner from closing it.
+				c.recovery.RTT = recovery.RTT{Smoothed: 200 * time.Millisecond, Variation: 50 * time.Millisecond, Sampled: true}
 				addr, _ := net.ResolveUDPAddr("udp", address)
 				sender, err := net.ListenUDP("udp", addr)
 				if err != nil {

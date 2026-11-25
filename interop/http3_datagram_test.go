@@ -189,7 +189,7 @@ func testHTTPDatagramsIndependentClient(t *testing.T, selected bool) {
 					t.Fatal(err)
 				}
 				defer peer.CloseWithError(0, "done")
-				peerTransport := &peerh3.Transport{EnableDatagrams: true, DisableCompression: true}
+				peerTransport := &peerh3.Transport{Dial: loopbackDial(t), EnableDatagrams: true, DisableCompression: true}
 				peerClient := peerTransport.NewClientConn(peer)
 				var streams []*peerh3.RequestStream
 				for i := 0; i < 2; i++ {

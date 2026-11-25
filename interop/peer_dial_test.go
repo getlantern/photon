@@ -23,7 +23,9 @@ func dialUpstreamAddr(t testing.TB, ctx context.Context, address string, tlsConf
 	if remote.IP.To4() != nil {
 		network = "udp4"
 	}
-	socket, err := net.ListenUDP(network, nil)
+	// Bind to the server's address family's loopback, not the unspecified
+	// address: see loopbackDial.
+	socket, err := net.ListenUDP(network, &net.UDPAddr{IP: remote.IP})
 	if err != nil {
 		return nil, err
 	}
@@ -44,4 +46,28 @@ func dialUpstreamAddr(t testing.TB, ctx context.Context, address string, tlsConf
 		socket.Close()
 	}
 	return conn, err
+}
+
+// loopbackDial is a quic-go http3.Transport Dial that binds its socket to the
+// server's own address rather than the unspecified one. On macOS a socket on
+// the unspecified address can be given the same port as a server bound to
+// 127.0.0.1; the server then sees its own address as the peer, its replies
+// loop back to itself, and the handshake times out.
+func loopbackDial(t testing.TB) func(context.Context, string, *tls.Config, *upstream.Config) (*upstream.Conn, error) {
+	return func(ctx context.Context, addr string, tlsConfig *tls.Config, config *upstream.Config) (*upstream.Conn, error) {
+		remote, err := net.ResolveUDPAddr("udp", addr)
+		if err != nil {
+			return nil, err
+		}
+		socket, err := net.ListenUDP("udp", &net.UDPAddr{IP: remote.IP})
+		if err != nil {
+			return nil, err
+		}
+		t.Cleanup(func() { socket.Close() })
+		conn, err := upstream.DialEarly(ctx, socket, remote, tlsConfig, config)
+		if err != nil {
+			socket.Close()
+		}
+		return conn, err
+	}
 }

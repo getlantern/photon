@@ -166,7 +166,7 @@ func TestHTTP3LiveIndependentClient(t *testing.T) {
 			defer listener.Close()
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			transport := &peerh3.Transport{TLSClientConfig: clientTLS, QUICConfig: &upstream.Config{Versions: []upstream.Version{upstream.Version(version)}}}
+			transport := &peerh3.Transport{Dial: loopbackDial(t), TLSClientConfig: clientTLS, QUICConfig: &upstream.Config{Versions: []upstream.Version{upstream.Version(version)}}}
 			defer transport.Close()
 			payloadRepeats := 1024
 			payload := bytes.Repeat([]byte("reverse-h3-"), payloadRepeats)

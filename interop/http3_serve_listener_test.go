@@ -72,7 +72,7 @@ func TestHTTP3ServeListenerOwnership(t *testing.T) {
 								t.Fatal("listener could not be reused", err)
 							}
 							defer peer.CloseWithError(0, "")
-							transport := &peerh3.Transport{}
+							transport := &peerh3.Transport{Dial: loopbackDial(t)}
 							defer transport.Close()
 							client := transport.NewClientConn(peer)
 							req, _ := http.NewRequestWithContext(ctx, "GET", "https://"+listener.Addr().String()+"/", nil)
@@ -200,7 +200,7 @@ func TestHTTP3ServeListenerAcceptFailureRetainsRequest(t *testing.T) {
 			t.Error(err)
 		}
 	}()
-	client := &peerh3.Transport{TLSClientConfig: ct}
+	client := &peerh3.Transport{Dial: loopbackDial(t), TLSClientConfig: ct}
 	defer client.Close()
 	request, _ := http.NewRequestWithContext(ctx, "GET", "https://"+listener.Addr().String()+"/", nil)
 	response, err := client.RoundTrip(request)

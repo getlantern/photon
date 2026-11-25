@@ -274,7 +274,7 @@ func TestHTTP3HTTPStreamerIndependentClient(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer peer.CloseWithError(0, "done")
-				client := (&peerh3.Transport{EnableDatagrams: true, DisableCompression: true}).NewClientConn(peer)
+				client := (&peerh3.Transport{Dial: loopbackDial(t), EnableDatagrams: true, DisableCompression: true}).NewClientConn(peer)
 				stream, err := client.OpenRequestStream(ctx)
 				if err != nil {
 					t.Fatal(err)
