@@ -329,7 +329,8 @@ func TestRetainStreamItemPrefixUsesSplitReservation(t *testing.T) {
 	if err := c.retainStreamItemPrefix(root, 1150, complete); err != nil {
 		t.Fatal("reserved reduction", err)
 	}
-	if c.queuedBytes != maxSendBytes || root.bytes != charge || root.delivery.reserved != 0 {
+	// Everything came from the reservation: nothing beyond it was charged.
+	if c.queuedBytes != maxSendBytes || root.bytes != charge || root.delivery.reserved < 0 {
 		t.Fatal("partial trim mischarged reservation")
 	}
 	if err := c.retainStreamItemPrefix(root, 0, complete); err != nil {

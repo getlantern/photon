@@ -3,10 +3,21 @@ package transport
 import "github.com/getlantern/photon/internal/wire"
 
 // The packet builder splits oversized STREAM items into portable fragments.
-// Charges include coverage and retained nodes. Larger writes reserve portable
-// fallback capacity before committing flow-control credit.
+// Charges cover what a split group actually allocates, as it grows: at
+// creation, the delivery ledger's coverage bitmap and a base for the group,
+// ledger and branch map; then each added item, and each split's branch entry
+// and item-table slots. Larger writes reserve the split they may need before
+// committing flow-control credit.
 const maxStreamDeliveryItems = 128
-const streamDeliveryItemCharge = 64
+const streamDeliveryItemCharge = 128
+const streamGroupCharge = 256
+const streamBranchCharge = 128
+
+// streamGroupCreationCharge is a new split group's charge, for a ledger with
+// covered words of coverage.
+func streamGroupCreationCharge(covered int) int {
+	return covered*8 + streamGroupCharge
+}
 
 type streamItemDelivery struct {
 	reserved int // charged metadata capacity, materialized only when splitting
@@ -30,19 +41,18 @@ func (c *Conn) splitQueuedStream(s *numberSpace, index, maxPayload int) error {
 		return err
 	}
 	group := item.delivery
-	extra := 2 * streamDeliveryItemCharge
+	extra := 2*streamDeliveryItemCharge + streamBranchCharge
 	if group == nil || group.ledger == nil {
 		ledger, err := newStreamDelivery(f)
 		if err != nil {
 			return err
 		}
-		// Reserve the bounded pointer table as well as the ledger and group.
-		extra += len(ledger.covered)*8 + maxStreamDeliveryItems*8 + 128 + maxStreamDeliveryItems*32
+		extra += streamGroupCreationCharge(len(ledger.covered))
 		reserved := 0
 		if group != nil {
 			reserved = group.reserved
 		}
-		group = &streamItemDelivery{reserved: reserved, branches: make(map[*sendItem][2]*sendItem, maxStreamDeliveryItems/2), root: item, ledger: ledger, items: make([]*sendItem, 0, maxStreamDeliveryItems)}
+		group = &streamItemDelivery{reserved: reserved, branches: make(map[*sendItem][2]*sendItem), root: item, ledger: ledger, items: make([]*sendItem, 0, 3)}
 		group.items = append(group.items, item)
 	}
 	if _, exists := group.branches[item]; exists {
@@ -133,14 +143,16 @@ func markSendSubtreeAcknowledged(item *sendItem) {
 	}
 }
 
-// streamSplitReservation bounds all splits at portable prefix boundaries for
-// one maximum-size UDP payload. The fixed charge matches splitQueuedStream's
-// ledger, pointer table and branch-map reservation.
+// streamSplitReservation is what splitting an n-byte frame into portable
+// fragments charges: a new group, then one split per fragment after the
+// first, as splitQueuedStream charges them. Fragments of the portable payload
+// fit every path, so they never split again.
 func streamSplitReservation(n int) int {
 	if n <= portableStreamPayload {
 		return 0
 	}
-	return ((n+63)/64)*8 + maxStreamDeliveryItems*8 + 128 + maxStreamDeliveryItems*32 + 2*((n+portableStreamPayload-1)/portableStreamPayload-1)*streamDeliveryItemCharge
+	splits := (n+portableStreamPayload-1)/portableStreamPayload - 1
+	return streamGroupCreationCharge((n+63)/64) + splits*(2*streamDeliveryItemCharge+streamBranchCharge)
 }
 
 // Charge full fallback capacity at admission, but materialize maps, coverage
