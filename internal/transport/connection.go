@@ -212,8 +212,8 @@ type Conn struct {
 	// rejection that requeues the packet's data can restore both.
 	lastBaseACK, lastBaseACKSent bool
 	lastBaseACKGeneration        uint64 // key generation that packet used
-	// lastPathACK is lastBaseACK for the last multipath packet: the path and
-	// packet number that carried a bundled ACK.
+	// lastPathACK is lastBaseACK for the last multipath packet sent: its path
+	// and packet number, and whether it carried a bundled ACK.
 	lastPathACK struct {
 		bundled, ackSent           bool
 		pathID, number, generation uint64

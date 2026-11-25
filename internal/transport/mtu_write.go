@@ -60,7 +60,7 @@ func (e *ServerEndpoint) HandleWriteError(out *Outbound, err error, now time.Tim
 	}
 	if packet := out.large; packet != nil && out.Conn != nil && errors.Is(err, syscall.EMSGSIZE) && len(out.Data) == packet.size {
 		app := packet.app
-		if app.mtu != nil && app.space.nextPN == packet.number+1 && app.space.sent[packet.number] == packet.item && app.sent.RejectLargePacket(packet.number) {
+		if app.mtu != nil && app.space.sent[packet.number] == packet.item && app.sent.RejectLargePacket(packet.number) {
 			queueLostItems(app.space, app.space, []recovery.Packet{{Number: packet.number}})
 			delete(app.space.sent, packet.number)
 			if packet.ack {
