@@ -40,6 +40,22 @@ func peerUpdatedPair(t *testing.T) (client, server *Conn, now time.Time) {
 	return client, server, now
 }
 
+// pingQueued reports whether a PING is queued in the application space, on
+// any path.
+func (c *Conn) pingQueued() bool {
+	if pingIn(c.spaces[applicationSpace].queue) {
+		return true
+	}
+	if c.multipath != nil {
+		for _, state := range c.multipath.paths {
+			if app := state.application; app != nil && pingIn(app.space.queue) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func clientLimit(t *testing.T, c *Conn) uint64 {
 	t.Helper()
 	limit, _ := c.writeKeys(applicationSpace).UsageLimits()
@@ -298,5 +314,60 @@ func TestAEADLimitBoundaryWhenUpdateRefused(t *testing.T) {
 	var transport *TransportError
 	if !errors.As(err, &transport) || transport.Code != 0xf {
 		t.Fatal("want the AEAD limit error at the limit", err)
+	}
+}
+
+// A PING queued on another path, which may be held there, does not stand in
+// for the one on the path keepalive selection picks.
+func TestMultipathKeyUpdatePINGIgnoresOtherPathQueue(t *testing.T) {
+	client, server := sendingPathPair(t, wire.Version1)
+	now := time.Unix(101, 0)
+	if err := server.InitiateKeyUpdateAt(now); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.queueFrameOnPath(0, wire.PingFrame{}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := server.nextPacketOnPath(0, now)
+	if err != nil || raw == nil {
+		t.Fatal(err)
+	}
+	if err := client.handleMultipathPacket(raw, now); err != nil {
+		t.Fatal(err)
+	}
+	client.multipath.paths[1].application.budget.Validate()
+	selected, _, found := client.keepAlivePath(client.keepAliveACKDelay())
+	if !found {
+		t.Fatal("setup: no keepalive path")
+	}
+	other := 1 - selected
+	if err := client.queueFrameOnPath(other, wire.PingFrame{}); err != nil {
+		t.Fatal(err)
+	}
+	client.sealed[applicationSpace] = threshold(t, client)
+	if err := client.updateKeysBeforeLimit(now); err != nil {
+		t.Fatal(err)
+	}
+	if !pingIn(client.multipath.paths[selected].application.space.queue) {
+		t.Fatal("PING on another path suppressed the one on the selected path")
+	}
+}
+
+// A CID advertisement held while forwarding is blocked is not data sure to be
+// sent, so a key update still queues its PING.
+func TestKeyUpdatePINGNotReplacedByHeldCIDAdvertisement(t *testing.T) {
+	client, server := testPair(t, wire.Version1, streamParameters())
+	drivePair(t, client, server, false, false)
+	s := &client.spaces[applicationSpace]
+	s.queue = append(s.queue, &sendItem{frame: wire.NewConnectionIDFrame{Sequence: 9, ConnectionID: []byte("heldcid0")}, bytes: 32, queued: true})
+	client.forwardingBlocked = true
+	if client.applicationDataQueued() {
+		t.Fatal("held CID advertisement counted as data sure to be sent")
+	}
+	if err := client.InitiateKeyUpdateAt(time.Unix(200, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if !pingIn(s.queue) {
+		t.Fatal("key update queued no PING beside a held CID advertisement")
 	}
 }

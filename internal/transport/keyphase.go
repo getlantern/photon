@@ -361,8 +361,15 @@ func (c *Conn) updateKeysBeforeLimit(now time.Time) error {
 	if !k.elicitedAt.IsZero() && now.Before(k.elicitedAt.Add(pto)) {
 		return nil
 	}
-	// Queued ack-eliciting data, once sent, does the PING's job.
-	if c.pingQueued() || c.applicationDataQueued() {
+	// Rely only on a PING already queued where this one would go, a path
+	// keepalive selection considers usable. Queued data elsewhere can be held
+	// (a migrating path, a CID advertisement while forwarding is blocked), and
+	// the PTO pacing above bounds the cost of not counting on it.
+	destination := c.spaces[applicationSpace].queue
+	if c.multipath != nil {
+		destination = c.multipath.paths[selected].application.space.queue
+	}
+	if pingIn(destination) {
 		return nil
 	}
 	// queueFrameOnPath charges at least 32 bytes per frame; enqueue charges 1.
@@ -389,11 +396,12 @@ func (c *Conn) updateKeysBeforeLimit(now time.Time) error {
 
 // applicationDataQueued reports whether an ack-eliciting application frame
 // that is sure to be sent is queued, on any path. DATAGRAM frames do not
-// count: one too large for the path is dropped instead of sent.
+// count: one too large for the path is dropped instead of sent. Nor do CID
+// advertisements held while forwarding is blocked.
 func (c *Conn) applicationDataQueued() bool {
 	queued := func(queue []*sendItem) bool {
 		for _, item := range queue {
-			if _, ok := item.frame.(wire.DatagramFrame); ok {
+			if _, ok := item.frame.(wire.DatagramFrame); ok || c.blocksCIDAdvertisement(item.frame) {
 				continue
 			}
 			if item.queued && !item.acked && wire.AckEliciting(item.frame) {
@@ -415,25 +423,11 @@ func (c *Conn) applicationDataQueued() bool {
 	return false
 }
 
-// pingQueued reports whether a PING is already queued in the application
-// space, on any path.
-func (c *Conn) pingQueued() bool {
-	queued := func(queue []*sendItem) bool {
-		for _, item := range queue {
-			if _, ok := item.frame.(wire.PingFrame); ok && item.queued {
-				return true
-			}
-		}
-		return false
-	}
-	if queued(c.spaces[applicationSpace].queue) {
-		return true
-	}
-	if c.multipath != nil {
-		for _, state := range c.multipath.paths {
-			if app := state.application; app != nil && queued(app.space.queue) {
-				return true
-			}
+// pingIn reports whether queue holds a PING not yet sent.
+func pingIn(queue []*sendItem) bool {
+	for _, item := range queue {
+		if _, ok := item.frame.(wire.PingFrame); ok && item.queued {
+			return true
 		}
 	}
 	return false
