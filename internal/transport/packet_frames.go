@@ -40,7 +40,7 @@ func parsePacketFrames(plain []byte, ctx wire.FrameContext) ([]wire.Frame, bool,
 // authenticatedOpenError identifies errors reported only after AEAD verification.
 // They still establish authentication for reset-routing precedence.
 func authenticatedOpenError(err error) bool {
-	return errors.Is(err, packet.ErrReservedBits) || errors.Is(err, errKeyUpdate)
+	return errors.Is(err, packet.ErrReservedBits) || errors.Is(err, ErrKeyUpdate)
 }
 
 // packetOpenFailure counts a packet's failed authentication once, regardless
@@ -55,7 +55,7 @@ func (c *Conn) packetOpenFailure(err error) error {
 			return c.fail(aeadLimitError())
 		}
 	}
-	if errors.Is(err, errKeyUpdate) {
+	if errors.Is(err, ErrKeyUpdate) {
 		return c.fail(&TransportError{Code: 0xe, Reason: err.Error()})
 	}
 	if errors.Is(err, packet.ErrReservedBits) {

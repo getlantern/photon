@@ -8,7 +8,11 @@ import (
 	"github.com/getlantern/photon/internal/wire"
 )
 
-var errKeyUpdate = errors.New("quic: invalid application key update")
+// ErrKeyUpdate reports a key update that is not allowed now: before the
+// handshake is confirmed, or before the current keys' first packet from the
+// peer arrives and a packet sent with them is acknowledged (RFC 9001 section
+// 6.1), or a key phase change the peer was not allowed to make.
+var ErrKeyUpdate = errors.New("quic: invalid application key update")
 
 // keyPhaseNumbers contains only one path's packet-number observations. Keys,
 // phase transitions, acknowledgment gates and expiry are connection-wide.
@@ -103,7 +107,7 @@ func (c *Conn) openApplicationPathInto(dst []byte, pathID uint32, raw []byte, pn
 	header, plain, pn, err := open(k.read)
 	if err == nil {
 		if (header[0]&4 != 0) != k.phase || (k.updated && numbers.havePrevious && pn <= numbers.previousLargest) {
-			return nil, nil, 0, errKeyUpdate
+			return nil, nil, 0, ErrKeyUpdate
 		}
 		if k.awaitingRead {
 			k.awaitingRead = false
@@ -127,7 +131,7 @@ func (c *Conn) openApplicationPathInto(dst []byte, pathID uint32, raw []byte, pn
 		h, p, n, e := open(k.previous)
 		if e == nil {
 			if (h[0]&4 != 0) == k.phase || (numbers.haveFirst && n >= numbers.first) {
-				return nil, nil, 0, errKeyUpdate
+				return nil, nil, 0, ErrKeyUpdate
 			}
 			if !numbers.havePrevious || n > numbers.previousLargest {
 				numbers.previousLargest = n
@@ -151,7 +155,7 @@ func (c *Conn) openApplicationPathInto(dst []byte, pathID uint32, raw []byte, pn
 		return nil, nil, 0, e
 	}
 	if !c.confirmed || (h[0]&4 != 0) == k.phase || (numbers.haveLargest && n <= numbers.largest) || (k.updated && !k.ackSent) || k.awaitingRead {
-		return nil, nil, 0, errKeyUpdate
+		return nil, nil, 0, ErrKeyUpdate
 	}
 	write, e := k.write.Next()
 	if e != nil {
@@ -230,10 +234,10 @@ func (c *Conn) InitiateKeyUpdateAt(now time.Time) error {
 	}
 	k := &c.applicationKeys
 	if !c.confirmed || k.awaitingRead || (k.updated && !k.writeAcknowledged) {
-		return errKeyUpdate
+		return ErrKeyUpdate
 	}
 	if now.IsZero() || (c.multipath != nil && k.updated && (k.updateNotBefore.IsZero() || now.Before(k.updateNotBefore))) {
-		return errKeyUpdate
+		return ErrKeyUpdate
 	}
 	if c.availableSendBytes() < 1 {
 		return ErrSendBuffer

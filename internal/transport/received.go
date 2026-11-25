@@ -60,14 +60,6 @@ const (
 // RecordECN records one authenticated, valid QUIC packet with its enclosing IP
 // marking. Coalesced packets each call this operation in their own number space.
 // Only newly processed packets count, including non-ack-eliciting packets.
-// Largest returns the largest packet number recorded, if any.
-func (r *Received) Largest() (uint64, bool) {
-	if len(r.ranges) == 0 {
-		return 0, false
-	}
-	return r.ranges[0].Largest, true
-}
-
 func (r *Received) RecordECN(pn uint64, now time.Time, marking ECN) (Receipt, error) {
 	if marking > ECNCE && marking != ECNUnknown {
 		return ForgottenPacket, errors.New("quic: invalid ECN codepoint")
@@ -96,6 +88,14 @@ func (r *Received) RecordECN(pn uint64, now time.Time, marking ECN) (Receipt, er
 		r.ecn[index]++
 	}
 	return receipt, nil
+}
+
+// Largest returns the largest packet number recorded, if any.
+func (r *Received) Largest() (uint64, bool) {
+	if len(r.ranges) == 0 {
+		return 0, false
+	}
+	return r.ranges[0].Largest, true
 }
 
 func (r *Received) record(pn uint64, now time.Time) (Receipt, error) {

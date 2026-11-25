@@ -47,7 +47,7 @@ func TestMultipathKeyUpdateSpacing(t *testing.T) {
 		before := client.applicationKeys
 		queued := client.queuedBytes
 		for _, early := range []time.Time{time.Time{}, ackAt, want.Add(-time.Nanosecond)} {
-			if err := client.InitiateKeyUpdateAt(early); !errors.Is(err, errKeyUpdate) {
+			if err := client.InitiateKeyUpdateAt(early); !errors.Is(err, ErrKeyUpdate) {
 				t.Fatal("early update accepted", err)
 			}
 			if client.applicationKeys != before || client.queuedBytes != queued {

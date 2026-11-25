@@ -252,7 +252,35 @@ func TestUpstreamHandshake(t *testing.T) {
 						if err := exchangeStream(ctx, c, socket, peer, r.conn); err != nil {
 							t.Fatal("stream exchange", err)
 						}
-						if err := c.InitiateKeyUpdate(); err != nil {
+						// A new key update waits until a packet sent with the current
+						// keys is acknowledged (RFC 9001 section 6.1). If the peer has
+						// just updated keys, our only such packet may be ACK-only, which
+						// the peer never acknowledges by itself, so send data it will.
+						updated, elicited := false, false
+						if err := driveProgress(ctx, c, socket, peer, func() error {
+							if updated {
+								return nil
+							}
+							err := c.InitiateKeyUpdate()
+							if err == nil {
+								updated = true
+								return nil
+							}
+							if !errors.Is(err, engine.ErrKeyUpdate) {
+								return err
+							}
+							if !elicited {
+								elicited = true
+								id, err := c.OpenStream(false)
+								if err != nil {
+									return err
+								}
+								if _, err := c.WriteStream(id, []byte("k"), true); err != nil {
+									return err
+								}
+							}
+							return nil
+						}, func() bool { return updated }); err != nil {
 							t.Fatal("local key update", err)
 						}
 						if err := drive(ctx, c, socket, peer); err != nil {

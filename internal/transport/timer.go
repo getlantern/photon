@@ -61,11 +61,12 @@ func (c *Conn) probeSize(space int, frame wire.Frame) int {
 }
 
 // RecoveryDeadline returns the draining deadline, or the earliest loss/PTO,
-// idle, keepalive, path validation/retention, or old-key retirement deadline
-// without moving it. While a foreign write is outstanding, only connection
-// lifetime and key-retirement deadlines remain eligible: output cannot advance
-// recovery or validation until the socket result has been consumed. A zero value
-// means no eligible timer is armed.
+// idle, keepalive, path validation/retention, delayed application ACK, or
+// old-key retirement deadline without moving it. While a foreign write is
+// outstanding, only connection lifetime and key-retirement deadlines remain
+// eligible: output cannot advance recovery, validation or an ACK until the
+// socket result has been consumed. A zero value means no eligible timer is
+// armed.
 func (c *Conn) RecoveryDeadline() time.Time {
 	if c.Closing() {
 		return c.closing.until
@@ -151,6 +152,7 @@ func (c *Conn) HandleTimeout(now time.Time) error {
 	}
 	c.expirePreviousKeys(now)
 	c.expireEarlyKeys(now)
+	c.expireACKDelays(now)
 	if c.pendingWrite != nil {
 		return nil
 	}
