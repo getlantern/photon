@@ -281,3 +281,41 @@ func TestACKBundledWithFullStreamFrame(t *testing.T) {
 		t.Fatal("bundled ACK or stream data missing", sawACK, len(got))
 	}
 }
+
+// If the split that would make room for a bundled ACK fails, the stream frame
+// goes out alone and the ACK stays owed; the connection does not fail.
+func TestACKBundleSplitFailureSendsFrameAlone(t *testing.T) {
+	client, server, now, next := settledPair(t, streamParameters())
+	const gaps = 40
+	for i := uint64(0); i < gaps; i++ {
+		if err := client.HandleDatagram(makePeerPacket(t, server, applicationSpace, next+2*i, wire.PingFrame{}), now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ackNow(client)
+	drain(t, client, now)
+	if err := client.HandleDatagram(makePeerPacket(t, server, applicationSpace, next+2*gaps-1, wire.PingFrame{}), now); err != nil {
+		t.Fatal(err)
+	}
+	id, err := client.OpenStream(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeAll(t, client, id, make([]byte, 4000))
+	// Exhaust the send buffer so splitting a queued stream frame fails.
+	client.queuedBytes = maxSendBytes
+	b, err := client.NextDatagram(now)
+	if err != nil || client.err != nil {
+		t.Fatal("split failure failed the connection", err, client.err)
+	}
+	frames := framesIn(t, server, b)
+	if len(frames) != 1 {
+		t.Fatalf("frames %d, want the stream frame alone", len(frames))
+	}
+	if _, ok := frames[0].(wire.StreamFrame); !ok {
+		t.Fatalf("frame %T, want the stream frame", frames[0])
+	}
+	if !ackScheduled(&client.spaces[applicationSpace]) {
+		t.Fatal("ACK no longer owed after the frame went alone")
+	}
+}
