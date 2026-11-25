@@ -3,6 +3,7 @@ package transport
 import (
 	"errors"
 	"github.com/getlantern/photon/internal/wire"
+	"runtime"
 	"testing"
 )
 
@@ -172,6 +173,41 @@ func TestDeferredReservationFailureThenLateOriginalACK(t *testing.T) {
 		}
 		if completed != 1 || c.queuedBytes != maxSendBytes-charge || retireSendItem(original) != 0 {
 			t.Fatal("late ACK charge release")
+		}
+	}
+}
+
+// A frame's split reservation covers the memory splitting it into portable
+// fragments actually allocates, so the send buffer's charge bounds memory.
+func TestStreamSplitReservationCoversAllocation(t *testing.T) {
+	const n = 200
+	for _, size := range []int{portableStreamPayload + 1, 1239, 1411, 2500, 9000} {
+		data := make([]byte, size)
+		spaces := make([]*numberSpace, n)
+		conns := make([]*Conn, n)
+		for i := range conns {
+			conns[i] = &Conn{}
+			if err := conns[i].enqueue(applicationSpace, wire.StreamFrame{Data: data}, size+32+streamSplitReservation(size)); err != nil {
+				t.Fatal(err)
+			}
+			spaces[i] = &conns[i].spaces[applicationSpace]
+		}
+		var before, after runtime.MemStats
+		runtime.GC()
+		runtime.ReadMemStats(&before)
+		for i, c := range conns {
+			s := spaces[i]
+			for idx := 0; idx < len(s.queue); idx++ {
+				if len(s.queue[idx].frame.(wire.StreamFrame).Data) > portableStreamPayload {
+					if err := c.splitQueuedStream(s, idx, portableStreamPayload); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+		}
+		runtime.ReadMemStats(&after)
+		if allocated, reserved := (after.TotalAlloc-before.TotalAlloc)/n, uint64(streamSplitReservation(size)); allocated > reserved {
+			t.Errorf("splitting %d bytes allocated %d, more than its %d-byte reservation", size, allocated, reserved)
 		}
 	}
 }

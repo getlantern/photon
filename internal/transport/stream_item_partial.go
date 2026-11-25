@@ -92,12 +92,12 @@ func prepareStreamItemPrefix(root *sendItem, end uint64) (*streamItemPrefixPlan,
 		reserved = group.reserved
 	}
 	if materialize {
-		extra += len(ledger.covered)*8 + maxStreamDeliveryItems*8 + 128 + maxStreamDeliveryItems*32
+		extra += streamGroupCreationCharge(len(ledger.covered))
 	}
 	plan.usedReservation = min(reserved, extra)
 	plan.additional = extra - plan.usedReservation
 	if materialize {
-		plan.group = &streamItemDelivery{root: root, ledger: ledger, reserved: reserved, branches: make(map[*sendItem][2]*sendItem, maxStreamDeliveryItems/2), items: make([]*sendItem, 1, maxStreamDeliveryItems)}
+		plan.group = &streamItemDelivery{root: root, ledger: ledger, reserved: reserved, branches: make(map[*sendItem][2]*sendItem), items: make([]*sendItem, 1, 1+len(plan.changes))}
 		plan.group.items[0] = root
 	}
 	return plan, nil
