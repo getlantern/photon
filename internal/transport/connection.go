@@ -211,6 +211,7 @@ type Conn struct {
 	// ACK, and lastBaseACKSent the key-phase ackSent before it, so a write
 	// rejection that requeues the packet's data can restore both.
 	lastBaseACK, lastBaseACKSent bool
+	lastBaseACKPhase             uint64 // firstSent of the keys that packet used
 
 	allowConnectionWindowIncrease   func(uint64) bool
 	onHandshakeConfirmed            func()
@@ -1219,6 +1220,9 @@ func (c *Conn) NextDatagram(now time.Time) ([]byte, error) {
 	if err := c.expirePathValidation(now); err != nil {
 		return nil, err
 	}
+	if err := c.updateKeysBeforeLimit(now); err != nil {
+		return nil, c.fail(err)
+	}
 	if c.baseMTUNeedsValidation {
 		switch c.validation.state {
 		case PathValidated:
@@ -1399,7 +1403,7 @@ func (c *Conn) NextDatagram(now time.Time) ([]byte, error) {
 		}
 		c.lastBaseApplication = space == applicationSpace && !early
 		_, c.lastBaseDatagram = f.(wire.DatagramFrame)
-		c.lastBaseACK, c.lastBaseACKSent = bundled, c.applicationKeys.ackSent
+		c.lastBaseACK, c.lastBaseACKSent, c.lastBaseACKPhase = bundled, c.applicationKeys.ackSent, c.applicationKeys.firstSent
 		c.datagramECN = marking
 		c.datagramECNCommit = ecnCommit{c.recovery, recovery.Space(space), s.nextPN}
 		if space == applicationSpace && !early {

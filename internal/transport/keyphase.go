@@ -31,6 +31,7 @@ type applicationKeys struct {
 	phase, updated, ackSent         bool
 	previousExpiry                  time.Time
 	updateNotBefore                 time.Time
+	elicitedAt                      time.Time // last PING queued to unblock an update
 }
 
 func (c *Conn) keyNumbers(pathID uint32) *keyPhaseNumbers {
@@ -229,8 +230,10 @@ func (c *Conn) expirePreviousKeys(now time.Time) {
 	}
 }
 
-// InitiateKeyUpdate queues an ack-eliciting packet under the next application
-// keys. Subsequent updates require acknowledgment of the current sending phase.
+// InitiateKeyUpdate switches to the next application keys and queues a PING
+// to send with them, unless ack-eliciting data is already queued, which then
+// does that job. Subsequent updates require acknowledgment of the current
+// sending phase.
 // Previous receive keys remain usable until the peer answers in the new phase.
 func (c *Conn) InitiateKeyUpdate() error {
 	return c.InitiateKeyUpdateAt(time.Now())
@@ -250,7 +253,10 @@ func (c *Conn) InitiateKeyUpdateAt(now time.Time) error {
 	if now.IsZero() || (c.multipath != nil && k.updated && (k.updateNotBefore.IsZero() || now.Before(k.updateNotBefore))) {
 		return ErrKeyUpdate
 	}
-	if c.availableSendBytes() < 1 {
+	// A PING gets a packet sent with the new keys acknowledged soon. Queued
+	// ack-eliciting data does the same, so it needs no PING and no room.
+	queued := c.applicationDataQueued()
+	if !queued && c.availableSendBytes() < 1 {
 		return ErrSendBuffer
 	}
 	if err := c.prepareApplicationKeys(); err != nil {
@@ -274,6 +280,9 @@ func (c *Conn) InitiateKeyUpdateAt(now time.Time) error {
 	k.writeAcknowledged = false
 	k.updateNotBefore = time.Time{}
 	k.previousExpiry = time.Time{}
+	if queued {
+		return nil
+	}
 	return c.enqueue(applicationSpace, wire.PingFrame{}, 1)
 }
 
@@ -306,4 +315,120 @@ func (c *Conn) noteKeyPhaseWriteACK(f wire.Frame, now time.Time) {
 		}
 		k.writeAcknowledged = true
 	}
+}
+
+// updateKeysBeforeLimit updates the write keys well before their AEAD limit,
+// once they reach 3/4 of it, so the update the limit would force is never
+// needed. If the update is refused because nothing sent with the current keys
+// has been acknowledged yet (RFC 9001 section 6.1), which happens after the
+// peer updated keys and this endpoint has sent only ACKs since, it queues a
+// PING for the peer to acknowledge, at most once per PTO and only when the
+// send buffer has room. Other refusals, such as multipath update spacing, are
+// waited out; the remaining quarter of the limit leaves time for them.
+func (c *Conn) updateKeysBeforeLimit(now time.Time) error {
+	if !c.confirmed {
+		return nil
+	}
+	keys := c.writeKeys(applicationSpace)
+	if keys == nil {
+		return nil
+	}
+	limit, _ := keys.UsageLimits()
+	if c.sealed[applicationSpace] < limit-limit/4 {
+		return nil
+	}
+	err := c.InitiateKeyUpdateAt(now)
+	if err == nil || errors.Is(err, ErrSendBuffer) {
+		return nil
+	}
+	if !errors.Is(err, ErrKeyUpdate) {
+		return err
+	}
+	k := &c.applicationKeys
+	if !k.updated || (k.writeAcknowledged && !k.awaitingRead) {
+		return nil
+	}
+	maxDelay := c.keepAliveACKDelay()
+	pto := c.recovery.RTT.PTO(true, true, maxDelay, 0)
+	var selected uint64
+	if c.multipath != nil {
+		var found bool
+		if selected, pto, found = c.keepAlivePath(maxDelay); !found {
+			return nil
+		}
+	}
+	// Cheap checks first: this runs on every send once past the threshold.
+	if !k.elicitedAt.IsZero() && now.Before(k.elicitedAt.Add(pto)) {
+		return nil
+	}
+	// Rely only on a PING already queued where this one would go, a path
+	// keepalive selection considers usable. Queued data elsewhere can be held
+	// (a migrating path, a CID advertisement while forwarding is blocked), and
+	// the PTO pacing above bounds the cost of not counting on it.
+	destination := c.spaces[applicationSpace].queue
+	if c.multipath != nil {
+		destination = c.multipath.paths[selected].application.space.queue
+	}
+	if pingIn(destination) {
+		return nil
+	}
+	// queueFrameOnPath charges at least 32 bytes per frame; enqueue charges 1.
+	need := 1
+	if c.multipath != nil {
+		need = 32
+	}
+	if c.availableSendBytes() < need {
+		return nil
+	}
+	if c.multipath == nil {
+		err = c.enqueue(applicationSpace, wire.PingFrame{}, 1)
+	} else {
+		err = c.queueFrameOnPath(selected, wire.PingFrame{})
+	}
+	if errors.Is(err, ErrSendBuffer) {
+		return nil
+	}
+	if err == nil {
+		k.elicitedAt = now
+	}
+	return err
+}
+
+// applicationDataQueued reports whether an ack-eliciting application frame
+// that is sure to be sent is queued, on any path. DATAGRAM frames do not
+// count: one too large for the path is dropped instead of sent. Nor do CID
+// advertisements held while forwarding is blocked.
+func (c *Conn) applicationDataQueued() bool {
+	queued := func(queue []*sendItem) bool {
+		for _, item := range queue {
+			if _, ok := item.frame.(wire.DatagramFrame); ok || c.blocksCIDAdvertisement(item.frame) {
+				continue
+			}
+			if item.queued && !item.acked && wire.AckEliciting(item.frame) {
+				return true
+			}
+		}
+		return false
+	}
+	if queued(c.spaces[applicationSpace].queue) {
+		return true
+	}
+	if c.multipath != nil {
+		for _, state := range c.multipath.paths {
+			if app := state.application; app != nil && queued(app.space.queue) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// pingIn reports whether queue holds a PING not yet sent.
+func pingIn(queue []*sendItem) bool {
+	for _, item := range queue {
+		if _, ok := item.frame.(wire.PingFrame); ok && item.queued {
+			return true
+		}
+	}
+	return false
 }

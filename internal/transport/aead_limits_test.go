@@ -8,6 +8,9 @@ import (
 	"github.com/getlantern/photon/internal/wire"
 )
 
+// Keys near their confidentiality limit are replaced before they are used
+// up: past 3/4 of the limit, the next packet already goes out with new keys,
+// and the sealed count starts over.
 func TestConfidentialityLimitUpdatesBeforeReuse(t *testing.T) {
 	client, server := testPair(t, wire.Version1)
 	drivePair(t, client, server, false, false)
@@ -15,19 +18,12 @@ func TestConfidentialityLimitUpdatesBeforeReuse(t *testing.T) {
 	limit, _ := keys.UsageLimits()
 	client.sealed[applicationSpace] = limit - 1
 	client.enqueue(applicationSpace, wire.PingFrame{}, 1)
-	client.enqueue(applicationSpace, wire.PingFrame{}, 1)
 	now := time.Unix(200, 0)
 	if b, err := client.NextDatagram(now); err != nil || len(b) == 0 {
 		t.Fatal(err)
 	}
-	if client.sealed[applicationSpace] != limit || client.writeKeys(applicationSpace) != keys {
-		t.Fatal("last allowed packet not counted")
-	}
-	if b, err := client.NextDatagram(now); err != nil || len(b) == 0 {
-		t.Fatal(err)
-	}
 	if client.sealed[applicationSpace] != 1 || client.writeKeys(applicationSpace) == keys {
-		t.Fatal("exhausted key reused")
+		t.Fatal("exhausted key reused", client.sealed[applicationSpace])
 	}
 }
 func TestConfidentialityLimitStopsWhenUpdateUnavailable(t *testing.T) {
