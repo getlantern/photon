@@ -799,3 +799,42 @@ func TestRequestStreamOriginPinning(t *testing.T) {
 	default:
 	}
 }
+
+// A server that stops reading the request with an error code, then sends a
+// complete response, has that response delivered: a client must not discard
+// a complete response because its request was stopped (RFC 9114 section
+// 4.1.1).
+func TestResponseCompletesAfterRequestStopped(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	taken := make(chan takenStream, 1)
+	client, origin := dialTestServer(ctx, t, &Server{Handler: takeOver(http.StatusOK, taken)}, nil)
+	// The request body never ends, so the upload is still running when the
+	// server stops it.
+	input, output := io.Pipe()
+	defer output.Close()
+	request, _ := http.NewRequestWithContext(ctx, "POST", origin+"/", input)
+	go output.Write([]byte("partial"))
+	response, err := client.RoundTrip(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	peer := await(ctx, t, "takeover", taken)
+	if peer.err != nil {
+		t.Fatal(peer.err)
+	}
+	peer.stream.CancelRead(quic.StreamErrorCode(ErrCodeRequestCanceled))
+	// Let the STOP_SENDING reach the client before the rest of the response.
+	time.Sleep(20 * time.Millisecond)
+	if _, err := peer.stream.Write([]byte("complete")); err != nil {
+		t.Fatal(err)
+	}
+	if err := peer.stream.Close(); err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(response.Body)
+	if err != nil || string(body) != "complete" {
+		t.Fatalf("body %q, err %v; want the complete response", body, err)
+	}
+}
