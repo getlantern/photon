@@ -318,25 +318,48 @@ func TestRetainStreamItemPrefixUsesSplitReservation(t *testing.T) {
 	}
 	s := &c.spaces[applicationSpace]
 	root := s.queue[0]
-	c.queuedBytes = maxSendBytes
+	full := maxSendBytes
+	c.queuedBytes = full
 	complete := func(item *sendItem) error { c.queuedBytes -= item.bytes; return nil }
+	item := streamDeliveryItemCharge + streamBranchCharge
+	split := 2*streamDeliveryItemCharge + streamBranchCharge
+	// The first trim creates the group and adds one item, from the
+	// reservation, keeping one split for the 1200-byte prefix left.
 	if err := c.retainStreamItemPrefix(root, 1200, complete); err != nil {
 		t.Fatal("reserved trim", err)
+	}
+	left := streamSplitReservation(len(frame.Data)) - streamGroupCreationCharge((len(frame.Data)+63)/64) - item
+	if root.delivery.reserved != left || left < split {
+		t.Fatal("reservation left", root.delivery.reserved, "want", left)
 	}
 	if err := c.splitQueuedStream(s, 0, 1140); err != nil {
 		t.Fatal("reserved split", err)
 	}
-	if err := c.retainStreamItemPrefix(root, 1150, complete); err != nil {
-		t.Fatal("reserved reduction", err)
+	left -= split
+	if c.queuedBytes != full || root.bytes != charge || root.delivery.reserved != left {
+		t.Fatal("split charged", root.bytes-charge, "beyond the reservation, or left", root.delivery.reserved, "want", left)
 	}
-	// Everything came from the reservation: nothing beyond it was charged.
-	if c.queuedBytes != maxSendBytes || root.bytes != charge || root.delivery.reserved < 0 {
-		t.Fatal("partial trim mischarged reservation")
+	// The 1150-byte prefix left after a further trim may still need a split,
+	// so the reservation keeps what is left for it and the trim is charged
+	// as admission: at a full buffer it fails without changing anything, and
+	// with room it is charged in full.
+	if err := c.retainStreamItemPrefix(root, 1150, complete); !errors.Is(err, ErrSendBuffer) {
+		t.Fatal("trim beyond the reservation at a full buffer", err)
+	}
+	if c.queuedBytes != full || root.bytes != charge || root.delivery.reserved != left {
+		t.Fatal("failed trim changed charges")
+	}
+	c.queuedBytes = full - item
+	if err := c.retainStreamItemPrefix(root, 1150, complete); err != nil {
+		t.Fatal("trim with room", err)
+	}
+	if c.queuedBytes != full || root.bytes != charge+item || root.delivery.reserved != left {
+		t.Fatal("trim charged", root.bytes-charge, "want", item, "and left", root.delivery.reserved, "want", left)
 	}
 	if err := c.retainStreamItemPrefix(root, 0, complete); err != nil {
 		t.Fatal(err)
 	}
-	if c.queuedBytes != maxSendBytes-charge || len(s.queue) != 0 {
+	if c.queuedBytes != full-root.bytes || len(s.queue) != 0 {
 		t.Fatal("reserved charge not released")
 	}
 }

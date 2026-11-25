@@ -86,7 +86,8 @@ func prepareStreamItemPrefix(root *sendItem, end uint64) (*streamItemPrefixPlan,
 	if len(items)+newItems > maxStreamDeliveryItems {
 		return nil, ErrSendBuffer
 	}
-	extra := newItems * streamDeliveryItemCharge
+	// commit adds a branch entry for each new item.
+	extra := newItems * (streamDeliveryItemCharge + streamBranchCharge)
 	reserved := 0
 	if group != nil {
 		reserved = group.reserved
@@ -94,7 +95,15 @@ func prepareStreamItemPrefix(root *sendItem, end uint64) (*streamItemPrefixPlan,
 	if materialize {
 		extra += streamGroupCreationCharge(len(ledger.covered))
 	}
-	plan.usedReservation = min(reserved, extra)
+	// The reservation must still cover splitting what remains of the frame
+	// into portable fragments, since a split at send time cannot fail for
+	// want of buffer. The trim takes only the rest; anything beyond it is
+	// charged as admission, which can fail recoverably.
+	remaining := 0
+	if end > frame.Offset {
+		remaining = int(min(uint64(len(frame.Data)), end-frame.Offset))
+	}
+	plan.usedReservation = min(extra, max(0, reserved-streamSplitsCharge(remaining)))
 	plan.additional = extra - plan.usedReservation
 	if materialize {
 		plan.group = &streamItemDelivery{root: root, ledger: ledger, reserved: reserved, branches: make(map[*sendItem][2]*sendItem), items: make([]*sendItem, 1, 1+len(plan.changes))}
