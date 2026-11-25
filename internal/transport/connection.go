@@ -1310,7 +1310,7 @@ func (c *Conn) NextDatagram(now time.Time) ([]byte, error) {
 		if s.nextPN >= wire.MaxVarint {
 			return nil, c.exhaustPacketNumbers()
 		}
-		payload, bundled, err := c.bundleACK(s, space, early, &item, &f, now)
+		payload, bundledLargest, bundled, err := c.bundleACK(s, space, early, item, f, now)
 		if err != nil {
 			return nil, c.fail(err)
 		}
@@ -1399,8 +1399,8 @@ func (c *Conn) NextDatagram(now time.Time) ([]byte, error) {
 		c.datagramECNCommit = ecnCommit{c.recovery, recovery.Space(space), s.nextPN}
 		if space == applicationSpace && !early {
 			c.noteKeyPhaseACK(f)
-			if bundled != nil {
-				c.noteKeyPhaseACK(*bundled)
+			if bundled {
+				c.noteKeyPhaseACKLargest(0, bundledLargest)
 			}
 		}
 		if c.peerIDs != nil {
@@ -1433,7 +1433,7 @@ func (c *Conn) NextDatagram(now time.Time) ([]byte, error) {
 			item.queued = false
 			s.queue[0] = nil
 			s.queue = s.queue[1:]
-			if bundled != nil {
+			if bundled {
 				s.clearACK()
 			}
 		} else if challenge, ok := f.(wire.PathChallengeFrame); ok {

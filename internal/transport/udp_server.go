@@ -386,7 +386,12 @@ func (s *UDPServer) run(packets <-chan receivedUDP) {
 			// can cover it (RFC 9000 section 13.2.2) rather than one per pair.
 		burst:
 			for range maxReceiveBurst - 1 {
+				if s.endpoint.closed || (s.endpoint.closeWhenIdle && len(s.endpoint.conns) == 0) {
+					break
+				}
 				select {
+				case <-s.stop:
+					return
 				case p := <-packets:
 					if !s.handleReceived(lifetime, p) {
 						return

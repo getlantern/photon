@@ -204,11 +204,19 @@ func (c *Conn) noteKeyPhaseACK(f wire.Frame) {
 	default:
 		return
 	}
+	if len(ack.Ranges) > 0 {
+		c.noteKeyPhaseACKLargest(pathID, ack.Ranges[0].Largest)
+	}
+}
+
+// noteKeyPhaseACKLargest records an ACK sent on pathID whose largest
+// acknowledged packet number is largest.
+func (c *Conn) noteKeyPhaseACKLargest(pathID, largest uint64) {
 	if pathID > 1<<32-1 {
 		return
 	}
 	numbers := c.keyNumbers(uint32(pathID))
-	if numbers != nil && numbers.haveFirst && !c.applicationKeys.awaitingRead && c.applicationKeys.updated && len(ack.Ranges) > 0 && ack.Ranges[0].Largest >= numbers.first {
+	if numbers != nil && numbers.haveFirst && !c.applicationKeys.awaitingRead && c.applicationKeys.updated && largest >= numbers.first {
 		c.applicationKeys.ackSent = true
 	}
 }
