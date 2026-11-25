@@ -1,8 +1,10 @@
 package interop
 
 import (
+	"encoding/binary"
 	"math/rand/v2"
 	"net"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -133,4 +135,123 @@ func (r *wanRelay) direction(index int, link wanLink, seed uint64, read func([]b
 			write(p.data)
 		}
 	}()
+}
+
+// relayProbe sends numbered datagrams through a relay to a plain UDP socket
+// and records what arrives, in order, with arrival times.
+type relayProbe struct {
+	relay    *wanRelay
+	client   *net.UDPConn
+	sink     *net.UDPConn
+	received []uint32
+	at       []time.Time
+}
+
+func newRelayProbe(t *testing.T, link wanLink) *relayProbe {
+	t.Helper()
+	sink, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { sink.Close() })
+	relay := newWANRelay(t, sink.LocalAddr().String(), link, wanLink{})
+	client, err := net.DialUDP("udp", nil, relay.front.LocalAddr().(*net.UDPAddr))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { client.Close() })
+	return &relayProbe{relay: relay, client: client, sink: sink}
+}
+
+func (p *relayProbe) send(t *testing.T, n, size int) []time.Time {
+	t.Helper()
+	sent := make([]time.Time, n)
+	b := make([]byte, size)
+	for i := range n {
+		binary.BigEndian.PutUint32(b, uint32(i))
+		sent[i] = time.Now()
+		if _, err := p.client.Write(b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return sent
+}
+
+// collect reads until want datagrams arrive or idle passes with none.
+func (p *relayProbe) collect(t *testing.T, want int, idle time.Duration) {
+	t.Helper()
+	b := make([]byte, 65536)
+	for len(p.received) < want {
+		p.sink.SetReadDeadline(time.Now().Add(idle))
+		n, err := p.sink.Read(b)
+		if err != nil {
+			return
+		}
+		if n >= 4 {
+			p.received = append(p.received, binary.BigEndian.Uint32(b))
+			p.at = append(p.at, time.Now())
+		}
+	}
+}
+
+// Every datagram arrives, in order, no sooner than the link's delay.
+func TestWANRelayDelayAndOrder(t *testing.T) {
+	const delay, n = 20 * time.Millisecond, 50
+	p := newRelayProbe(t, wanLink{delay: delay})
+	sent := p.send(t, n, 100)
+	p.collect(t, n, time.Second)
+	if len(p.received) != n {
+		t.Fatal("received", len(p.received), "of", n)
+	}
+	for i, seq := range p.received {
+		if seq != uint32(i) {
+			t.Fatal("datagram", seq, "arrived at position", i)
+		}
+		if took := p.at[i].Sub(sent[i]); took < delay {
+			t.Fatal("datagram", i, "took", took, "under the", delay, "delay")
+		}
+	}
+}
+
+// Seeded loss drops the same datagrams on every relay with the same link.
+func TestWANRelaySeededLoss(t *testing.T) {
+	const n = 400
+	var runs [2][]uint32
+	for r := range runs {
+		p := newRelayProbe(t, wanLink{loss: 0.2})
+		p.send(t, n, 100)
+		p.collect(t, n, 200*time.Millisecond)
+		if dropped := p.relay.dropped[0].Load(); int(dropped)+len(p.received) != n {
+			t.Fatal("dropped", dropped, "plus received", len(p.received), "is not", n)
+		}
+		runs[r] = p.received
+	}
+	if len(runs[0]) == n || len(runs[0]) < n/2 {
+		t.Fatal("20% loss delivered", len(runs[0]), "of", n)
+	}
+	if !slices.Equal(runs[0], runs[1]) {
+		t.Fatal("same seed, different losses")
+	}
+}
+
+// A burst into the bottleneck queues only as much as the queue's time bound
+// holds and drops the rest, and admitted datagrams leave at the link rate.
+func TestWANRelayBottleneckQueue(t *testing.T) {
+	// 1000-byte datagrams take 10 ms each at 100 KB/s; a 50 ms queue admits
+	// those that start within 50 ms of backlog: 6, or 7 if the burst spreads.
+	const size, rate = 1000, 100_000
+	p := newRelayProbe(t, wanLink{rate: rate, queue: 50 * time.Millisecond})
+	p.send(t, 20, size)
+	p.collect(t, 20, 300*time.Millisecond)
+	if got := len(p.received); got < 6 || got > 7 {
+		t.Fatal("admitted", got, "of a 20-datagram burst, want 6 or 7")
+	}
+	if dropped := p.relay.dropped[0].Load(); int(dropped)+len(p.received) != 20 {
+		t.Fatal("dropped", dropped, "plus received", len(p.received), "is not 20")
+	}
+	// Serialization spaces arrivals: the last admitted datagram leaves at
+	// least (admitted-1) transmit times after the first.
+	if span, min := p.at[len(p.at)-1].Sub(p.at[0]), time.Duration(len(p.at)-1)*size*time.Second/rate; span < min*9/10 {
+		t.Fatal("arrivals spanned", span, "want at least", min)
+	}
 }
