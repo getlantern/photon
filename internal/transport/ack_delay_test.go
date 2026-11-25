@@ -13,17 +13,7 @@ func ackScheduled(s *numberSpace) bool { return s.ackPending || !s.ackDueAt.IsZe
 
 // ackNow makes c's delayed ACKs due without moving the test's clock, for tests
 // about something other than ACK timing.
-func ackNow(c *Conn) {
-	far := time.Unix(1<<40, 0)
-	c.spaces[applicationSpace].expireACKDelay(far)
-	if c.multipath != nil {
-		for _, state := range c.multipath.paths {
-			if app := state.application; app != nil {
-				app.space.expireACKDelay(far)
-			}
-		}
-	}
-}
+func ackNow(c *Conn) { c.expireACKDelays(time.Unix(1<<40, 0)) }
 
 // settledPair returns a confirmed pair whose client has no ACK owed, and the
 // next in-order application packet number the server would send it.
@@ -159,5 +149,24 @@ func TestZeroMaxACKDelayAcknowledgesAtOnce(t *testing.T) {
 	}
 	if out := drain(t, client, now); len(out) != 1 || !ackFrameIn(t, server, out[0], now) {
 		t.Fatal("zero max_ack_delay delayed the ACK", len(out))
+	}
+}
+
+// HandleTimeout makes a due delayed ACK pending even if no packet is sent, so
+// a past deadline leaves RecoveryDeadline and the owner does not spin on it.
+func TestDelayedACKDeadlineClearsWithoutSend(t *testing.T) {
+	client, server, now, next := settledPair(t)
+	if err := client.HandleDatagram(makePeerPacket(t, server, applicationSpace, next, wire.PingFrame{}), now); err != nil {
+		t.Fatal(err)
+	}
+	due := client.RecoveryDeadline()
+	if err := client.HandleTimeout(due); err != nil {
+		t.Fatal(err)
+	}
+	if !client.ackDeadline().IsZero() || !client.spaces[applicationSpace].ackPending {
+		t.Fatal("due ACK deadline left armed", client.ackDeadline())
+	}
+	if got := client.RecoveryDeadline(); !got.IsZero() && !got.After(due) {
+		t.Fatal("RecoveryDeadline still reports the past ACK deadline", got)
 	}
 }

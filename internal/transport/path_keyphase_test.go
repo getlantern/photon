@@ -63,7 +63,7 @@ func TestMultipathKeyPhaseNumbers(t *testing.T) {
 		if err := open(2, old, false, 5001); err != nil {
 			t.Fatal("delayed old-key secondary packet", err)
 		}
-		if err := open(0, next, true, 1001); !errors.Is(err, errKeyUpdate) {
+		if err := open(0, next, true, 1001); !errors.Is(err, ErrKeyUpdate) {
 			t.Fatal("current key reused old-phase number", err)
 		}
 		if err := open(0, next, true, 1003); err != nil {
@@ -73,16 +73,16 @@ func TestMultipathKeyPhaseNumbers(t *testing.T) {
 			t.Fatal("reordered old packet", err)
 		}
 		// The old-packet high-water mark must include late old packets too.
-		if err := open(0, next, true, 1002); !errors.Is(err, errKeyUpdate) {
+		if err := open(0, next, true, 1002); !errors.Is(err, ErrKeyUpdate) {
 			t.Fatal("late old packet crossed phase boundary", err)
 		}
-		if err := open(0, old, false, 1004); !errors.Is(err, errKeyUpdate) {
+		if err := open(0, old, false, 1004); !errors.Is(err, ErrKeyUpdate) {
 			t.Fatal("old packet above new phase", err)
 		}
 		if err := open(2, next, true, 5002); err != nil {
 			t.Fatal(err)
 		}
-		if err := open(1, second, false, 7); !errors.Is(err, errKeyUpdate) {
+		if err := open(1, second, false, 7); !errors.Is(err, ErrKeyUpdate) {
 			t.Fatal("updated again without ACK", err)
 		}
 		client.noteKeyPhaseACK(wire.PathAckFrame{PathID: 1, AckFrame: wire.AckFrame{Ranges: []wire.AckRange{{Smallest: 6, Largest: 6}}}})

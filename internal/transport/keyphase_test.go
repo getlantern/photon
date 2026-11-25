@@ -50,10 +50,10 @@ func TestPeerKeyUpdate(t *testing.T) {
 			if err := open(old, false, 1001, now); err != nil {
 				t.Fatal("reordered old packet rejected", err)
 			}
-			if err := open(old, false, 1003, now); !errors.Is(err, errKeyUpdate) {
+			if err := open(old, false, 1003, now); !errors.Is(err, ErrKeyUpdate) {
 				t.Fatal("old keys with higher PN", err)
 			}
-			if err := open(second, false, 1004, now); !errors.Is(err, errKeyUpdate) {
+			if err := open(second, false, 1004, now); !errors.Is(err, ErrKeyUpdate) {
 				t.Fatal("second update without ACK", err)
 			}
 			client.noteKeyPhaseACK(wire.AckFrame{Ranges: []wire.AckRange{{Smallest: 1002, Largest: 1002}}})
@@ -97,12 +97,12 @@ func TestKeyUpdateAuthenticatesBeforeTransition(t *testing.T) {
 		t.Fatal("forgery updated keys")
 	}
 	raw = phasePacket(t, client, keys, true, 1000)
-	if _, _, _, err := client.openApplication(raw, 1+len(client.config.LocalCID), 0, now); !errors.Is(err, errKeyUpdate) {
+	if _, _, _, err := client.openApplication(raw, 1+len(client.config.LocalCID), 0, now); !errors.Is(err, ErrKeyUpdate) {
 		t.Fatal("wrong authenticated key phase", err)
 	}
 	client.confirmed = false
 	raw = phasePacket(t, client, next, true, 1000)
-	if _, _, _, err := client.openApplication(raw, 1+len(client.config.LocalCID), 0, now); !errors.Is(err, errKeyUpdate) {
+	if _, _, _, err := client.openApplication(raw, 1+len(client.config.LocalCID), 0, now); !errors.Is(err, ErrKeyUpdate) {
 		t.Fatal("update before confirmation", err)
 	}
 }
@@ -111,7 +111,7 @@ func TestLocalKeyUpdates(t *testing.T) {
 	for _, v := range []wire.Version{wire.Version1, wire.Version2} {
 		t.Run(vName(v), func(t *testing.T) {
 			client, server := testPair(t, v)
-			if err := client.InitiateKeyUpdate(); !errors.Is(err, errKeyUpdate) {
+			if err := client.InitiateKeyUpdate(); !errors.Is(err, ErrKeyUpdate) {
 				t.Fatal("update before confirmation", err)
 			}
 			drivePair(t, client, server, false, false)
@@ -119,7 +119,7 @@ func TestLocalKeyUpdates(t *testing.T) {
 				if err := client.InitiateKeyUpdate(); err != nil {
 					t.Fatal(i, err)
 				}
-				if err := client.InitiateKeyUpdate(); !errors.Is(err, errKeyUpdate) {
+				if err := client.InitiateKeyUpdate(); !errors.Is(err, ErrKeyUpdate) {
 					t.Fatal("update without peer response", err)
 				}
 				drivePair(t, client, server, true, true)

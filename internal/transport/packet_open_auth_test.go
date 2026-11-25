@@ -12,7 +12,7 @@ import (
 
 func TestAuthenticatedOpenErrorsRetainResetPrecedence(t *testing.T) {
 	for _, version := range []wire.Version{wire.Version1, wire.Version2} {
-		for _, openErr := range []error{packet.ErrReservedBits, errKeyUpdate, packet.ErrAuthentication} {
+		for _, openErr := range []error{packet.ErrReservedBits, ErrKeyUpdate, packet.ErrAuthentication} {
 			t.Run(version.String()+"/"+openErr.Error(), func(t *testing.T) {
 				c, peer := testPair(t, version)
 				drivePair(t, c, peer, false, false)
