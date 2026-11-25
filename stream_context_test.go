@@ -6,6 +6,8 @@ import (
 	"io"
 	"testing"
 	"time"
+
+	"github.com/getlantern/photon/internal/transport"
 )
 
 func TestPublicStreamContexts(t *testing.T) {
@@ -192,10 +194,13 @@ func TestPublicReceiveErrorsAfterCleanup(t *testing.T) {
 	}
 }
 
-// STOP_SENDING that arrives after a stream's FIN does not make Release report
-// a failure: sending had already ended with the FIN, and Release waits only
-// for completion, an acknowledged reset included. The send Context keeps the
-// FIN as its cause. HTTP/3 relies on this, see http3/README.md.
+// STOP_SENDING that arrives after a stream's FIN is queued does not make
+// Release report a failure: sending had already ended with the FIN, and
+// Release waits only for completion, an acknowledged reset included. The send
+// Context keeps the FIN as its cause. HTTP/3 relies on this, see
+// http3/README.md. Whether the client's STOP_SENDING beats the FIN to it is
+// timing; each round asserts Release and the cause, and the test requires the
+// server to have processed STOP_SENDING after FIN in at least one round.
 func TestReleaseAfterStopSendingFollowingFIN(t *testing.T) {
 	clientTLS, serverTLS := dialTLS(t)
 	l, err := ListenAddr("127.0.0.1:0", serverTLS, nil)
@@ -203,7 +208,7 @@ func TestReleaseAfterStopSendingFollowingFIN(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer l.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	c, err := DialAddr(ctx, l.Addr().String(), clientTLS, nil)
 	if err != nil {
@@ -214,34 +219,50 @@ func TestReleaseAfterStopSendingFollowingFIN(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := c.OpenStream()
-	if err != nil {
-		t.Fatal(err)
+	const rounds = 50
+	exercised := 0
+	for i := 0; i < rounds; i++ {
+		s, err := c.OpenStream()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Write([]byte("request")); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Close(); err != nil {
+			t.Fatal(err)
+		}
+		ps, err := peer.AcceptStream(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := io.ReadAll(ps); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ps.Write([]byte("response")); err != nil {
+			t.Fatal(err)
+		}
+		if err := ps.Close(); err != nil {
+			t.Fatal(err)
+		}
+		s.CancelRead(0x10c) // STOP_SENDING, unless the FIN already arrived
+		if err := ps.Release(ctx); err != nil {
+			t.Fatal("round", i, "Release after STOP_SENDING following FIN:", err)
+		}
+		if cause := context.Cause(ps.Context()); cause != ErrStreamClosed {
+			t.Fatal("round", i, "send context cause:", cause)
+		}
+		var terminal error
+		if err := peer.server.Do(ctx, func(*transport.ServerEndpoint) error { terminal = ps.SendStream.sendTerminal; return nil }); err != nil {
+			t.Fatal(err)
+		}
+		var reset *StreamError
+		if errors.As(terminal, &reset) && reset.ErrorCode == 0x10c {
+			exercised++
+		}
 	}
-	if _, err := s.Write([]byte("request")); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Close(); err != nil {
-		t.Fatal(err)
-	}
-	ps, err := peer.AcceptStream(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := io.ReadAll(ps); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ps.Write([]byte("response")); err != nil {
-		t.Fatal(err)
-	}
-	if err := ps.Close(); err != nil {
-		t.Fatal(err)
-	}
-	s.CancelRead(0x10c) // STOP_SENDING after the response's FIN was queued
-	if err := ps.Release(ctx); err != nil {
-		t.Fatal("Release after STOP_SENDING following FIN:", err)
-	}
-	if cause := context.Cause(ps.Context()); cause != ErrStreamClosed {
-		t.Fatal("send context cause:", cause)
+	t.Logf("STOP_SENDING after FIN processed in %d of %d rounds", exercised, rounds)
+	if exercised == 0 {
+		t.Fatal("no round had the server process STOP_SENDING after its FIN")
 	}
 }
