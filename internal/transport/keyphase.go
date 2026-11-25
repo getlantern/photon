@@ -230,8 +230,10 @@ func (c *Conn) expirePreviousKeys(now time.Time) {
 	}
 }
 
-// InitiateKeyUpdate queues an ack-eliciting packet under the next application
-// keys. Subsequent updates require acknowledgment of the current sending phase.
+// InitiateKeyUpdate switches to the next application keys and queues a PING
+// to send with them, unless ack-eliciting data is already queued, which then
+// does that job. Subsequent updates require acknowledgment of the current
+// sending phase.
 // Previous receive keys remain usable until the peer answers in the new phase.
 func (c *Conn) InitiateKeyUpdate() error {
 	return c.InitiateKeyUpdateAt(time.Now())
@@ -343,7 +345,7 @@ func (c *Conn) updateKeysBeforeLimit(now time.Time) error {
 		return err
 	}
 	k := &c.applicationKeys
-	if !k.updated || (k.writeAcknowledged && !k.awaitingRead) || c.pingQueued() {
+	if !k.updated || (k.writeAcknowledged && !k.awaitingRead) {
 		return nil
 	}
 	maxDelay := c.keepAliveACKDelay()
@@ -355,7 +357,12 @@ func (c *Conn) updateKeysBeforeLimit(now time.Time) error {
 			return nil
 		}
 	}
+	// Cheap checks first: this runs on every send once past the threshold.
 	if !k.elicitedAt.IsZero() && now.Before(k.elicitedAt.Add(pto)) {
+		return nil
+	}
+	// Queued ack-eliciting data, once sent, does the PING's job.
+	if c.pingQueued() || c.applicationDataQueued() {
 		return nil
 	}
 	// queueFrameOnPath charges at least 32 bytes per frame; enqueue charges 1.
@@ -381,10 +388,14 @@ func (c *Conn) updateKeysBeforeLimit(now time.Time) error {
 }
 
 // applicationDataQueued reports whether an ack-eliciting application frame
-// is queued, on any path.
+// that is sure to be sent is queued, on any path. DATAGRAM frames do not
+// count: one too large for the path is dropped instead of sent.
 func (c *Conn) applicationDataQueued() bool {
 	queued := func(queue []*sendItem) bool {
 		for _, item := range queue {
+			if _, ok := item.frame.(wire.DatagramFrame); ok {
+				continue
+			}
 			if item.queued && !item.acked && wire.AckEliciting(item.frame) {
 				return true
 			}

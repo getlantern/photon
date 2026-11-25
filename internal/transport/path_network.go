@@ -216,6 +216,11 @@ func (c *Conn) nextBoundMultipathPacket(now time.Time) (uint64, pathTuple, []byt
 	if c.multipath == nil || !c.confirmed {
 		return 0, pathTuple{}, nil, ErrHandshakeUnconfirmed
 	}
+	// Migration probes below return sealed packets before nextMultipathPacket
+	// runs, so check the keys' usage here too.
+	if err := c.updateKeysBeforeLimit(now); err != nil {
+		return 0, pathTuple{}, nil, c.fail(err)
+	}
 	for id, state := range c.multipath.paths {
 		if state.application != nil {
 			state.application.routeBlocked = false

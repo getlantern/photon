@@ -124,7 +124,7 @@ func TestKeyUpdatePINGBeforeAEADLimit(t *testing.T) {
 
 // A PING that gets no acknowledgment is replaced after a PTO, not before.
 func TestKeyUpdatePINGRepeatsAfterPTO(t *testing.T) {
-	client, _, now := peerUpdatedPair(t)
+	client, server, now := peerUpdatedPair(t)
 	client.sealed[applicationSpace] = threshold(t, client)
 	if out := drain(t, client, now); len(out) != 1 {
 		t.Fatal("first PING", len(out))
@@ -133,13 +133,20 @@ func TestKeyUpdatePINGRepeatsAfterPTO(t *testing.T) {
 	if out := drain(t, client, now.Add(pto-time.Millisecond)); len(out) != 0 {
 		t.Fatal("PING repeated before a PTO", len(out))
 	}
-	if !client.pingQueued() {
-		if err := client.updateKeysBeforeLimit(now.Add(pto)); err != nil {
-			t.Fatal(err)
+	if client.pingQueued() {
+		t.Fatal("setup: a PING still queued")
+	}
+	out := drain(t, client, now.Add(pto))
+	sawPING := false
+	for _, b := range out {
+		for _, f := range framesIn(t, server, b) {
+			if _, ok := f.(wire.PingFrame); ok {
+				sawPING = true
+			}
 		}
 	}
-	if !client.pingQueued() {
-		t.Fatal("no replacement PING after a PTO")
+	if !sawPING {
+		t.Fatal("no replacement PING sent after a PTO", len(out))
 	}
 }
 
