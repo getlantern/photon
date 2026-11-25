@@ -187,6 +187,14 @@ func (c *Conn) nextPacketOnPathSelection(id, ackPath uint64, now time.Time, allo
 	}
 	header := append([]byte{first}, peer.cid...)
 	header = binary.BigEndian.AppendUint32(header, uint32(s.nextPN))
+	inFlight := wire.InFlightFrame(f)
+	probe := app.probePending && wire.AckEliciting(f)
+	bundled, bundledLargest := false, uint64(0)
+	if mtuSize == 0 && ackPath == id && ackBundleable(ackApp.space, item, f) {
+		if payload, bundledLargest, bundled, err = c.bundlePathACK(app, ackPath, f, len(header), inFlight, probe, now); err != nil {
+			return nil, c.fail(err)
+		}
+	}
 	size := len(header) + len(payload) + 16
 	if mtuSize != 0 {
 		if size > mtuSize {
@@ -202,8 +210,6 @@ func (c *Conn) nextPacketOnPathSelection(id, ackPath uint64, now time.Time, allo
 		payload = append(payload, make([]byte, 1200-size)...)
 		size = 1200
 	}
-	inFlight := wire.InFlightFrame(f)
-	probe := app.probePending && wire.AckEliciting(f)
 	// A blocked response must not suppress non-congestion-controlled ACKs.
 	fallbackACK := func() ([]byte, error) {
 		if allowResponses && f.Type() == 0x1b && ackApp.space.ackPending {
@@ -259,6 +265,11 @@ func (c *Conn) nextPacketOnPathSelection(id, ackPath uint64, now time.Time, allo
 	peer.used = true
 	state.peer.active[state.peer.current] = peer
 	c.noteKeyPhaseACK(f)
+	c.lastPathACK.bundled, c.lastPathACK.ackSent, c.lastPathACK.pathID, c.lastPathACK.number, c.lastPathACK.phase = bundled, c.applicationKeys.ackSent, id, pn, c.applicationKeys.firstSent
+	if bundled {
+		ackApp.space.clearACK()
+		c.noteKeyPhaseACKLargest(ackPath, bundledLargest)
+	}
 	if item != nil {
 		switch f := f.(type) {
 		case wire.DatagramFrame:

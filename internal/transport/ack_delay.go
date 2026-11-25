@@ -93,17 +93,7 @@ func (c *Conn) ackDeadline() time.Time {
 // ACK itself is not returned, as it borrows the receive history's storage.
 func (c *Conn) bundleACK(s *numberSpace, space int, early bool, item *sendItem, f wire.Frame, now time.Time) (payload []byte, largest uint64, bundled bool, err error) {
 	payload = c.payloadScratch[:0]
-	owed := s.ackPending || s.unackedEliciting > 0
-	if item == nil || space != applicationSpace || early || !owed || !wire.AckEliciting(f) {
-		payload, err = f.Append(payload)
-		return payload, 0, false, err
-	}
-	switch f.(type) {
-	case wire.PathChallengeFrame, wire.PathResponseFrame:
-		payload, err = f.Append(payload)
-		return payload, 0, false, err
-	}
-	if _, ok := s.received.Largest(); !ok {
+	if space != applicationSpace || early || !ackBundleable(s, item, f) {
 		payload, err = f.Append(payload)
 		return payload, 0, false, err
 	}
@@ -126,6 +116,56 @@ func (c *Conn) bundleACK(s *numberSpace, space int, early bool, item *sendItem, 
 	}
 	payload, err = f.Append(payload[:0])
 	return payload, 0, false, err
+}
+
+// bundlePathACK is bundleACK for a multipath packet on path ackPath: it
+// rebuilds the payload with that path's owed ACK ahead of f when the result
+// still fits the path and passes its congestion, pacing and address budget.
+// Otherwise the payload is f alone and the ACK stays owed.
+func (c *Conn) bundlePathACK(app *pathApplication, ackPath uint64, f wire.Frame, headerLen int, inFlight, probe bool, now time.Time) (payload []byte, largest uint64, bundled bool, err error) {
+	ack, err := app.ack(ackPath, now, uint8(c.config.Parameters.AckDelayExponent))
+	if err != nil {
+		return nil, 0, false, err
+	}
+	if payload, err = c.pathWireFrame(ack).Append(c.payloadScratch[:0]); err != nil {
+		return nil, 0, false, err
+	}
+	if payload, err = f.Append(payload); err != nil {
+		return nil, 0, false, err
+	}
+	size := headerLen + len(payload) + 16
+	if size <= app.packetPayloadLimit() && app.budget.CanSend(size) && app.congestion.CanSend(app.sent.BytesInFlight, size, inFlight, probe) &&
+		(!inFlight || probe || app.pacer.Delay(now, app.congestion.Window(), app.sent.RTT.Smoothed, size) <= 0) {
+		return payload, ack.Ranges[0].Largest, true, nil
+	}
+	payload, err = f.Append(c.payloadScratch[:0])
+	return payload, 0, false, err
+}
+
+// ackBundleable reports whether the queued frame f may carry the ACK the
+// space owes, due or not, ahead of it. PATH_CHALLENGE and PATH_RESPONSE stay
+// alone, since they are padded and sent for path validation.
+func ackBundleable(s *numberSpace, item *sendItem, f wire.Frame) bool {
+	if item == nil || !(s.ackPending || s.unackedEliciting > 0) || !wire.AckEliciting(f) {
+		return false
+	}
+	switch f.(type) {
+	case wire.PathChallengeFrame, wire.PathResponseFrame:
+		return false
+	}
+	_, ok := s.received.Largest()
+	return ok
+}
+
+// restoreBundledACK owes again an ACK whose packet a write rejected. If that
+// ACK is what marked an ACK sent in this key phase (ackSent was false before
+// it), it unmarks it; a phase that has since moved on, identified by its
+// firstSent, keeps its own state.
+func (c *Conn) restoreBundledACK(s *numberSpace, ackSent bool, phase uint64) {
+	s.ackPending = true
+	if !ackSent && c.applicationKeys.firstSent == phase {
+		c.applicationKeys.ackSent = false
+	}
 }
 
 // canSendBundled reports whether a packet of size, grown by a bundled ACK,
