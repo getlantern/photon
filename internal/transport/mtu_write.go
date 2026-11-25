@@ -94,6 +94,12 @@ func (e *ServerEndpoint) HandleWriteError(out *Outbound, err error, now time.Tim
 				c.queueLost(applicationSpace, []recovery.Packet{{Number: packet.number}})
 				delete(s.sent, packet.number)
 			}
+			if packet.ack {
+				// The bundled ACK never left: owe it again, now, and forget
+				// that it was sent for key-phase purposes.
+				s.ackPending = true
+				c.applicationKeys.ackSent = packet.ackSent
+			}
 			c.basePacketLimit, c.baseMTUNeedsValidation = minimumQUICMTU, true
 			c.baseMTUFallbackAt = now
 			c.restoreIdleActivity(packet.idleBefore, packet.idleRevision)
@@ -165,6 +171,7 @@ type outboundBaseLarge struct {
 	number       uint64
 	size         int
 	item         *sendItem // nil for unreliable DATAGRAM
+	ack, ackSent bool      // a bundled ACK, and the key-phase ackSent before it
 }
 
 func (c *Conn) outboundBaseLarge(size int, storage *outboundBaseLarge) *outboundBaseLarge {
@@ -187,6 +194,6 @@ func (c *Conn) outboundBaseLarge(size int, storage *outboundBaseLarge) *outbound
 	if storage == nil {
 		storage = new(outboundBaseLarge)
 	}
-	*storage = outboundBaseLarge{idleRevision: c.idleRevision, number: number, size: size, item: item}
+	*storage = outboundBaseLarge{idleRevision: c.idleRevision, number: number, size: size, item: item, ack: c.lastBaseACK, ackSent: c.lastBaseACKSent}
 	return storage
 }

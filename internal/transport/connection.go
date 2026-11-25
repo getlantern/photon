@@ -207,6 +207,10 @@ type Conn struct {
 	baseMTUNeedsValidation                bool
 	baseMTUChallenge                      *wire.PathChallengeFrame
 	lastBaseApplication, lastBaseDatagram bool
+	// lastBaseACK records whether the last base-path packet carried a bundled
+	// ACK, and lastBaseACKSent the key-phase ackSent before it, so a write
+	// rejection that requeues the packet's data can restore both.
+	lastBaseACK, lastBaseACKSent bool
 
 	allowConnectionWindowIncrease   func(uint64) bool
 	onHandshakeConfirmed            func()
@@ -1395,6 +1399,7 @@ func (c *Conn) NextDatagram(now time.Time) ([]byte, error) {
 		}
 		c.lastBaseApplication = space == applicationSpace && !early
 		_, c.lastBaseDatagram = f.(wire.DatagramFrame)
+		c.lastBaseACK, c.lastBaseACKSent = bundled, c.applicationKeys.ackSent
 		c.datagramECN = marking
 		c.datagramECNCommit = ecnCommit{c.recovery, recovery.Space(space), s.nextPN}
 		if space == applicationSpace && !early {
