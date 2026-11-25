@@ -87,7 +87,8 @@ func (c *Conn) ackDeadline() time.Time {
 // ACK the space owes, due or not, so the ACK rides on data instead of taking a
 // datagram of its own. It returns the bundled ACK, or nil when none was added.
 // A stream frame that no longer fits beside the ACK is split, which updates
-// *item and *f; any other frame that does not fit is sent without the ACK.
+// *item and *f. Any other frame that does not fit, or a stream frame whose
+// split fails, is sent without the ACK.
 func (c *Conn) bundleACK(s *numberSpace, space int, early bool, item **sendItem, f *wire.Frame, now time.Time) ([]byte, *wire.AckFrame, error) {
 	payload := c.payloadScratch[:0]
 	owed := s.ackPending || s.unackedEliciting > 0
@@ -120,8 +121,13 @@ func (c *Conn) bundleACK(s *numberSpace, space int, early bool, item **sendItem,
 		return payload, &ack, nil
 	}
 	if frame, ok := (*f).(wire.StreamFrame); ok && len(frame.Data) > excess {
+		// The split is only to make room for an optional ACK: if it fails
+		// (its delivery or send-buffer bounds), which leaves the queue as it
+		// was, send the frame alone and keep the ACK owed. A peer that grows
+		// our ACK with gaps must not be able to fail the connection this way.
 		if err := c.splitQueuedStream(s, 0, len(frame.Data)-excess); err != nil {
-			return nil, nil, err
+			payload, err = (*f).Append(payload[:0])
+			return payload, nil, err
 		}
 		*item, *f = s.queue[0], s.queue[0].frame
 		if payload, err = (*f).Append(payload[:ackLen]); err != nil {
