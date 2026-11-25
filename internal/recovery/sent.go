@@ -269,7 +269,7 @@ func (r *Sent) OnACK(space Space, f wire.AckFrame, now time.Time, delay, maxDela
 		}
 		r.RTT.Update(now.Sub(largestPacket.SentAt), delay, maxDelay, confirmed)
 	}
-	events.Rate = r.rate.sample(&sampler, now, r.RTT.Minimum)
+	events.Rate = r.rate.sample(&sampler, now, r.RTT.Minimum, r.RTT.Sampled)
 	if !s.hasAck || largest > s.largestAcked {
 		s.largestAcked = largest
 		s.hasAck = true

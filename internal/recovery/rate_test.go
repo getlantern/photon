@@ -83,10 +83,13 @@ func TestDeliveryRateRejectsShortInterval(t *testing.T) {
 	p := Packet{SentAt: now.Add(-10 * time.Millisecond), Bytes: 1200, InFlight: true,
 		Delivery: DeliveryState{Delivered: 1200, DeliveredAt: now.Add(-10 * time.Millisecond), FirstSentAt: now.Add(-15 * time.Millisecond)}}
 	s := rateSampler{newest: p, have: true, sendElapsed: 5 * time.Millisecond}
-	if rs := d.sample(&s, now, 40*time.Millisecond); rs.Valid || rs.Interval != 10*time.Millisecond {
+	if rs := d.sample(&s, now, 40*time.Millisecond, true); rs.Valid || rs.Interval != 10*time.Millisecond {
 		t.Fatalf("sample over %v, under the 40ms minimum RTT: %+v", rs.Interval, rs)
 	}
-	if rs := d.sample(&s, now, 10*time.Millisecond); !rs.Valid || rs.Rate != 120000 {
+	if rs := d.sample(&s, now, 0, false); rs.Valid {
+		t.Fatal("sample valid with no RTT measured", rs)
+	}
+	if rs := d.sample(&s, now, 10*time.Millisecond, true); !rs.Valid || rs.Rate != 120000 {
 		t.Fatalf("sample over the minimum RTT: %+v", rs)
 	}
 }

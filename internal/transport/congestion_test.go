@@ -263,3 +263,54 @@ func (c *Conn) nextBoundOrNil(t *testing.T, now time.Time) bool {
 	}
 	return b != nil
 }
+
+// Stream data queued on one path can be sent on another, so a path with an
+// empty queue is not application limited, nor reported limited to its
+// controller, while another path holds data it could borrow.
+func TestMultipathBorrowableDataIsNotAppLimited(t *testing.T) {
+	client, server := sendingPathPair(t, wire.Version1)
+	now := time.Unix(101, 0)
+	app := client.multipath.paths[1].application
+	app.budget.Validate()
+	app.validation.state = PathValidated
+	recorder := &recordingController{Controller: app.congestion}
+	app.congestion = recorder
+	id, err := client.OpenStream(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.queueFrameOnPath(1, wire.StreamFrame{StreamID: id, Data: make([]byte, 1000)}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := client.nextPacketOnPath(1, now)
+	if err != nil || raw == nil {
+		t.Fatal("stream packet", err)
+	}
+	// More stream data waits on path 0, which path 1 could borrow.
+	if err := client.queueFrameOnPath(0, wire.StreamFrame{StreamID: id, Offset: 1000, Data: make([]byte, 1000)}); err != nil {
+		t.Fatal(err)
+	}
+	if !client.pathHasData(1) {
+		t.Fatal("path 1 sees no data though path 0 holds stream data it can borrow")
+	}
+	if err := server.handleMultipathPacket(raw, now); err != nil {
+		t.Fatal(err)
+	}
+	ackNow(server)
+	server.multipath.paths[1].application.budget.Validate()
+	ack, err := server.nextPacketOnPath(1, now)
+	if err != nil || ack == nil {
+		t.Fatal("PATH_ACK", err)
+	}
+	if err := client.handleMultipathPacket(ack, now.Add(30*time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	if len(recorder.events) == 0 || recorder.events[len(recorder.events)-1].Limited {
+		t.Fatal("PATH_ACK reported limited while path 0 held borrowable data")
+	}
+	app.sent, _ = recovery.NewSent(maxSentPackets)
+	client.noteMultipathSendIdle()
+	if app.sent.AppLimited() {
+		t.Fatal("idle send pass marked path 1 app limited while path 0 held borrowable data")
+	}
+}

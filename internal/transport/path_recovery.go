@@ -157,10 +157,37 @@ func (c *Conn) noteMultipathSendIdle() {
 		return
 	}
 	for id, state := range c.multipath.paths {
-		if app := state.application; app != nil && c.multipath.abandoned[id] == nil && len(app.space.queue) == 0 && app.sent.BytesInFlight < app.congestion.Window() {
+		if app := state.application; app != nil && c.multipath.abandoned[id] == nil && app.sent.BytesInFlight < app.congestion.Window() && !c.pathHasData(id) {
 			app.sent.MarkAppLimited()
 		}
 	}
+}
+
+// pathHasData reports whether path id has something it could send: an
+// unacknowledged item in its own queue, or STREAM or DATAGRAM data queued on
+// another usable path, which it can borrow (see nextSharedPathData). Stream
+// data is queued on one path and shared, so a path's own queue being empty
+// does not make it application limited.
+func (c *Conn) pathHasData(id uint64) bool {
+	for source, state := range c.multipath.paths {
+		app := state.application
+		if app == nil || source != id && c.multipath.abandoned[source] != nil {
+			continue
+		}
+		for _, item := range app.space.queue {
+			if item.acked {
+				continue
+			}
+			if source == id {
+				return true
+			}
+			switch item.frame.(type) {
+			case wire.StreamFrame, wire.DatagramFrame:
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // arm runs after send/ACK/credit changes. For post-handshake paths, no Initial

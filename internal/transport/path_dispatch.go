@@ -163,7 +163,7 @@ func (c *Conn) dispatchMultipathPacketFrames(decoded *pathPacket, now time.Time,
 			limited := true
 			if state != nil && state.application != nil {
 				app := state.application
-				limited = len(app.space.queue) == 0 && app.sent.BytesInFlight < app.congestion.Window()
+				limited = app.sent.BytesInFlight < app.congestion.Window() && !c.pathHasData(acknowledgedPath)
 			}
 			events, err := c.multipath.receiveReliableACK(f, now, exponent, maxDelay, limited, func(item *sendItem) error {
 				if err := c.ackStreamFrame(item.frame); err != nil {
