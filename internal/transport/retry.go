@@ -50,7 +50,7 @@ func (c *Conn) handleRetry(raw []byte, h wire.Header, now time.Time) error {
 	sort.Slice(frames, func(i, j int) bool { return frames[i].Offset < frames[j].Offset })
 	s.queue = nil
 	s.sent = make(map[uint64]*sendItem)
-	s.ackPending = false
+	s.clearACK()
 	packetSize := c.basePacketPayloadLimit()
 	header, err := c.makeHeader(initialSpace, s.nextPN, packetSize)
 	if err != nil {

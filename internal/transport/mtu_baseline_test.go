@@ -28,6 +28,7 @@ func TestMTUFallbackRequiresExpandedResponse(t *testing.T) {
 		// An ordinary ACK of the challenge does not prove its challenge token.
 		now = now.Add(time.Millisecond)
 		peer.multipath.paths[1-id].application.budget.Validate()
+		ackNow(peer)
 		ack, err := peer.nextPacketOnPathACK(1-id, id, now)
 		if err != nil || ack == nil {
 			t.Fatal(err)

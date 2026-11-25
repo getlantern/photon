@@ -107,6 +107,9 @@ func (c *Conn) RecoveryDeadline() time.Time {
 	if !path.IsZero() && (at.IsZero() || path.Before(at)) {
 		at = path
 	}
+	if ack := c.ackDeadline(); c.pendingWrite == nil && !ack.IsZero() && (at.IsZero() || ack.Before(at)) {
+		at = ack
+	}
 	return at
 }
 

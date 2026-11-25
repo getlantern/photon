@@ -74,6 +74,7 @@ func TestEncryptedStreamSplitAfterMTUFallback(t *testing.T) {
 					}
 				}
 				now = now.Add(time.Millisecond)
+				ackNow(peer)
 				ack, err := peer.nextPacketOnPath(1, now)
 				if err != nil || ack == nil {
 					t.Fatal("ACK", err)

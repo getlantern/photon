@@ -168,9 +168,10 @@ func TestSchedulerResponseBeforeACKAndPTO(t *testing.T) {
 		if !ok || f.Data != ([8]byte{42}) {
 			t.Fatal("response token")
 		}
-		if !a.space.ackPending || !c.multipath.paths[0].application.space.ackPending || a.probePending {
+		if !ackScheduled(a.space) || !ackScheduled(c.multipath.paths[0].application.space) || a.probePending {
 			t.Fatal("ACK/PTO state")
 		}
+		ackNow(c)
 		id, b, err = c.nextMultipathPacket(now.Add(2 * time.Millisecond))
 		if err != nil || id != 0 || b == nil {
 			t.Fatal("deferred ACK", id, err)
@@ -202,6 +203,7 @@ func TestBlockedResponseStillSendsACK(t *testing.T) {
 		} else {
 			a.sent.BytesInFlight = a.congestion.Window()
 		}
+		ackNow(c)
 		b, err = c.nextPacketOnPath(1, now)
 		if err != nil || b == nil {
 			t.Fatal("blocked response suppressed ACK", paced, err)

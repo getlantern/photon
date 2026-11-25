@@ -54,7 +54,7 @@ func (c *Conn) releaseTransportBuffers() {
 		c.spaces[i].queue = nil
 		c.spaces[i].sent = nil
 		c.spaces[i].received = nil
-		c.spaces[i].ackPending = false
+		c.spaces[i].clearACK()
 		c.spaces[i].discarded = true
 		c.recovery.Discard(recovery.Space(i))
 		c.tls.DiscardKeys(levels[i])

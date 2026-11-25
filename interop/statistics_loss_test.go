@@ -172,22 +172,29 @@ func TestStatisticsIndependentLateACK(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				// Do not consume EOF until after releasing the delayed packet. Doing
-				// so can elicit MAX_STREAMS and an ACK-of-ACK that lets the peer retire
-				// the original packet number from its receive history before release.
-				if err := tx.WaitAcknowledged(ctx); err != nil {
-					t.Fatal(err)
-				}
-				// Successful retransmission need not erase the original packet loss.
-				lost := own.ConnectionStats()
-				if lost.PacketsLost <= before.PacketsLost || lost.BytesLost < before.BytesLost+uint64(len(delayed.data)) {
-					t.Fatal("withheld packet not counted lost", before, lost, len(delayed.data))
+				// Release the withheld packet as soon as it is counted lost. Waiting
+				// longer, for EOF or for the retransmission's ACK (which the peer can
+				// itself delay by its max_ack_delay), can let our ACK of the peer's
+				// ACK-bearing packet arrive first. The peer may then retire the
+				// original packet number from its receive history (RFC 9000 section
+				// 13.2.4) and drop the late packet as a duplicate.
+				tick := time.NewTicker(time.Millisecond)
+				defer tick.Stop()
+				var lost quic.ConnectionStats
+				for {
+					lost = own.ConnectionStats()
+					if lost.PacketsLost > before.PacketsLost && lost.BytesLost >= before.BytesLost+uint64(len(delayed.data)) {
+						break
+					}
+					select {
+					case <-tick.C:
+					case <-ctx.Done():
+						t.Fatal("withheld packet not counted lost", before, lost, len(delayed.data), ctx.Err())
+					}
 				}
 				if _, err := socket.WriteToUDP(delayed.data, delayed.target); err != nil {
 					t.Fatal(err)
 				}
-				tick := time.NewTicker(time.Millisecond)
-				defer tick.Stop()
 				for {
 					s := own.ConnectionStats()
 					if s.PacketsLost == lost.PacketsLost-1 && s.BytesLost == lost.BytesLost-uint64(len(delayed.data)) {
@@ -198,6 +205,10 @@ func TestStatisticsIndependentLateACK(t *testing.T) {
 					case <-ctx.Done():
 						t.Fatal("late peer ACK did not correct exact loss", lost, s, len(delayed.data), ctx.Err())
 					}
+				}
+				// The retransmission still completes the stream.
+				if err := tx.WaitAcknowledged(ctx); err != nil {
+					t.Fatal(err)
 				}
 				rx.SetReadDeadline(time.Now().Add(6 * time.Second))
 				got, err := io.ReadAll(rx)
