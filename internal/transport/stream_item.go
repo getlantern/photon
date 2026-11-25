@@ -146,12 +146,14 @@ func markSendSubtreeAcknowledged(item *sendItem) {
 // streamSplitReservation is what splitting an n-byte frame into portable
 // fragments charges: a new group, then one split per fragment after the
 // first, as splitQueuedStream charges them. Fragments of the portable payload
-// fit every path, so they never split again.
+// fit every path, so they never split again. It also covers one trim's new
+// item, so a stream's first partial reset, such as trimming its FIN, needs no
+// further room.
 func streamSplitReservation(n int) int {
 	if n <= portableStreamPayload {
 		return 0
 	}
-	return streamGroupCreationCharge((n+63)/64) + streamSplitsCharge(n)
+	return streamGroupCreationCharge((n+63)/64) + streamSplitsCharge(n) + streamDeliveryItemCharge + streamBranchCharge
 }
 
 // streamSplits is how many splits an n-byte frame needs to reach portable

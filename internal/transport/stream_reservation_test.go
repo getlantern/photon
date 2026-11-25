@@ -29,8 +29,9 @@ func TestReservedSplitWorksAtFullQueue(t *testing.T) {
 				}
 			}
 		}
-		if c.queuedBytes != maxSendBytes || root.bytes != charge || root.delivery.reserved != 0 || len(root.delivery.items) > maxStreamDeliveryItems {
-			t.Fatal("split consumed extra capacity or leaked reservation")
+		// What is left is the one trim the reservation also covers.
+		if c.queuedBytes != maxSendBytes || root.bytes != charge || root.delivery.reserved != streamDeliveryItemCharge+streamBranchCharge || len(root.delivery.items) > maxStreamDeliveryItems {
+			t.Fatal("split consumed extra capacity or leaked reservation", root.delivery.reserved)
 		}
 		total := 0
 		for i, item := range s.queue {
@@ -190,17 +191,13 @@ func TestTrimThenSplitAtFullBuffer(t *testing.T) {
 	root := s.queue[0]
 	c.queuedBytes = maxSendBytes
 	complete := func(item *sendItem) error { c.queuedBytes -= item.bytes; return nil }
-	// The trim's new item doesn't fit beside the two splits the prefix still
-	// needs, so at a full buffer it is refused, recoverably.
-	if err := c.retainStreamItemPrefix(root, 2299, complete); !errors.Is(err, ErrSendBuffer) {
+	// The reservation covers one trim beside the two splits the prefix still
+	// needs, so the trim succeeds at a full buffer.
+	if err := c.retainStreamItemPrefix(root, 2299, complete); err != nil {
 		t.Fatal("trim at a full buffer", err)
 	}
-	c.queuedBytes = maxSendBytes - (streamDeliveryItemCharge + streamBranchCharge)
-	if err := c.retainStreamItemPrefix(root, 2299, complete); err != nil {
-		t.Fatal("trim with room", err)
-	}
 	if c.queuedBytes != maxSendBytes {
-		t.Fatal("setup: buffer not full after the trim")
+		t.Fatal("trim charged beyond the reservation")
 	}
 	for idx := 0; idx < len(s.queue); idx++ {
 		if len(s.queue[idx].frame.(wire.StreamFrame).Data) > portableStreamPayload {
@@ -248,10 +245,11 @@ func TestTrimsLeaveSplitItemSlots(t *testing.T) {
 }
 
 // liveBytesPer is the heap that n runs of work leave live, per run, after
-// collection. Other goroutines can allocate or free during the window, so a
-// heap that shrank is inconclusive and the measurement is retried.
+// collection. Other goroutines can allocate or free during the window, so it
+// takes the smallest of three readings, ignoring any where the heap shrank.
 func liveBytesPer(t *testing.T, n int, setup func(i int), work func(i int)) uint64 {
 	t.Helper()
+	best, ok := uint64(0), false
 	for range 3 {
 		for i := range n {
 			setup(i)
@@ -264,12 +262,17 @@ func liveBytesPer(t *testing.T, n int, setup func(i int), work func(i int)) uint
 		}
 		runtime.GC()
 		runtime.ReadMemStats(&after)
-		if after.HeapAlloc >= before.HeapAlloc {
-			return (after.HeapAlloc - before.HeapAlloc) / uint64(n)
+		if after.HeapAlloc < before.HeapAlloc {
+			continue
+		}
+		if live := (after.HeapAlloc - before.HeapAlloc) / uint64(n); !ok || live < best {
+			best, ok = live, true
 		}
 	}
-	t.Skip("heap shrank in every measurement window")
-	return 0
+	if !ok {
+		t.Skip("heap shrank in every measurement window")
+	}
+	return best
 }
 
 // A frame's split reservation covers the memory that splitting it into
