@@ -213,7 +213,9 @@ func BenchmarkServerStreamEchoWAN(b *testing.B) {
 				after := peer.ConnectionStats()
 				n := float64(b.N)
 				b.ReportMetric(float64(after.PacketsReceived-before.PacketsReceived)/n, "srv-pkts/op")
-				b.ReportMetric(float64(after.PacketsLost-before.PacketsLost)/n, "cli-lost/op")
+				// quic-go documents PacketsLost as not monotonic, so a difference
+				// of unsigned counters could wrap.
+				b.ReportMetric((float64(after.PacketsLost)-float64(before.PacketsLost))/n, "cli-lost/op")
 				b.ReportMetric(float64(relay.dropped[1].Load()-down)/n, "drop-down/op")
 				b.ReportMetric(float64(relay.dropped[0].Load()-up)/n, "drop-up/op")
 			})

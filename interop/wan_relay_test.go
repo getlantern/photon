@@ -82,6 +82,31 @@ func (r *wanRelay) close() {
 	r.wg.Wait()
 }
 
+// wanShaper is a link's bottleneck: a datagram that arrives at now departs
+// once the datagrams ahead of it have been transmitted, unless that backlog
+// is longer than the link's queue, when it is dropped.
+type wanShaper struct {
+	link      wanLink
+	busyUntil time.Time
+}
+
+// admit returns when a datagram of n bytes arriving at now finishes
+// transmission, or false if the queue drops it.
+func (s *wanShaper) admit(now time.Time, n int) (time.Time, bool) {
+	if s.link.rate <= 0 {
+		return now, true
+	}
+	departure := now
+	if s.busyUntil.After(now) {
+		departure = s.busyUntil
+	}
+	if departure.Sub(now) > s.link.queue {
+		return time.Time{}, false
+	}
+	s.busyUntil = departure.Add(time.Duration(float64(n) / s.link.rate * float64(time.Second)))
+	return s.busyUntil, true
+}
+
 // direction reads datagrams, applies the link, and delivers them in order from
 // a second goroutine once their time comes. Departure times never decrease and
 // the delay is fixed, so delivery order is arrival order.
@@ -92,7 +117,7 @@ func (r *wanRelay) direction(index int, link wanLink, seed uint64, read func([]b
 		defer r.wg.Done()
 		defer close(ready)
 		rng := rand.New(rand.NewPCG(seed, seed))
-		var busyUntil time.Time
+		shape := wanShaper{link: link}
 		buf := make([]byte, 65536)
 		for {
 			n, err := read(buf)
@@ -107,17 +132,10 @@ func (r *wanRelay) direction(index int, link wanLink, seed uint64, read func([]b
 				r.dropped[index].Add(1)
 				continue
 			}
-			departure := now
-			if link.rate > 0 {
-				if busyUntil.After(now) {
-					departure = busyUntil
-				}
-				if departure.Sub(now) > link.queue {
-					r.dropped[index].Add(1)
-					continue
-				}
-				departure = departure.Add(time.Duration(float64(n) / link.rate * float64(time.Second)))
-				busyUntil = departure
+			departure, ok := shape.admit(now, n)
+			if !ok {
+				r.dropped[index].Add(1)
+				continue
 			}
 			select {
 			case ready <- wanPacket{at: departure.Add(link.delay), data: append([]byte(nil), buf[:n]...)}:
@@ -154,6 +172,11 @@ func newRelayProbe(t *testing.T, link wanLink) *relayProbe {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { sink.Close() })
+	// A burst arrives before collect reads it; a kernel drop here would
+	// escape the relay's drop count.
+	if err := sink.SetReadBuffer(8 << 20); err != nil {
+		t.Fatal(err)
+	}
 	relay := newWANRelay(t, sink.LocalAddr().String(), link, wanLink{})
 	client, err := net.DialUDP("udp", nil, relay.front.LocalAddr().(*net.UDPAddr))
 	if err != nil {
@@ -234,24 +257,59 @@ func TestWANRelaySeededLoss(t *testing.T) {
 	}
 }
 
-// A burst into the bottleneck queues only as much as the queue's time bound
-// holds and drops the rest, and admitted datagrams leave at the link rate.
-func TestWANRelayBottleneckQueue(t *testing.T) {
-	// 1000-byte datagrams take 10 ms each at 100 KB/s; a 50 ms queue admits
-	// those that start within 50 ms of backlog: 6, or 7 if the burst spreads.
+// The bottleneck admits a burst only while its backlog fits the queue,
+// drops the rest, and admits again once the backlog has drained.
+func TestWANShaperQueue(t *testing.T) {
+	// 1000-byte datagrams take 10 ms each at 100 KB/s, so a 50 ms queue
+	// admits a burst's first 6: the 6th waits exactly 50 ms.
+	const size, rate = 1000, 100_000
+	s := wanShaper{link: wanLink{rate: rate, queue: 50 * time.Millisecond}}
+	start := time.Unix(0, 0)
+	admitted := 0
+	var last time.Time
+	for range 20 {
+		if at, ok := s.admit(start, size); ok {
+			admitted++
+			last = at
+		}
+	}
+	if admitted != 6 {
+		t.Fatal("admitted", admitted, "of a 20-datagram burst, want 6")
+	}
+	if want := start.Add(60 * time.Millisecond); !last.Equal(want) {
+		t.Fatal("last departs at", last.Sub(start), "want", want.Sub(start))
+	}
+	// After 20 ms two have left, so two more fit.
+	later, admitted := start.Add(20*time.Millisecond), 0
+	for range 5 {
+		if _, ok := s.admit(later, size); ok {
+			admitted++
+		}
+	}
+	if admitted != 2 {
+		t.Fatal("admitted", admitted, "after 20 ms of drain, want 2")
+	}
+	if at, ok := (&wanShaper{}).admit(start, size); !ok || !at.Equal(start) {
+		t.Fatal("unlimited link delayed or dropped a datagram", at, ok)
+	}
+}
+
+// End to end, the relay paces admitted datagrams at the link rate and counts
+// every one it drops.
+func TestWANRelayBottleneckPacing(t *testing.T) {
 	const size, rate = 1000, 100_000
 	p := newRelayProbe(t, wanLink{rate: rate, queue: 50 * time.Millisecond})
 	sent := p.send(t, 20, size)
 	p.collect(t, 20, 300*time.Millisecond)
-	if got := len(p.received); got < 6 || got > 7 {
-		t.Fatal("admitted", got, "of a 20-datagram burst, want 6 or 7")
+	if len(p.received) == 0 || len(p.received) == 20 {
+		t.Fatal("received", len(p.received), "of a 20-datagram burst, want some dropped")
 	}
 	if dropped := p.relay.dropped[0].Load(); int(dropped)+len(p.received) != 20 {
 		t.Fatal("dropped", dropped, "plus received", len(p.received), "is not 20")
 	}
-	// Serialization paces the admitted datagrams: the last can't arrive
-	// before every admitted one has been transmitted, counted from the first
-	// send. A late read only lengthens the measured span.
+	// The last can't arrive before every admitted datagram has been
+	// transmitted, counted from the first send. A late read only lengthens
+	// the measured span.
 	if span, min := p.at[len(p.at)-1].Sub(sent[0]), time.Duration(len(p.at))*size*time.Second/rate; span < min {
 		t.Fatal("admitted datagrams arrived within", span, "want at least", min)
 	}
