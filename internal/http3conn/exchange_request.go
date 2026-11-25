@@ -48,9 +48,12 @@ var errUploadStopped = errors.New("http3: response body closed; stop upload")
 // lifetime. It owns request.Body after argument validation. The returned response
 // owns the remaining exchange; its Body MUST be closed, including after EOF.
 // Close cancels unfinished upload, interrupts reads, joins upload and releases
-// QPACK/endpoint ownership. A peer H3_NO_ERROR STOP_SENDING or connection close
-// ends only the upload: a complete early response remains readable while parent
-// is not canceled. There are no retries or pooling.
+// QPACK/endpoint ownership. A peer STOP_SENDING, with any code, or an
+// H3_NO_ERROR connection close ends only the upload: the response stream's
+// own FIN or reset decides the outcome, so a complete response remains
+// readable while parent is not canceled (RFC 9114 section 4.1.1). A peer that
+// stops the upload and then neither answers nor resets is waited for until
+// parent ends. There are no retries or pooling.
 // AllowConnect permits an endpoint-owned duplex upload without trailers; the
 // endpoint owns tunnel half-close. Expect/continue scheduling remains endpoint work.
 func ExchangeRequest(parent context.Context, request *http.Request, stream ClientExchangeStream, config ClientExchangeConfig) (response *http.Response, err error) {
@@ -139,7 +142,7 @@ func ExchangeRequest(parent context.Context, request *http.Request, stream Clien
 		defer close(uploadDone)
 		err := WriteHTTPRequest(uploadCtx, &effective, writer, func() { stream.CancelWrite(0x10c) })
 		// A failed write can precede stopSend's report of why the peer ended it.
-		if err != nil && ctx.Err() == nil && !errors.Is(err, errUploadStopped) && !normalUploadStop(err) && !peerStoppedUpload(context.Cause(stream.Context())) {
+		if err != nil && ctx.Err() == nil && !errors.Is(err, errUploadStopped) && !peerStoppedUpload(err) && !peerStoppedUpload(context.Cause(stream.Context())) {
 			task.fail(err, 0x10c)
 		}
 	}()
@@ -199,9 +202,6 @@ func ExchangeRequest(parent context.Context, request *http.Request, stream Clien
 	return response, nil
 }
 
-// An H3_NO_ERROR connection close ends an unfinished upload like the same code
-// in STOP_SENDING. Whether the response outlives the connection is the parent
-// context's decision (Session keeps accepted responses after a graceful close).
 // peerStoppedUpload reports whether the peer ended the upload, by closing the
 // connection normally or by STOP_SENDING with any code.
 func peerStoppedUpload(err error) bool {
@@ -209,6 +209,9 @@ func peerStoppedUpload(err error) bool {
 	return normalUploadStop(err) || errors.As(err, &reset) && reset.Remote
 }
 
+// An H3_NO_ERROR connection close ends an unfinished upload like the same code
+// in STOP_SENDING. Whether the response outlives the connection is the parent
+// context's decision (Session keeps accepted responses after a graceful close).
 func normalUploadStop(err error) bool {
 	var closed *quic.PeerCloseError
 	if errors.As(err, &closed) {
