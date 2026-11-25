@@ -95,10 +95,13 @@ func (e *ServerEndpoint) HandleWriteError(out *Outbound, err error, now time.Tim
 				delete(s.sent, packet.number)
 			}
 			if packet.ack {
-				// The bundled ACK never left: owe it again, now, and forget
-				// that it was sent for key-phase purposes.
+				// The bundled ACK never left: owe it again, now. If it is
+				// what marked an ACK sent in this key phase, unmark it; a
+				// phase that has since moved on keeps its own state.
 				s.ackPending = true
-				c.applicationKeys.ackSent = packet.ackSent
+				if !packet.ackSent && c.applicationKeys.firstSent == packet.ackPhase {
+					c.applicationKeys.ackSent = false
+				}
 			}
 			c.basePacketLimit, c.baseMTUNeedsValidation = minimumQUICMTU, true
 			c.baseMTUFallbackAt = now
@@ -172,6 +175,7 @@ type outboundBaseLarge struct {
 	size         int
 	item         *sendItem // nil for unreliable DATAGRAM
 	ack, ackSent bool      // a bundled ACK, and the key-phase ackSent before it
+	ackPhase     uint64    // firstSent of the keys the packet used
 }
 
 func (c *Conn) outboundBaseLarge(size int, storage *outboundBaseLarge) *outboundBaseLarge {
@@ -194,6 +198,6 @@ func (c *Conn) outboundBaseLarge(size int, storage *outboundBaseLarge) *outbound
 	if storage == nil {
 		storage = new(outboundBaseLarge)
 	}
-	*storage = outboundBaseLarge{idleRevision: c.idleRevision, number: number, size: size, item: item, ack: c.lastBaseACK, ackSent: c.lastBaseACKSent}
+	*storage = outboundBaseLarge{idleRevision: c.idleRevision, number: number, size: size, item: item, ack: c.lastBaseACK, ackSent: c.lastBaseACKSent, ackPhase: c.lastBaseACKPhase}
 	return storage
 }

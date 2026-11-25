@@ -219,3 +219,77 @@ func TestMultipathKeyUpdatePINGBeforeAEADLimit(t *testing.T) {
 		t.Fatal("no PING near the AEAD limit")
 	}
 }
+
+// A key update needs no room in a full send buffer when ack-eliciting data
+// is already queued: that data, sent with the new keys, does the PING's job.
+func TestKeyUpdateWithFullSendBufferAndQueuedData(t *testing.T) {
+	client, server := testPair(t, wire.Version1, streamParameters())
+	drivePair(t, client, server, false, false)
+	now := time.Unix(200, 0)
+	if err := client.enqueue(applicationSpace, wire.PingFrame{}, 1); err != nil {
+		t.Fatal(err)
+	}
+	queued := len(client.spaces[applicationSpace].queue)
+	client.queuedBytes = maxSendBytes
+	if err := client.InitiateKeyUpdateAt(now); err != nil {
+		t.Fatal("update refused with queued data and a full buffer", err)
+	}
+	if len(client.spaces[applicationSpace].queue) != queued {
+		t.Fatal("PING queued although data was already queued")
+	}
+}
+
+// On multipath a PING costs at least 32 bytes of send buffer; with less free,
+// none is queued and the once-per-PTO pacing does not start.
+func TestMultipathKeyUpdatePINGNeedsRoom(t *testing.T) {
+	client, server := sendingPathPair(t, wire.Version1)
+	now := time.Unix(101, 0)
+	if err := server.InitiateKeyUpdateAt(now); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.queueFrameOnPath(0, wire.PingFrame{}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := server.nextPacketOnPath(0, now)
+	if err != nil || raw == nil {
+		t.Fatal(err)
+	}
+	if err := client.handleMultipathPacket(raw, now); err != nil {
+		t.Fatal(err)
+	}
+	client.sealed[applicationSpace] = threshold(t, client)
+	client.queuedBytes = maxSendBytes - client.reservedResetBytes - 31
+	if err := client.updateKeysBeforeLimit(now); err != nil {
+		t.Fatal(err)
+	}
+	if client.pingQueued() || !client.applicationKeys.elicitedAt.IsZero() {
+		t.Fatal("PING queued, or pacing started, without room for it")
+	}
+}
+
+// With the update refused, the last packet the keys allow still goes out
+// with them, counted exactly at the limit, and the next send fails with the
+// AEAD limit error rather than reuse the keys.
+func TestAEADLimitBoundaryWhenUpdateRefused(t *testing.T) {
+	client, _, now := peerUpdatedPair(t)
+	keys := client.writeKeys(applicationSpace)
+	limit := clientLimit(t, client)
+	client.sealed[applicationSpace] = limit - 1
+	client.applicationKeys.elicitedAt = now // no PING: keep the update refused
+	for range 2 {
+		if err := client.enqueue(applicationSpace, wire.PingFrame{}, 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if b, err := client.NextDatagram(now); err != nil || len(b) == 0 {
+		t.Fatal("last allowed packet", err)
+	}
+	if client.sealed[applicationSpace] != limit || client.writeKeys(applicationSpace) != keys {
+		t.Fatal("last allowed packet not counted", client.sealed[applicationSpace])
+	}
+	_, err := client.NextDatagram(now)
+	var transport *TransportError
+	if !errors.As(err, &transport) || transport.Code != 0xf {
+		t.Fatal("want the AEAD limit error at the limit", err)
+	}
+}

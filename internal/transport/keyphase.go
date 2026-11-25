@@ -251,7 +251,10 @@ func (c *Conn) InitiateKeyUpdateAt(now time.Time) error {
 	if now.IsZero() || (c.multipath != nil && k.updated && (k.updateNotBefore.IsZero() || now.Before(k.updateNotBefore))) {
 		return ErrKeyUpdate
 	}
-	if c.availableSendBytes() < 1 {
+	// A PING gets a packet sent with the new keys acknowledged soon. Queued
+	// ack-eliciting data does the same, so it needs no PING and no room.
+	queued := c.applicationDataQueued()
+	if !queued && c.availableSendBytes() < 1 {
 		return ErrSendBuffer
 	}
 	if err := c.prepareApplicationKeys(); err != nil {
@@ -275,6 +278,9 @@ func (c *Conn) InitiateKeyUpdateAt(now time.Time) error {
 	k.writeAcknowledged = false
 	k.updateNotBefore = time.Time{}
 	k.previousExpiry = time.Time{}
+	if queued {
+		return nil
+	}
 	return c.enqueue(applicationSpace, wire.PingFrame{}, 1)
 }
 
@@ -352,10 +358,14 @@ func (c *Conn) updateKeysBeforeLimit(now time.Time) error {
 	if !k.elicitedAt.IsZero() && now.Before(k.elicitedAt.Add(pto)) {
 		return nil
 	}
-	if c.availableSendBytes() <= 0 {
+	// queueFrameOnPath charges at least 32 bytes per frame; enqueue charges 1.
+	need := 1
+	if c.multipath != nil {
+		need = 32
+	}
+	if c.availableSendBytes() < need {
 		return nil
 	}
-	k.elicitedAt = now
 	if c.multipath == nil {
 		err = c.enqueue(applicationSpace, wire.PingFrame{}, 1)
 	} else {
@@ -364,7 +374,34 @@ func (c *Conn) updateKeysBeforeLimit(now time.Time) error {
 	if errors.Is(err, ErrSendBuffer) {
 		return nil
 	}
+	if err == nil {
+		k.elicitedAt = now
+	}
 	return err
+}
+
+// applicationDataQueued reports whether an ack-eliciting application frame
+// is queued, on any path.
+func (c *Conn) applicationDataQueued() bool {
+	queued := func(queue []*sendItem) bool {
+		for _, item := range queue {
+			if item.queued && !item.acked && wire.AckEliciting(item.frame) {
+				return true
+			}
+		}
+		return false
+	}
+	if queued(c.spaces[applicationSpace].queue) {
+		return true
+	}
+	if c.multipath != nil {
+		for _, state := range c.multipath.paths {
+			if app := state.application; app != nil && queued(app.space.queue) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // pingQueued reports whether a PING is already queued in the application
