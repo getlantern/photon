@@ -221,6 +221,7 @@ func TestReleaseAfterStopSendingFollowingFIN(t *testing.T) {
 	}
 	const rounds = 50
 	exercised := 0
+	var lastTerminal error
 	for i := 0; i < rounds; i++ {
 		s, err := c.OpenStream()
 		if err != nil {
@@ -256,6 +257,7 @@ func TestReleaseAfterStopSendingFollowingFIN(t *testing.T) {
 		if err := peer.server.Do(ctx, func(*transport.ServerEndpoint) error { terminal = ps.SendStream.sendTerminal; return nil }); err != nil {
 			t.Fatal(err)
 		}
+		lastTerminal = terminal
 		var reset *StreamError
 		if errors.As(terminal, &reset) && reset.ErrorCode == 0x10c {
 			exercised++
@@ -263,6 +265,6 @@ func TestReleaseAfterStopSendingFollowingFIN(t *testing.T) {
 	}
 	t.Logf("STOP_SENDING after FIN processed in %d of %d rounds", exercised, rounds)
 	if exercised == 0 {
-		t.Fatal("no round had the server process STOP_SENDING after its FIN")
+		t.Fatal("no round had the server process STOP_SENDING after its FIN; last recorded send outcome:", lastTerminal)
 	}
 }
