@@ -340,17 +340,25 @@ func TestRetainStreamItemPrefixUsesSplitReservation(t *testing.T) {
 		t.Fatal("split charged", root.bytes-charge, "beyond the reservation, or left", root.delivery.reserved, "want", left)
 	}
 	// A further trim to 1150 bytes needs no split, since the split already
-	// cut at 1140, so it takes what is left of the reservation and is
-	// charged only its shortfall: at a full buffer it fails without changing
-	// anything, and with room for the shortfall it succeeds.
-	if err := c.retainStreamItemPrefix(root, 1150, complete); !errors.Is(err, ErrSendBuffer) {
+	// cut at 1140, so it takes its item from what is left.
+	if err := c.retainStreamItemPrefix(root, 1150, complete); err != nil {
+		t.Fatal("reserved second trim", err)
+	}
+	left -= item
+	if c.queuedBytes != full || root.bytes != charge || root.delivery.reserved != left || left >= item {
+		t.Fatal("second trim charged", root.bytes-charge, "beyond the reservation, or left", root.delivery.reserved, "want", left)
+	}
+	// A third needs more than is left, so it is charged only its shortfall:
+	// at a full buffer it fails without changing anything, and with room for
+	// the shortfall it succeeds.
+	if err := c.retainStreamItemPrefix(root, 1145, complete); !errors.Is(err, ErrSendBuffer) {
 		t.Fatal("trim beyond the reservation at a full buffer", err)
 	}
 	if c.queuedBytes != full || root.bytes != charge || root.delivery.reserved != left {
 		t.Fatal("failed trim changed charges")
 	}
 	c.queuedBytes = full - (item - left)
-	if err := c.retainStreamItemPrefix(root, 1150, complete); err != nil {
+	if err := c.retainStreamItemPrefix(root, 1145, complete); err != nil {
 		t.Fatal("trim with room", err)
 	}
 	if c.queuedBytes != full || root.bytes != charge+item-left || root.delivery.reserved != 0 {
