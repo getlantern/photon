@@ -271,3 +271,40 @@ func TestACKTooLargeToBundleStaysOwed(t *testing.T) {
 		t.Fatal("ACK no longer owed")
 	}
 }
+
+// A bundled ACK must not hold back a packet that could leave without it: with
+// exactly enough congestion window for the data alone, the data goes out
+// alone and the ACK stays owed.
+func TestACKNotBundledPastCongestionWindow(t *testing.T) {
+	client, server, now, next := settledPair(t, streamParameters())
+	if err := client.HandleDatagram(makePeerPacket(t, server, applicationSpace, next, wire.PingFrame{}), now); err != nil {
+		t.Fatal(err)
+	}
+	id, err := client.OpenStream(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.WriteStream(id, []byte("data"), true); err != nil {
+		t.Fatal(err)
+	}
+	frame, err := client.spaces[applicationSpace].queue[0].frame.Append(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alone := 1 + len(client.peerCID) + 4 + len(frame) + 16
+	client.recovery.BytesInFlight = client.congestion.Window() - uint64(alone)
+	b, err := client.NextDatagram(now)
+	if err != nil || b == nil {
+		t.Fatal("data held back by the bundled ACK", err)
+	}
+	frames := framesIn(t, server, b)
+	if len(frames) != 1 {
+		t.Fatalf("frames %d, want the stream frame alone", len(frames))
+	}
+	if _, ok := frames[0].(wire.StreamFrame); !ok {
+		t.Fatalf("frame %T, want the stream frame", frames[0])
+	}
+	if !ackScheduled(&client.spaces[applicationSpace]) {
+		t.Fatal("ACK no longer owed")
+	}
+}

@@ -103,13 +103,13 @@ func (c *Conn) bundleACK(s *numberSpace, space int, early bool, item *sendItem, 
 		payload, err = f.Append(payload)
 		return payload, 0, false, err
 	}
+	if _, ok := s.received.Largest(); !ok {
+		payload, err = f.Append(payload)
+		return payload, 0, false, err
+	}
 	ack, err := s.received.ackView(now, uint8(c.config.Parameters.AckDelayExponent))
 	if err != nil {
 		return nil, 0, false, err
-	}
-	if len(ack.Ranges) == 0 {
-		payload, err = f.Append(payload)
-		return payload, 0, false, err
 	}
 	if payload, err = ack.Append(payload); err != nil {
 		return nil, 0, false, err
@@ -118,9 +118,22 @@ func (c *Conn) bundleACK(s *numberSpace, space int, early bool, item *sendItem, 
 		return nil, 0, false, err
 	}
 	// A 1-RTT short header: first byte, the peer's CID, a 4-byte packet number.
-	if 1+len(c.peerCID)+4+len(payload)+16 <= c.basePacketPayloadLimit() {
+	// The ACK must not hold back a packet that could leave without it, so the
+	// bundled size must also pass congestion, pacing and the address budget.
+	size := 1 + len(c.peerCID) + 4 + len(payload) + 16
+	if size <= c.basePacketPayloadLimit() && c.canSendBundled(size, wire.InFlightFrame(f), now) {
 		return payload, ack.Ranges[0].Largest, true, nil
 	}
 	payload, err = f.Append(payload[:0])
 	return payload, 0, false, err
+}
+
+// canSendBundled reports whether a packet of size, grown by a bundled ACK,
+// still passes the congestion window, pacing and the anti-amplification
+// budget, which NextDatagram checks after the payload is built.
+func (c *Conn) canSendBundled(size int, inFlight bool, now time.Time) bool {
+	if !c.congestion.CanSend(c.recovery.BytesInFlight, size, inFlight, false) || !c.budget.CanSend(size) {
+		return false
+	}
+	return !inFlight || c.pacer.Delay(now, c.congestion.Window(), c.recovery.RTT.Smoothed, size) <= 0
 }
