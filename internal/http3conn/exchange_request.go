@@ -48,12 +48,14 @@ var errUploadStopped = errors.New("http3: response body closed; stop upload")
 // lifetime. It owns request.Body after argument validation. The returned response
 // owns the remaining exchange; its Body MUST be closed, including after EOF.
 // Close cancels unfinished upload, interrupts reads, joins upload and releases
-// QPACK/endpoint ownership. A peer STOP_SENDING, with any code, or an
-// H3_NO_ERROR connection close ends only the upload: the response stream's
-// own FIN or reset decides the outcome, so a complete response remains
-// readable while parent is not canceled (RFC 9114 section 4.1.1). A peer that
-// stops the upload and then neither answers nor resets is waited for until
-// parent ends. There are no retries or pooling.
+// QPACK/endpoint ownership. A peer STOP_SENDING, with any code but
+// H3_REQUEST_REJECTED, or an H3_NO_ERROR connection close ends only the
+// upload: the response stream's own FIN or reset decides the outcome, so a
+// complete response remains readable while parent is not canceled (RFC 9114
+// section 4.1.1). A peer that stops the upload and then neither answers nor
+// resets is waited for until parent ends. H3_REQUEST_REJECTED fails the
+// exchange at once, since no response follows. There are no retries or
+// pooling.
 // AllowConnect permits an endpoint-owned duplex upload without trailers; the
 // endpoint owns tunnel half-close. Expect/continue scheduling remains endpoint work.
 func ExchangeRequest(parent context.Context, request *http.Request, stream ClientExchangeStream, config ClientExchangeConfig) (response *http.Response, err error) {
@@ -127,13 +129,19 @@ func ExchangeRequest(parent context.Context, request *http.Request, stream Clien
 		if errors.As(cause, &closed) {
 			stopUpload(cause)
 		}
-		// A peer's STOP_SENDING ends only the upload, whatever its code: the
-		// response stream's own FIN or reset decides the request's outcome,
-		// and a complete response is never discarded because the request was
-		// stopped (RFC 9114 section 4.1.1).
+		// A peer's STOP_SENDING ends only the upload: the response stream's
+		// own FIN or reset decides the request's outcome, and a complete
+		// response is never discarded because the request was stopped (RFC
+		// 9114 section 4.1.1). H3_REQUEST_REJECTED is the exception: the peer
+		// won't process the request, so no response is coming, and failing at
+		// once lets the caller retry without waiting for the response reset.
 		var reset *quic.StreamError
 		if errors.As(cause, &reset) && reset.Remote {
-			stopUpload(cause)
+			if reset.ErrorCode == 0x10b {
+				task.fail(cause, 0x10c)
+			} else {
+				stopUpload(cause)
+			}
 		}
 	})
 	uploadDone := make(chan struct{})
@@ -203,10 +211,11 @@ func ExchangeRequest(parent context.Context, request *http.Request, stream Clien
 }
 
 // peerStoppedUpload reports whether the peer ended the upload, by closing the
-// connection normally or by STOP_SENDING with any code.
+// connection normally or by STOP_SENDING with any code but
+// H3_REQUEST_REJECTED, which fails the request.
 func peerStoppedUpload(err error) bool {
 	var reset *quic.StreamError
-	return normalUploadStop(err) || errors.As(err, &reset) && reset.Remote
+	return normalUploadStop(err) || errors.As(err, &reset) && reset.Remote && reset.ErrorCode != 0x10b
 }
 
 // An H3_NO_ERROR connection close ends an unfinished upload like the same code
