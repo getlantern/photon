@@ -1,6 +1,10 @@
 package transport
 
 import (
+	"bytes"
+	"fmt"
+	"net/netip"
+	"syscall"
 	"testing"
 	"time"
 
@@ -306,5 +310,63 @@ func TestACKNotBundledPastCongestionWindow(t *testing.T) {
 	}
 	if !ackScheduled(&client.spaces[applicationSpace]) {
 		t.Fatal("ACK no longer owed")
+	}
+}
+
+// A bundled ACK on a large base-path packet the OS rejects with EMSGSIZE never
+// left: the rollback must owe it again, now, and restore the key-phase ackSent
+// it may have set, for both STREAM and DATAGRAM packets.
+func TestBundledACKRestoredOnLargeWriteRejection(t *testing.T) {
+	for _, datagram := range []bool{false, true} {
+		t.Run(fmt.Sprintf("datagram=%t", datagram), func(t *testing.T) {
+			p := streamParameters()
+			p.MaxDatagramFrameSize = 65535
+			c, peer := testPair(t, wire.Version1, p)
+			c.config.InitialPacketSize = 1452
+			drivePair(t, c, peer, false, false)
+			now := time.Unix(101, 0)
+			ackNow(c)
+			drain(t, c, now)
+			largest, _ := c.spaces[applicationSpace].received.Largest()
+			if err := c.HandleDatagram(makePeerPacket(t, peer, applicationSpace, largest+1, wire.PingFrame{}), now); err != nil {
+				t.Fatal(err)
+			}
+			e, err := NewClientEndpoint(c, netip.MustParseAddrPort("127.0.0.1:443"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer e.Close()
+			payload := bytes.Repeat([]byte{43}, 1252)
+			if datagram {
+				err = c.SendDatagram(payload)
+			} else {
+				var id uint64
+				if id, err = c.OpenStream(false); err == nil {
+					_, err = c.WriteStream(id, payload, true)
+				}
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			ackSent := c.applicationKeys.ackSent
+			out, err := e.NextDatagram(now)
+			if err != nil || out == nil || out.baseLarge == nil || !out.baseLarge.ack {
+				t.Fatal("want a large base packet carrying the ACK", err)
+			}
+			if ackScheduled(&c.spaces[applicationSpace]) {
+				t.Fatal("setup: ACK still owed after bundling")
+			}
+			c.applicationKeys.ackSent = !ackSent // as if the bundled ACK had set it
+			e.HandleWriteError(out, syscall.EMSGSIZE, now)
+			if c.closed {
+				t.Fatal("rejection closed the connection")
+			}
+			if !c.spaces[applicationSpace].ackPending {
+				t.Fatal("rejected packet's ACK not owed again")
+			}
+			if c.applicationKeys.ackSent != ackSent {
+				t.Fatal("key-phase ackSent not restored")
+			}
+		})
 	}
 }

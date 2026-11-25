@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -40,10 +41,14 @@ func TestUDPServerReceiveBurstSharesOneACK(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	// Hold the owner so the burst queues up behind it.
-	entered, release := make(chan struct{}), make(chan struct{})
+	entered, hold := make(chan struct{}), make(chan struct{})
+	// Deferred after runtime.Close, so it runs first: a failure while the
+	// owner is held must not leave Close waiting on it.
+	release := sync.OnceFunc(func() { close(hold) })
+	defer release()
 	held := make(chan error, 1)
 	go func() {
-		_, err := runtime.invoke(ctx, func(*ServerEndpoint) error { close(entered); <-release; return nil }, false)
+		_, err := runtime.invoke(ctx, func(*ServerEndpoint) error { close(entered); <-hold; return nil }, false)
 		held <- err
 	}()
 	select {
@@ -65,7 +70,7 @@ func TestUDPServerReceiveBurstSharesOneACK(t *testing.T) {
 		case <-time.After(time.Millisecond):
 		}
 	}
-	close(release)
+	release()
 	if err := <-held; err != nil {
 		t.Fatal(err)
 	}
