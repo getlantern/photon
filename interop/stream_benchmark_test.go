@@ -179,8 +179,9 @@ var wanScenarios = []struct {
 // large enough not to limit either server: 8 MiB per stream, 16 MiB in all.
 // Run with a fixed -benchtime, such as -benchtime=5x, since exchanges are slow.
 //
-// Besides time per exchange, it reports, per exchange: datagrams the client
-// received from the server (srv-pkts/op), packets the client declared lost
+// Besides time per exchange, it reports, per exchange: QUIC packets the
+// client received and processed from the server (srv-pkts/op; after the
+// handshake, about one per datagram), packets the client declared lost
 // (cli-lost/op), and datagrams the relay dropped toward the client
 // (drop-down/op) and toward the server (drop-up/op).
 func BenchmarkServerStreamEchoWAN(b *testing.B) {

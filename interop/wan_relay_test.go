@@ -9,9 +9,11 @@ import (
 	"time"
 )
 
-// wanLink shapes one direction of a simulated path: a bottleneck of rate
-// bytes per second (0 is unlimited) with a drop-tail queue holding at most
-// queue of backlog, random loss, then a fixed one-way propagation delay.
+// wanLink shapes one direction of a simulated path: random loss, then a
+// bottleneck of rate bytes per second (0 is unlimited) with a drop-tail queue
+// holding at most queue of backlog, then a fixed one-way propagation delay.
+// Loss is drawn first, for every packet, so the same packet indices are lost
+// whatever the queue does; a lost packet uses no bottleneck time.
 type wanLink struct {
 	delay time.Duration
 	loss  float64
