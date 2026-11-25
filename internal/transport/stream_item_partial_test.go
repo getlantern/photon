@@ -322,7 +322,7 @@ func TestRetainStreamItemPrefixUsesSplitReservation(t *testing.T) {
 	c.queuedBytes = full
 	complete := func(item *sendItem) error { c.queuedBytes -= item.bytes; return nil }
 	item := streamDeliveryItemCharge + streamBranchCharge
-	split := 2*streamDeliveryItemCharge + streamBranchCharge
+	split := streamSplitCharge
 	// The first trim creates the group and adds one item, from the
 	// reservation, keeping one split for the 1200-byte prefix left.
 	if err := c.retainStreamItemPrefix(root, 1200, complete); err != nil {

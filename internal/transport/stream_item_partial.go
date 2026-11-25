@@ -101,7 +101,7 @@ func prepareStreamItemPrefix(root *sendItem, end uint64) (*streamItemPrefixPlan,
 	}
 	// The trim takes only the reservation beyond what those splits need;
 	// anything more is charged as admission, which can fail recoverably.
-	plan.usedReservation = min(extra, max(0, reserved-splits*(2*streamDeliveryItemCharge+streamBranchCharge)))
+	plan.usedReservation = min(extra, max(0, reserved-splits*streamSplitCharge))
 	plan.additional = extra - plan.usedReservation
 	if materialize {
 		plan.group = &streamItemDelivery{root: root, ledger: ledger, reserved: reserved, branches: make(map[*sendItem][2]*sendItem), items: make([]*sendItem, 1, 1+len(plan.changes))}
