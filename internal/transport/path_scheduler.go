@@ -22,7 +22,7 @@ func (c *Conn) nextMultipathPacket(now time.Time) (uint64, []byte, error) {
 	if c.multipath == nil || !c.confirmed {
 		return 0, nil, ErrHandshakeUnconfirmed
 	}
-	if err := c.elicitKeyUpdateACK(); err != nil {
+	if err := c.updateKeysBeforeLimit(now); err != nil {
 		return 0, nil, c.fail(err)
 	}
 	p := c.multipath

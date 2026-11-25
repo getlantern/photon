@@ -31,6 +31,7 @@ type applicationKeys struct {
 	phase, updated, ackSent         bool
 	previousExpiry                  time.Time
 	updateNotBefore                 time.Time
+	elicitedAt                      time.Time // last PING queued to unblock an update
 }
 
 func (c *Conn) keyNumbers(pathID uint32) *keyPhaseNumbers {
@@ -308,16 +309,16 @@ func (c *Conn) noteKeyPhaseWriteACK(f wire.Frame, now time.Time) {
 	}
 }
 
-// elicitKeyUpdateACK queues a PING when the write keys near their AEAD limit
-// but the update that limit forces would be refused: after the peer updated
-// keys, RFC 9001 section 6.1 allows ours only once a packet sent with the
-// current keys is acknowledged, and an endpoint that has sent only ACKs since
-// (a one-way download, say) has nothing the peer will acknowledge. Without
-// this the connection fails at the limit. The PING starts at 15/16 of the
-// limit and is queued again if nothing ack-eliciting is left in flight.
-func (c *Conn) elicitKeyUpdateACK() error {
-	k := &c.applicationKeys
-	if !c.confirmed || !k.updated || (k.writeAcknowledged && !k.awaitingRead) {
+// updateKeysBeforeLimit updates the write keys well before their AEAD limit,
+// once they reach 3/4 of it, so the update the limit would force is never
+// needed. If the update is refused because nothing sent with the current keys
+// has been acknowledged yet (RFC 9001 section 6.1), which happens after the
+// peer updated keys and this endpoint has sent only ACKs since, it queues a
+// PING for the peer to acknowledge, at most once per PTO and only when the
+// send buffer has room. Other refusals, such as multipath update spacing, are
+// waited out; the remaining quarter of the limit leaves time for them.
+func (c *Conn) updateKeysBeforeLimit(now time.Time) error {
+	if !c.confirmed {
 		return nil
 	}
 	keys := c.writeKeys(applicationSpace)
@@ -325,24 +326,45 @@ func (c *Conn) elicitKeyUpdateACK() error {
 		return nil
 	}
 	limit, _ := keys.UsageLimits()
-	if c.sealed[applicationSpace] < limit-limit/16 || c.applicationInFlight() || c.pingQueued() {
+	if c.sealed[applicationSpace] < limit-limit/4 {
 		return nil
 	}
-	return c.enqueue(applicationSpace, wire.PingFrame{}, 1)
-}
-
-// applicationInFlight reports whether any application packet is in flight,
-// on any path.
-func (c *Conn) applicationInFlight() bool {
-	if c.multipath == nil || !c.confirmed {
-		return c.recovery.BytesInFlight > 0
+	err := c.InitiateKeyUpdateAt(now)
+	if err == nil || errors.Is(err, ErrSendBuffer) {
+		return nil
 	}
-	for _, state := range c.multipath.paths {
-		if app := state.application; app != nil && app.sent.BytesInFlight > 0 {
-			return true
+	if !errors.Is(err, ErrKeyUpdate) {
+		return err
+	}
+	k := &c.applicationKeys
+	if !k.updated || (k.writeAcknowledged && !k.awaitingRead) || c.pingQueued() {
+		return nil
+	}
+	maxDelay := c.keepAliveACKDelay()
+	pto := c.recovery.RTT.PTO(true, true, maxDelay, 0)
+	var selected uint64
+	if c.multipath != nil {
+		var found bool
+		if selected, pto, found = c.keepAlivePath(maxDelay); !found {
+			return nil
 		}
 	}
-	return false
+	if !k.elicitedAt.IsZero() && now.Before(k.elicitedAt.Add(pto)) {
+		return nil
+	}
+	if c.availableSendBytes() <= 0 {
+		return nil
+	}
+	k.elicitedAt = now
+	if c.multipath == nil {
+		err = c.enqueue(applicationSpace, wire.PingFrame{}, 1)
+	} else {
+		err = c.queueFrameOnPath(selected, wire.PingFrame{})
+	}
+	if errors.Is(err, ErrSendBuffer) {
+		return nil
+	}
+	return err
 }
 
 // pingQueued reports whether a PING is already queued in the application

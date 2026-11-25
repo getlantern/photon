@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -63,12 +64,50 @@ func clientLimit(t *testing.T, c *Conn) uint64 {
 	return limit
 }
 
-// Near the AEAD limit, an endpoint that has sent only ACKs since the peer's
-// key update sends a PING, so its own forced update at the limit is allowed.
+func threshold(t *testing.T, c *Conn) uint64 {
+	t.Helper()
+	limit := clientLimit(t, c)
+	return limit - limit/4
+}
+
+// sendOne returns the client's next datagram, failing on a connection error.
+func sendOne(t *testing.T, c *Conn, now time.Time) []byte {
+	t.Helper()
+	b, err := c.NextDatagram(now)
+	if err != nil || c.err != nil {
+		t.Fatal(err, c.err)
+	}
+	return b
+}
+
+// An update that is allowed happens at 3/4 of the AEAD limit, without a PING.
+func TestKeyUpdateBeforeAEADLimit(t *testing.T) {
+	client, server := testPair(t, wire.Version1, streamParameters())
+	drivePair(t, client, server, false, false)
+	now := time.Unix(200, 0)
+	phase := client.applicationKeys.phase
+	client.sealed[applicationSpace] = threshold(t, client) - 1
+	sendOne(t, client, now)
+	if client.applicationKeys.phase != phase {
+		t.Fatal("updated keys before the threshold")
+	}
+	client.sealed[applicationSpace] = threshold(t, client)
+	sendOne(t, client, now)
+	if client.applicationKeys.phase == phase || client.sealed[applicationSpace] >= threshold(t, client) {
+		t.Fatal("keys not updated at the threshold", client.sealed[applicationSpace])
+	}
+	if client.pingQueued() {
+		t.Fatal("PING queued for an allowed update")
+	}
+}
+
+// After the peer updated keys and this endpoint sent only ACKs, the update at
+// the threshold is refused, so a PING goes out; once it is acknowledged, the
+// update goes ahead, long before the limit.
 func TestKeyUpdatePINGBeforeAEADLimit(t *testing.T) {
 	client, server, now := peerUpdatedPair(t)
-	limit := clientLimit(t, client)
-	client.sealed[applicationSpace] = limit - limit/16
+	phase := client.applicationKeys.phase
+	client.sealed[applicationSpace] = threshold(t, client)
 	out := drain(t, client, now)
 	if len(out) != 1 {
 		t.Fatal("datagrams", len(out))
@@ -81,7 +120,7 @@ func TestKeyUpdatePINGBeforeAEADLimit(t *testing.T) {
 		t.Fatalf("frame %T, want a PING", frames[0])
 	}
 	if drained := drain(t, client, now); len(drained) != 0 {
-		t.Fatal("PING repeated while one is in flight")
+		t.Fatal("PING repeated within a PTO")
 	}
 	if err := server.HandleDatagram(out[0], now); err != nil {
 		t.Fatal(err)
@@ -95,25 +134,60 @@ func TestKeyUpdatePINGBeforeAEADLimit(t *testing.T) {
 	if !client.applicationKeys.writeAcknowledged {
 		t.Fatal("PING's acknowledgment did not unblock the update")
 	}
-	client.sealed[applicationSpace] = limit
-	if err := client.enqueue(applicationSpace, wire.PingFrame{}, 1); err != nil {
-		t.Fatal(err)
-	}
-	if b, err := client.NextDatagram(now); err != nil || b == nil || client.err != nil {
-		t.Fatal("send at the AEAD limit failed", err, client.err)
+	sendOne(t, client, now)
+	if client.applicationKeys.phase == phase || client.sealed[applicationSpace] >= threshold(t, client) {
+		t.Fatal("keys not updated once the PING was acknowledged", client.sealed[applicationSpace])
 	}
 }
 
-// Without that PING, the forced update at the limit is refused and the
-// connection fails; this is the failure the PING prevents.
+// A PING that gets no acknowledgment is replaced after a PTO, not before.
+func TestKeyUpdatePINGRepeatsAfterPTO(t *testing.T) {
+	client, _, now := peerUpdatedPair(t)
+	client.sealed[applicationSpace] = threshold(t, client)
+	if out := drain(t, client, now); len(out) != 1 {
+		t.Fatal("first PING", len(out))
+	}
+	pto := client.recovery.RTT.PTO(true, true, client.keepAliveACKDelay(), 0)
+	if out := drain(t, client, now.Add(pto-time.Millisecond)); len(out) != 0 {
+		t.Fatal("PING repeated before a PTO", len(out))
+	}
+	if !client.pingQueued() {
+		if err := client.updateKeysBeforeLimit(now.Add(pto)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !client.pingQueued() {
+		t.Fatal("no replacement PING after a PTO")
+	}
+}
+
+// A full send buffer skips the PING instead of failing the connection.
+func TestKeyUpdatePINGSkippedWhenSendBufferFull(t *testing.T) {
+	client, _, now := peerUpdatedPair(t)
+	client.sealed[applicationSpace] = threshold(t, client)
+	client.queuedBytes = maxSendBytes
+	if err := client.updateKeysBeforeLimit(now); err != nil || client.err != nil {
+		t.Fatal("full send buffer failed the connection", err, client.err)
+	}
+	if client.pingQueued() {
+		t.Fatal("PING queued into a full send buffer")
+	}
+}
+
+// Without an acknowledged packet under the current keys, the update the limit
+// forces is refused and the connection fails: the failure the early update
+// and its PING prevent.
 func TestAEADLimitWithoutAcknowledgedKeysFails(t *testing.T) {
 	client, _, now := peerUpdatedPair(t)
 	client.sealed[applicationSpace] = clientLimit(t, client)
+	client.applicationKeys.elicitedAt = now // no PING this time
 	if err := client.enqueue(applicationSpace, wire.PingFrame{}, 1); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.NextDatagram(now); err == nil && client.err == nil {
-		t.Fatal("send at the limit with an unacknowledged update did not fail")
+	_, err := client.NextDatagram(now)
+	var transport *TransportError
+	if !errors.As(err, &transport) || transport.Code != 0xf {
+		t.Fatal("want the AEAD limit error", err)
 	}
 }
 
@@ -139,8 +213,7 @@ func TestMultipathKeyUpdatePINGBeforeAEADLimit(t *testing.T) {
 	if !k.updated || k.writeAcknowledged || k.awaitingRead {
 		t.Fatal("setup: want an unacknowledged follow of the peer's update", k.updated, k.writeAcknowledged, k.awaitingRead)
 	}
-	limit := clientLimit(t, client)
-	client.sealed[applicationSpace] = limit - limit/16
+	client.sealed[applicationSpace] = threshold(t, client)
 	sawPING := false
 	for i := 0; i < 8 && !sawPING; i++ {
 		_, b, err := client.nextMultipathPacket(now)

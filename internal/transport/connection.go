@@ -1219,7 +1219,7 @@ func (c *Conn) NextDatagram(now time.Time) ([]byte, error) {
 	if err := c.expirePathValidation(now); err != nil {
 		return nil, err
 	}
-	if err := c.elicitKeyUpdateACK(); err != nil {
+	if err := c.updateKeysBeforeLimit(now); err != nil {
 		return nil, c.fail(err)
 	}
 	if c.baseMTUNeedsValidation {
