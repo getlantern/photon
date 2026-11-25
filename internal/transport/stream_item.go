@@ -13,6 +13,10 @@ const streamDeliveryItemCharge = 128
 const streamGroupCharge = 384
 const streamBranchCharge = 128
 
+// streamSplitCharge is one split's charge: its two new items and the branch
+// entry for them.
+const streamSplitCharge = 2*streamDeliveryItemCharge + streamBranchCharge
+
 // streamGroupCreationCharge is a new split group's charge, for a ledger with
 // covered words of coverage.
 func streamGroupCreationCharge(covered int) int {
@@ -41,7 +45,7 @@ func (c *Conn) splitQueuedStream(s *numberSpace, index, maxPayload int) error {
 		return err
 	}
 	group := item.delivery
-	extra := 2*streamDeliveryItemCharge + streamBranchCharge
+	extra := streamSplitCharge
 	if group == nil || group.ledger == nil {
 		ledger, err := newStreamDelivery(f)
 		if err != nil {
@@ -147,8 +151,9 @@ func markSendSubtreeAcknowledged(item *sendItem) {
 // fragments charges: a new group, then one split per fragment after the
 // first, as splitQueuedStream charges them. Fragments of the portable payload
 // fit every path, so they never split again. It also covers one trim's new
-// item, so a stream's first partial reset, such as trimming its FIN, needs no
-// further room.
+// item, so the first partial reset of a frame that carries a reservation,
+// such as trimming its FIN, needs no further room. A frame within the
+// portable payload carries none, and its trim is charged as admission.
 func streamSplitReservation(n int) int {
 	if n <= portableStreamPayload {
 		return 0
@@ -168,7 +173,7 @@ func streamSplits(n int) int {
 // streamSplitsCharge is what the splits of an n-byte frame into portable
 // fragments charge once its group exists.
 func streamSplitsCharge(n int) int {
-	return streamSplits(n) * (2*streamDeliveryItemCharge + streamBranchCharge)
+	return streamSplits(n) * streamSplitCharge
 }
 
 // Charge full fallback capacity at admission, but materialize maps, coverage
