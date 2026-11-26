@@ -138,8 +138,12 @@ func (d *deliveryRate) sample(s *rateSampler, now time.Time, minRTT time.Duratio
 	return rs
 }
 
-// LostBytes is the path's in-flight bytes declared lost so far.
+// LostBytes is the path's in-flight bytes declared lost so far, MTU probes
+// aside.
 func (r *Sent) LostBytes() uint64 { return r.rate.lost }
+
+// DeliveredBytes is the path's in-flight bytes delivered so far.
+func (r *Sent) DeliveredBytes() uint64 { return r.rate.delivered }
 
 // AppLimited reports whether the path is in an application-limited phase:
 // packets sent now are marked so their samples are known to understate it.

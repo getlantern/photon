@@ -31,6 +31,11 @@ type Controller interface {
 	// OnPersistentCongestion reports persistent congestion (RFC 9002 section
 	// 7.6).
 	OnPersistentCongestion()
+	// ForcesAppLimited reports whether the controller is holding the
+	// sender below what the path can carry, as BBR's ProbeRTT does, so the
+	// owner marks the path application limited and its rate samples are
+	// known to understate the path.
+	ForcesAppLimited() bool
 	// Reset returns the controller to its initial state for a new network
 	// path (RFC 9000 section 9.4), in place, since the owner may share it
 	// between views of the same path.
@@ -66,8 +71,11 @@ type SentEvent struct {
 type LossEvent struct {
 	Lost []Packet
 	// TotalLost is the path's lost in-flight bytes, these included, which
-	// with each packet's Delivery.Lost gives the loss since it was sent.
+	// with each packet's Delivery.Lost gives the loss since it was sent. MTU
+	// probes are not counted: their loss is not congestion.
 	TotalLost uint64
+	// TotalDelivered is the path's delivered in-flight bytes.
+	TotalDelivered uint64
 	// Flight is the bytes in flight once these packets are removed.
 	Flight uint64
 	Now    time.Time

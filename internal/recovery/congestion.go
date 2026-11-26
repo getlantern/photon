@@ -34,6 +34,9 @@ func (c *NewReno) Reset(maxDatagram uint64) {
 // PacingRate is 0: NewReno is paced from its window.
 func (c *NewReno) PacingRate() uint64 { return 0 }
 
+// ForcesAppLimited is false: NewReno never holds the sender back.
+func (c *NewReno) ForcesAppLimited() bool { return false }
+
 // OnPacketSent does nothing: NewReno needs only ACK and loss events.
 func (c *NewReno) OnPacketSent(SentEvent) {}
 

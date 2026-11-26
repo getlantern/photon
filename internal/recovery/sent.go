@@ -277,7 +277,7 @@ func (r *Sent) OnACK(space Space, f wire.AckFrame, now time.Time, delay, maxDela
 	// After loss detection, so the sample counts this ACK's losses.
 	events.Rate = r.rate.sample(&sampler, now, r.RTT.Minimum, r.RTT.Sampled)
 	for _, p := range events.Lost {
-		if p.InFlight {
+		if p.InFlight && !p.MTUProbe {
 			events.Rate.NewlyLost += uint64(p.Bytes)
 		}
 	}
@@ -316,7 +316,8 @@ func (r *Sent) DetectLoss(space Space, now time.Time) []Packet {
 	order(lost)
 	for _, p := range lost {
 		r.ecnPath.Lost(space, p.Number)
-		if p.InFlight {
+		// A lost MTU probe shows the path is smaller, not congested.
+		if p.InFlight && !p.MTUProbe {
 			r.rate.lost += uint64(p.Bytes)
 		}
 	}

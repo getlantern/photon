@@ -19,6 +19,24 @@ import (
 //     (RFC 9002 section 7.6) stands in for the draft's RTO.
 //   - QUIC acknowledgments are selective, so C.has_selective_acks is true.
 //   - ECN is not used, as the draft leaves it experimental.
+//   - A loss event, for the Startup loss exit, is one loss detection.
+//   - As in Linux, the initial pacing rate is recomputed from the first RTT
+//     sample; the draft's 1 ms assumption would leave Startup unpaced.
+//
+// As in draft-07, and unlike earlier BBR versions, recovery doesn't cut the
+// window for each loss or conserve packets: it saves the window on entering
+// recovery and restores it on leaving, and the loss response is the model's
+// (inflight_longterm, bw_shortterm, inflight_shortterm). ProbeRTT starts when
+// the 10 s min_rtt window expires.
+//   - A loss event, for the Startup loss exit, is one loss detection.
+//   - As in Linux, the initial pacing rate is recomputed from the first RTT
+//     sample; the draft's 1 ms assumption would leave Startup unpaced.
+//
+// As in draft-07, and unlike earlier BBR versions, recovery doesn't cut the
+// window for each loss or conserve packets: it saves the window on entering
+// recovery and restores it on leaving, and the loss response is the model's
+// (inflight_longterm, bw_shortterm, inflight_shortterm). ProbeRTT starts when
+// the 10 s min_rtt window expires.
 type BBR struct {
 	now           time.Time // the current event's time
 	smss          uint64    // maximum datagram size
@@ -36,7 +54,11 @@ type BBR struct {
 	drainStartRound           uint64
 	delivered, inflight, lost uint64 // the path's C.delivered, C.inflight, C.lost
 	appLimited                bool   // whether the latest ACK found the sender app limited
-	cwndLimited               bool   // C.is_cwnd_limited
+	// cwndLimited is C.is_cwnd_limited: whether a send filled the window
+	// in the last packet-timed round trip. cwndLimitedInRound tracks the
+	// current round.
+	cwndLimited, cwndLimitedInRound bool
+	hasSeenRTT                      bool
 
 	maxBwFilter         maxFilter
 	cycleCount          uint64
@@ -166,9 +188,18 @@ func (b *BBR) at(now time.Time) {
 	}
 }
 
-// OnPacketSent is the draft's OnTransmit: HandleRestartFromIdle.
+// ForcesAppLimited is true in ProbeRTT, whose reduced window holds the
+// sender below what the path can carry (the draft's MarkConnectionAppLimited
+// in HandleProbeRTT).
+func (b *BBR) ForcesAppLimited() bool { return b.state == bbrProbeRTT }
+
+// OnPacketSent is the draft's OnTransmit: HandleRestartFromIdle. It also
+// notes whether this send filled the window.
 func (b *BBR) OnPacketSent(e SentEvent) {
 	b.at(e.Now)
+	if e.Flight+uint64(e.Bytes)+b.smss > b.cwnd {
+		b.cwndLimited, b.cwndLimitedInRound = true, true
+	}
 	if e.Flight == 0 && e.AppLimited {
 		b.idleRestart = true
 		b.extraAckedStart = e.Now
@@ -193,21 +224,36 @@ func (b *BBR) OnPersistentCongestion() {
 }
 
 // OnLoss runs HandleLostPacket for each lost in-flight packet, entering Fast
-// Recovery on the first.
+// Recovery if not already in it. One detection is one loss event. MTU probes
+// are skipped: their loss is not congestion.
 func (b *BBR) OnLoss(e LossEvent) {
 	b.at(e.Now)
-	b.inflight, b.lost = e.Flight, e.TotalLost
+	b.inflight, b.lost, b.delivered = e.Flight, e.TotalLost, e.TotalDelivered
+	var batch uint64
 	for _, p := range e.Lost {
-		if !p.InFlight {
+		if p.InFlight && !p.MTUProbe {
+			batch += uint64(p.Bytes)
+		}
+	}
+	if batch == 0 {
+		return
+	}
+	if !b.inRecovery {
+		// OnEnterFastRecovery.
+		b.saveCwnd()
+		b.saveStateUponLoss()
+		b.inRecovery, b.recoveryStart = true, e.Now
+	}
+	b.noteLoss()
+	// Each packet sees the loss as it stood at its turn: the total before
+	// this batch, plus the packets up to and including it.
+	lost := e.TotalLost - batch
+	for _, p := range e.Lost {
+		if !p.InFlight || p.MTUProbe {
 			continue
 		}
-		if !b.inRecovery {
-			// OnEnterFastRecovery.
-			b.saveCwnd()
-			b.saveStateUponLoss()
-			b.inRecovery, b.recoveryStart = true, e.Now
-		}
-		b.handleLostPacket(p, e.TotalLost)
+		lost += uint64(p.Bytes)
+		b.handleLostPacket(p, lost)
 	}
 }
 
@@ -219,10 +265,15 @@ func (b *BBR) OnACK(e ACKEvent) {
 		return
 	}
 	b.at(e.Now)
-	b.inflight, b.delivered, b.appLimited, b.cwndLimited = e.Flight, rs.TotalDelivered, e.Limited, !e.Limited
+	b.inflight, b.delivered, b.appLimited = e.Flight, rs.TotalDelivered, e.Limited
+	if !b.hasSeenRTT && rs.RTT > 0 {
+		// InitPacingRate, now that there is an RTT to pace over.
+		b.hasSeenRTT = true
+		b.pacingRate = bbrStartupPacingGain * float64(b.initialWindow) / rs.RTT.Seconds()
+	}
 	if b.inRecovery {
 		for _, p := range e.Acked {
-			if p.SentAt.After(b.recoveryStart) {
+			if p.InFlight && p.SentAt.After(b.recoveryStart) {
 				// Recovery is repaired: restore the last known good window,
 				// which the model bounds below.
 				b.inRecovery = false
@@ -583,6 +634,7 @@ func (b *BBR) updateRound(rs RateSample) {
 		b.roundCount++
 		b.roundsSinceProbeUp++
 		b.roundStart = true
+		b.cwndLimited, b.cwndLimitedInRound = b.cwndLimitedInRound, false
 	} else {
 		b.roundStart = false
 	}
@@ -646,7 +698,6 @@ func (b *BBR) noteLoss() {
 }
 
 func (b *BBR) handleLostPacket(p Packet, totalLost uint64) {
-	b.noteLoss()
 	if !b.checkProbeLoss {
 		return
 	}
