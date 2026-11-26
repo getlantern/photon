@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"os"
+	"slices"
 	"testing"
 	"time"
 )
@@ -163,6 +164,15 @@ type ceBlind struct{ Controller }
 func (c ceBlind) OnACK(e ACKEvent) {
 	e.Rate.CE, e.Rate.NewCE = 0, 0
 	c.Controller.OnACK(e)
+}
+
+func (c ceBlind) OnLoss(e LossEvent) {
+	e.TotalCE = 0
+	e.Lost = slices.Clone(e.Lost)
+	for i := range e.Lost {
+		e.Lost[i].Delivery.CE = 0
+	}
+	c.Controller.OnLoss(e)
 }
 
 func newCEBlindBBRFlow(seed uint64) func() Controller {

@@ -274,7 +274,10 @@ func (r *Sent) OnACK(space Space, f wire.AckFrame, now time.Time, delay, maxDela
 		s.hasAck = true
 	}
 	events.Lost = r.DetectLoss(space, now)
-	if events.ECNCongestion {
+	// Validated marks, attributed to this ledger's newly acknowledged
+	// packets; ECNCongestion additionally needs a send time for NewReno's
+	// recovery epoch.
+	if events.ECN.CE > 0 {
 		var count uint64
 		for _, p := range events.Acked {
 			if p.InFlight {

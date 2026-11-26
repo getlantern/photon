@@ -309,10 +309,23 @@ func TestBBRCountsOneLossEventPerACK(t *testing.T) {
 	if b.lossEventsInRound != 2 {
 		t.Fatal("marks on a second ACK at the same instant counted", b.lossEventsInRound, "loss events in all, want 2")
 	}
+	// A timer-detected loss, then an ACK whose detection finds only packets
+	// not in flight: its marks are a new event.
 	b = testBBR()
-	b.OnACK(ACKEvent{Rate: RateSample{NewCE: 1200}, Now: now})
-	if b.lossEventsInRound != 1 {
-		t.Fatal("marks with nothing newly acknowledged counted", b.lossEventsInRound, "loss events")
+	b.OnLoss(LossEvent{Lost: []Packet{{Bytes: 1200, InFlight: true}}, TotalLost: 1200, TotalDelivered: 50000, Now: now})
+	b.OnLoss(LossEvent{Lost: []Packet{{Bytes: 50}}, TotalLost: 1200, TotalDelivered: 50000, Now: now})
+	b.OnACK(ACKEvent{Acked: []Packet{{SentAt: now, Bytes: 1200, InFlight: true}}, Rate: RateSample{NewlyAcked: 1200, TotalDelivered: 51200, NewCE: 1200, CE: 1200}, Lost: true, Now: now})
+	if b.lossEventsInRound != 2 {
+		t.Fatal("marks after a timer loss counted", b.lossEventsInRound, "loss events in all, want 2")
+	}
+	// Persistent congestion between an ACK's loss and its marks starts the
+	// model over; the marks aren't charged to it as a second event.
+	b = testBBR()
+	b.OnLoss(LossEvent{Lost: []Packet{{Bytes: 1200, InFlight: true}}, TotalLost: 1200, TotalDelivered: 50000, Now: now})
+	b.OnPersistentCongestion()
+	b.OnACK(ACKEvent{Acked: []Packet{{SentAt: now, Bytes: 1200, InFlight: true}}, Rate: RateSample{NewlyAcked: 1200, TotalDelivered: 51200, NewCE: 1200, CE: 1200}, Lost: true, Now: now})
+	if b.lossInRound {
+		t.Fatal("marks charged to the model persistent congestion reset")
 	}
 }
 
