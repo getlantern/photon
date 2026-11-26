@@ -19,13 +19,15 @@ import (
 //     (RFC 9002 section 7.6) stands in for the draft's RTO.
 //   - QUIC acknowledgments are selective, so C.has_selective_acks is true.
 //   - A loss event, for the Startup loss exit, is one loss detection.
-//   - As in Linux, the initial pacing rate is recomputed from the first RTT
-//     sample; the draft's 1 ms assumption would leave Startup unpaced.
-//   - An ECN-CE increase is a loss event for the short-term model, as RFC
-//     3168 asks of an ECN-capable sender; the draft leaves ECN experimental.
+//   - The initial pacing rate is recomputed when the first smoothed RTT
+//     arrives, as the draft's prose and Linux do; its pseudocode computes it
+//     only at init, where a new QUIC path has no RTT and would assume 1 ms.
 //   - Persistent congestion resets the controller as for a new path, from
-//     the minimum window, rather than restoring the pre-collapse window once
-//     recovery ends (RFC 9002 section 7.6.2).
+//     BBR's minimum window, rather than restoring the pre-collapse window
+//     once recovery ends (RFC 9002 section 7.6.2).
+//
+// The draft requires an ECN-capable sender to treat CE marks as congestion
+// but specifies no response; an ECN-CE increase is handled as a loss event.
 //   - Spurious loss recovery is not undone (the draft's section 5.5.11): the
 //     transport has no signal that a whole recovery episode was spurious.
 //
