@@ -32,7 +32,7 @@ func (c *Conn) CongestionStats() (window, flight uint64) {
 
 func (c *Conn) onCongestionLoss(lost []recovery.Packet, now time.Time) {
 	c.loss.lost(lost)
-	c.congestion.OnLoss(recovery.LossEvent{Lost: lost, TotalLost: c.recovery.LostBytes(), TotalDelivered: c.recovery.DeliveredBytes(), Flight: c.recovery.BytesInFlight, Now: now})
+	c.congestion.OnLoss(recovery.LossEvent{Lost: lost, TotalLost: c.recovery.LostBytes(), TotalDelivered: c.recovery.DeliveredBytes(), TotalCE: c.recovery.CEBytes(), Flight: c.recovery.BytesInFlight, Now: now})
 	delay := 25 * time.Millisecond
 	if c.peerParams != nil {
 		delay = time.Duration(c.peerParams.MaxAckDelay) * time.Millisecond

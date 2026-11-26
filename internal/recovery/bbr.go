@@ -95,6 +95,7 @@ type BBR struct {
 	lossRoundStart     bool
 	lossInRound        bool
 	lossEventsInRound  int
+	lossNotedAt        time.Time // the last loss detection's time
 	inRecovery         bool
 	recoveryStart      time.Time
 
@@ -265,6 +266,7 @@ func (b *BBR) OnLoss(e LossEvent) {
 		b.inRecovery, b.recoveryStart = true, e.Now
 	}
 	b.noteLoss()
+	b.lossNotedAt = e.Now
 	state := b.state
 	// Each packet sees the loss as it stood at its turn: the total before
 	// this batch, plus the packets up to and including it.
@@ -274,7 +276,7 @@ func (b *BBR) OnLoss(e LossEvent) {
 			continue
 		}
 		lost += uint64(p.Bytes)
-		b.handleLostPacket(p, lost)
+		b.handleLostPacket(p, lost, e.TotalCE)
 	}
 	if b.state != state {
 		// A probe ended: apply ProbeBW_DOWN's pacing rate and window now,
@@ -288,19 +290,26 @@ func (b *BBR) OnLoss(e LossEvent) {
 // data.
 func (b *BBR) OnACK(e ACKEvent) {
 	rs := e.Rate
-	if rs.NewlyAcked == 0 {
+	if rs.NewlyAcked == 0 && rs.NewCE == 0 {
 		return
 	}
 	b.at(e.Now)
 	b.inflight, b.delivered = e.Flight, rs.TotalDelivered
 	if rs.NewCE > 0 {
-		// Marks answered as loss: a loss event, and for a probe, too much
-		// in flight if marks and losses since this packet's send cross the
-		// threshold.
-		b.noteLoss()
-		if congested := rs.Lost + rs.CE; b.checkProbeLoss && isInflightTooHigh(congested, rs.InFlight) {
+		// Marks answered as loss: a loss event, unless this ACK's loss
+		// detection already noted one, and for a probe, too much in flight if
+		// marks and losses since this packet's send cross the threshold.
+		if !b.lossNotedAt.Equal(e.Now) {
+			b.noteLoss()
+		}
+		if congested := rs.Lost + rs.CE; b.checkProbeLoss && rs.InFlight > 0 && isInflightTooHigh(congested, rs.InFlight) {
 			b.handleInflightTooHigh(rs.AppLimited, inflightAtLoss(min(rs.NewCE, congested), rs.InFlight, congested))
 		}
+	}
+	if rs.NewlyAcked == 0 {
+		// Marks reported for packets no longer in flight: nothing else to
+		// update.
+		return
 	}
 	if rtt := e.SmoothedRTT; !b.hasSeenRTT && rtt > 0 {
 		// InitPacingRate, now that there is an RTT to pace over: the smoothed
@@ -575,7 +584,7 @@ func (b *BBR) adaptLongTermModel(rs RateSample) bool {
 			return true
 		}
 	}
-	if !isInflightTooHigh(rs.Lost, rs.InFlight) {
+	if !isInflightTooHigh(rs.Lost+rs.CE, rs.InFlight) {
 		if b.inflightLongterm == bbrInfinity {
 			return false
 		}
@@ -744,12 +753,13 @@ func (b *BBR) noteLoss() {
 	b.lossEventsInRound++
 }
 
-func (b *BBR) handleLostPacket(p Packet, totalLost uint64) {
+func (b *BBR) handleLostPacket(p Packet, totalLost, totalCE uint64) {
 	if !b.checkProbeLoss {
 		return
 	}
 	txInFlight := p.Delivery.InFlight
-	lost := totalLost - p.Delivery.Lost
+	// Marks since the packet was sent count with losses (see BBR).
+	lost := totalLost - p.Delivery.Lost + totalCE - p.Delivery.CE
 	if isInflightTooHigh(lost, txInFlight) {
 		b.handleInflightTooHigh(p.Delivery.AppLimited, inflightAtLoss(uint64(p.Bytes), txInFlight, lost))
 	}

@@ -211,4 +211,7 @@ func TestBBRWithECNSharesAsWithDrops(t *testing.T) {
 	if marked < dropped/2 {
 		t.Fatalf("NewReno's share %.0f%% with ECN, %.0f%% with drops", 100*marked, 100*dropped)
 	}
+	if blind > marked/2 {
+		t.Fatalf("NewReno's share %.0f%% against BBR blind to CE, %.0f%% against BBR answering it", 100*blind, 100*marked)
+	}
 }

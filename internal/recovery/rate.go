@@ -100,8 +100,8 @@ type rateSampler struct {
 }
 
 // marked counts packets this ACK newly reported ECN-CE-marked, at the
-// average size of the packets it newly acknowledged (bytes in count
-// packets), or minimum-size packets if it acknowledged none.
+// average size of the in-flight packets it newly acknowledged (bytes in
+// count packets), or minimum-size packets if it acknowledged none.
 func (d *deliveryRate) marked(s *rateSampler, packets, bytes, count uint64) {
 	size := uint64(1200)
 	if count > 0 {
@@ -159,6 +159,9 @@ func (d *deliveryRate) sample(s *rateSampler, now time.Time, minRTT time.Duratio
 	rs.Rate = uint64(float64(rs.Delivered) * float64(time.Second) / float64(rs.Interval))
 	return rs
 }
+
+// CEBytes is the path's bytes reported ECN-CE-marked so far.
+func (r *Sent) CEBytes() uint64 { return r.rate.ce }
 
 // LostBytes is the path's in-flight bytes declared lost so far, MTU probes
 // aside.

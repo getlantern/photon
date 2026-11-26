@@ -275,11 +275,13 @@ func (r *Sent) OnACK(space Space, f wire.AckFrame, now time.Time, delay, maxDela
 	}
 	events.Lost = r.DetectLoss(space, now)
 	if events.ECNCongestion {
-		var bytes uint64
+		var count uint64
 		for _, p := range events.Acked {
-			bytes += uint64(p.Bytes)
+			if p.InFlight {
+				count++
+			}
 		}
-		r.rate.marked(&sampler, events.ECN.CE, bytes, uint64(len(events.Acked)))
+		r.rate.marked(&sampler, events.ECN.CE, sampler.newlyAcked, count)
 	}
 	// After loss detection and CE, so the sample counts this ACK's.
 	events.Rate = r.rate.sample(&sampler, now, r.RTT.Minimum, r.RTT.Sampled)

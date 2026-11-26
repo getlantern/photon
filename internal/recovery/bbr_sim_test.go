@@ -225,7 +225,7 @@ func (f *simFlow) step(t *testing.T, link *simLink, now time.Time) time.Time {
 		}
 		if len(events.Lost) > 0 {
 			f.res.lost += len(events.Lost)
-			c.OnLoss(LossEvent{Lost: events.Lost, TotalLost: sent.LostBytes(), TotalDelivered: sent.DeliveredBytes(), Flight: sent.BytesInFlight, Now: a.at})
+			c.OnLoss(LossEvent{Lost: events.Lost, TotalLost: sent.LostBytes(), TotalDelivered: sent.DeliveredBytes(), TotalCE: sent.CEBytes(), Flight: sent.BytesInFlight, Now: a.at})
 		}
 		c.OnACK(ACKEvent{Acked: events.Acked, Rate: events.Rate, Flight: sent.BytesInFlight, SmoothedRTT: sent.SmoothedRTT(), Now: a.at})
 		if c.ForcesAppLimited() {
@@ -239,7 +239,7 @@ func (f *simFlow) step(t *testing.T, link *simLink, now time.Time) time.Time {
 	if lt, _, ok := sent.LossTime(); ok && !lt.After(now) {
 		if lost := sent.DetectLoss(Application, now); len(lost) > 0 {
 			f.res.lost += len(lost)
-			c.OnLoss(LossEvent{Lost: lost, TotalLost: sent.LostBytes(), TotalDelivered: sent.DeliveredBytes(), Flight: sent.BytesInFlight, Now: now})
+			c.OnLoss(LossEvent{Lost: lost, TotalLost: sent.LostBytes(), TotalDelivered: sent.DeliveredBytes(), TotalCE: sent.CEBytes(), Flight: sent.BytesInFlight, Now: now})
 		}
 	}
 	next := time.Time{}

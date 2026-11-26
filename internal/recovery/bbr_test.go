@@ -268,11 +268,45 @@ func TestBBRProbeEndsOnHighCE(t *testing.T) {
 	b.checkProbeLoss = true
 	b.cwnd, b.inflightLongterm = 200000, 200000
 	b.OnACK(ACKEvent{Acked: []Packet{{SentAt: time.Unix(10, 0), Bytes: 1200, InFlight: true}},
-		Rate:   RateSample{NewlyAcked: 1200, TotalDelivered: 1200, NewCE: 3600, CE: 3600, InFlight: 120000, RTT: 100 * time.Millisecond},
+		Rate:   RateSample{NewlyAcked: 1200, TotalDelivered: 1200, NewCE: 5400, CE: 5400, InFlight: 180000, RTT: 100 * time.Millisecond},
 		Flight: 100000, Now: time.Unix(10, 0).Add(100 * time.Millisecond)})
-	// The same ACK's cycle update may move on from ProbeBW_DOWN.
-	if b.state == bbrProbeBWUp || b.inflightLongterm >= 200000 {
+	// The same ACK's cycle update may move on from ProbeBW_DOWN; the long-term
+	// model must not raise the bound back to this packet's 180000 in flight.
+	if b.state == bbrProbeBWUp || b.inflightLongterm >= 180000 {
 		t.Fatal("probe didn't end on 3% CE: state", b.state, "inflight_longterm", b.inflightLongterm)
+	}
+}
+
+// Losses and marks since a lost packet was sent together cross the loss
+// threshold, though neither alone does.
+func TestBBRLostPacketCountsCE(t *testing.T) {
+	b := testBBR()
+	b.fullBwReached, b.bw, b.minRTT = true, 1e6, 100*time.Millisecond
+	b.startProbeBWUp(RateSample{})
+	b.checkProbeLoss = true
+	b.cwnd, b.inflightLongterm = 200000, 200000
+	// 1% lost and 1.5% marked of the 120000 in flight when it was sent.
+	b.OnLoss(LossEvent{Lost: []Packet{{Bytes: 1200, InFlight: true, Delivery: DeliveryState{InFlight: 120000}}}, TotalLost: 1200, TotalCE: 1800, Now: time.Unix(10, 0)})
+	if b.state != bbrProbeBWDown {
+		t.Fatal("2.5% lost and marked didn't end the probe, state", b.state)
+	}
+}
+
+// One ACK that both detects losses and reports marks is one loss event; an
+// ACK reporting marks for packets no longer in flight still is one.
+func TestBBRCountsOneLossEventPerACK(t *testing.T) {
+	b := testBBR()
+	now := time.Unix(10, 0)
+	// Delivered past the ACK's packet, so the ACK stays in the loss round.
+	b.OnLoss(LossEvent{Lost: []Packet{{Bytes: 1200, InFlight: true}}, TotalLost: 1200, TotalDelivered: 50000, Now: now})
+	b.OnACK(ACKEvent{Acked: []Packet{{SentAt: now, Bytes: 1200, InFlight: true}}, Rate: RateSample{NewlyAcked: 1200, TotalDelivered: 51200, NewCE: 1200, CE: 1200}, Now: now})
+	if b.lossEventsInRound != 1 {
+		t.Fatal("loss and marks on one ACK counted", b.lossEventsInRound, "loss events")
+	}
+	b = testBBR()
+	b.OnACK(ACKEvent{Rate: RateSample{NewCE: 1200}, Now: now})
+	if b.lossEventsInRound != 1 {
+		t.Fatal("marks with nothing newly acknowledged counted", b.lossEventsInRound, "loss events")
 	}
 }
 

@@ -141,7 +141,7 @@ func (p *pathCIDs) receiveACK(frame wire.Frame, now time.Time, exponent uint8, m
 	if events.ECNCongestion {
 		a.congestion.OnECN(events.ECNSentAt, now)
 	}
-	a.congestion.OnLoss(recovery.LossEvent{Lost: events.Lost, TotalLost: a.sent.LostBytes(), TotalDelivered: a.sent.DeliveredBytes(), Flight: a.sent.BytesInFlight, Now: now})
+	a.congestion.OnLoss(recovery.LossEvent{Lost: events.Lost, TotalLost: a.sent.LostBytes(), TotalDelivered: a.sent.DeliveredBytes(), TotalCE: a.sent.CEBytes(), Flight: a.sent.BytesInFlight, Now: now})
 	if len(events.Lost) > 0 && a.sent.PersistentCongestion(maxDelay) {
 		a.congestion.OnPersistentCongestion()
 		a.sent.RTT.OnPersistentCongestion()
