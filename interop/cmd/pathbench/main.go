@@ -1,7 +1,8 @@
 // Command pathbench measures how QUIC senders share a real network path.
 //
 // A server listens on three UDP ports, one per sender: photon with BBR,
-// photon with NewReno, and quic-go (Cubic). A client runs a mix of
+// photon with NewReno, and quic-go (whose v0.65.0 sender is Reno, though
+// built by its Cubic code). A client runs a mix of
 // concurrent downloads from them over one path, each its own connection,
 // and reports each flow's goodput, share and RTT over a measurement window.
 // The server logs each connection's sender-side statistics when it closes.
@@ -167,7 +168,7 @@ type connStats struct {
 	LossPercent float64 `json:"loss_percent"`
 	MinRTTms    float64 `json:"min_rtt_ms,omitempty"` // left out if not sampled
 	SRTTms      float64 `json:"srtt_ms,omitempty"`    // left out if not sampled
-	CwndBytes   *uint64 `json:"cwnd_bytes,omitempty"` // nil where the sender doesn't expose it
+	CwndBytes   *uint64 `json:"cwnd_bytes,omitempty"`
 }
 
 func newConnStats(sender string, remote net.Addr, start time.Time, sent, packetsSent, lost, packetsLost uint64, minRTT, srtt time.Duration, cwnd *uint64) connStats {
@@ -228,7 +229,8 @@ func acceptUpstream(ctx context.Context, l *upstream.Listener, name string, logS
 			}
 			<-c.Context().Done()
 			st := c.ConnectionStats()
-			logStats(newConnStats(name, c.RemoteAddr(), start, st.BytesSent, st.PacketsSent, st.BytesLost, st.PacketsLost, st.MinRTT, st.SmoothedRTT, nil))
+			cwnd := st.CongestionWindow
+			logStats(newConnStats(name, c.RemoteAddr(), start, st.BytesSent, st.PacketsSent, st.BytesLost, st.PacketsLost, st.MinRTT, st.SmoothedRTT, &cwnd))
 		}()
 	}
 }
@@ -264,14 +266,16 @@ func selfSigned() (tls.Certificate, error) {
 
 // --- Client ---
 
-// flowResult is one flow's measurement.
+// flowResult is one flow's measurement. Goodput, share and mean smoothed
+// RTT cover the measurement window; the minimum RTT is the connection's
+// lifetime minimum, handshake included, as quic-go reports it.
 type flowResult struct {
 	Flow         int     `json:"flow"`
 	Sender       string  `json:"sender"`
 	StartSeconds float64 `json:"start_seconds"`
 	Mbps         float64 `json:"mbps"`
 	SharePercent float64 `json:"share_percent"`
-	MinRTTms     float64 `json:"min_rtt_ms,omitempty"`   // left out if not sampled
+	MinRTTms     float64 `json:"min_rtt_ms,omitempty"`   // lifetime; left out if not sampled
 	MeanSRTTms   float64 `json:"mean_srtt_ms,omitempty"` // left out if not sampled
 	Error        string  `json:"error,omitempty"`
 }
@@ -346,7 +350,7 @@ func clientMain(args []string) error {
 		}
 		return runErr
 	}
-	fmt.Printf("%-4s %-15s %7s %9s %7s %8s %9s\n", "flow", "sender", "start", "Mbit/s", "share", "minRTT", "meanSRTT")
+	fmt.Printf("%-4s %-15s %7s %9s %7s %8s %9s\n", "flow", "sender", "start", "Mbit/s", "share", "minRTT*", "meanSRTT")
 	for _, f := range res.Flows {
 		fmt.Printf("%-4d %-15s %6.0fs %9.1f %6.0f%% %8s %9s", f.Flow, f.Sender, f.StartSeconds, f.Mbps, f.SharePercent, msOrDash(f.MinRTTms), msOrDash(f.MeanSRTTms))
 		if f.Error != "" {
@@ -354,7 +358,7 @@ func clientMain(args []string) error {
 		}
 		fmt.Println()
 	}
-	fmt.Printf("total %.1f Mbit/s over %.0fs\n", res.TotalMbps, res.WindowSeconds)
+	fmt.Printf("total %.1f Mbit/s over %.0fs (*minRTT is the connection's lifetime minimum)\n", res.TotalMbps, res.WindowSeconds)
 	return runErr
 }
 

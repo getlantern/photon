@@ -12,7 +12,8 @@ import (
 )
 
 // coexistServer is one competitor: photon with a congestion controller, or
-// quic-go (Cubic by default).
+// quic-go, whose v0.65.0 sender is Reno (built by its Cubic code with Reno
+// enabled).
 type coexistServer struct {
 	name        string
 	independent bool
@@ -22,7 +23,7 @@ type coexistServer struct {
 var (
 	coexistPhotonBBR     = coexistServer{"photon-bbr", true, quic.CongestionControlBBR}
 	coexistPhotonNewReno = coexistServer{"photon-newreno", true, quic.CongestionControlNewReno}
-	coexistQUICGo        = coexistServer{name: "quic-go"} // Cubic; congestion applies only to photon
+	coexistQUICGo        = coexistServer{name: "quic-go"} // Reno; congestion applies only to photon
 )
 
 // BenchmarkServerCoexistWAN measures how two servers' downloads share one
