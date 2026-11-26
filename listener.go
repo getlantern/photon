@@ -123,9 +123,7 @@ type Config struct {
 	// Discovery is supported on concrete-address Linux/macOS sockets up to 1452.
 	DisablePathMTUDiscovery bool
 	// CongestionControl selects the congestion controller for the
-	// connection's paths. The zero value is BBR, which sends Not-ECT;
-	// CongestionControlNewReno marks packets ECN-capable where the socket
-	// supports it.
+	// connection's paths. The zero value is BBR.
 	CongestionControl CongestionControl
 	// EnableMultipath opts into RFC 10069 multipath, with path IDs 0–3.
 	// Both endpoints must opt in. ListenAddr requires a concrete bind address.

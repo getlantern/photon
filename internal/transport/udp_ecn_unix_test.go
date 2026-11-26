@@ -86,8 +86,6 @@ func TestUDPRuntimeECN(t *testing.T) {
 		for _, address := range []string{"127.0.0.1:0", "[::1]:0"} {
 			t.Run(fmt.Sprintf("%x/%s", v, address), func(t *testing.T) {
 				c, peer := testPair(t, v)
-				// BBR connections don't mark ECN.
-				useNewReno(t, c)
 				drivePair(t, c, peer, false, false)
 				// drivePair runs on a frozen clock, so its RTT is about zero and
 				// the ECN validation window, three PTOs from the first marked

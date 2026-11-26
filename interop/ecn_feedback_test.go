@@ -50,7 +50,7 @@ func TestECNFeedbackUpstream(t *testing.T) {
 		for _, mark := range []int{1, 2, 3} {
 			t.Run(fmt.Sprintf("%x/%d", v, mark), func(t *testing.T) {
 				ct, st := tlsConfigs(t)
-				listener, err := quic.ListenAddr("127.0.0.1:0", st, &quic.Config{Versions: []quic.Version{v}, EnableDatagrams: true, CongestionControl: quic.CongestionControlNewReno})
+				listener, err := quic.ListenAddr("127.0.0.1:0", st, &quic.Config{Versions: []quic.Version{v}, EnableDatagrams: true})
 				if err != nil {
 					t.Fatal(err)
 				}

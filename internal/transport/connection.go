@@ -1434,7 +1434,7 @@ func (c *Conn) nextBaseDatagram(now time.Time) ([]byte, error) {
 		if err = c.budget.Sent(len(out)); err != nil {
 			return nil, c.fail(err)
 		}
-		if c.marksECN() {
+		if c.config.enableECN {
 			c.recovery.EnableECN()
 		}
 		marking := c.recovery.ECNMarkingAt(recovery.Space(space), now)
@@ -1673,12 +1673,3 @@ func (c *Conn) Err() error { return c.check() }
 
 // AdapterData returns immutable adapter metadata. Call on the connection owner.
 func (c *Conn) AdapterData() any { return c.config.AdapterData }
-
-// marksECN reports whether the connection marks its packets ECN-capable. BBR
-// specifies no response to CE marks, yet must treat them as congestion if
-// it marks packets ECT (draft-ietf-ccwg-bbr section 3.7). Its connections
-// don't mark, so an ECN-capable bottleneck drops instead, and BBR responds to
-// the loss.
-func (c *Conn) marksECN() bool {
-	return c.config.enableECN && c.config.CongestionControl != recovery.BBRAlgorithm
-}
