@@ -100,6 +100,9 @@ func TestPathMTUSendGates(t *testing.T) {
 
 func TestPathMTULossAndLateACK(t *testing.T) {
 	client, _ := sendingPathPair(t, wire.Version2)
+	// The test checks that MTU loss doesn't cut the window, which only
+	// NewReno would otherwise do.
+	useNewReno(t, client)
 	app := client.multipath.paths[1].application
 	app.validation.state = PathValidated
 	app.budget.Validate()

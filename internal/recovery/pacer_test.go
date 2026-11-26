@@ -116,6 +116,11 @@ func TestPacerLargePacketSurvivesSmallChecks(t *testing.T) {
 		now = now.Add(20 * time.Millisecond)
 		p.DelayFor(now, c, time.Second, 1200)
 		if p.DelayFor(now, c, time.Second, 3000) == 0 {
+			// Once it goes, bursts follow the rate again.
+			p.Sent(3000)
+			if p.largest != 0 {
+				t.Fatal("burst floor kept after the large packet went:", p.largest)
+			}
 			return
 		}
 	}
