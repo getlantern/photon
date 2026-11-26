@@ -73,9 +73,16 @@ func TestPathbenchLocalhost(t *testing.T) {
 	}
 	roots := x509.NewCertPool()
 	roots.AddCert(parsed)
-	port := freePort(t)
 	var out lockedBuffer
-	stop, err := serve(context.Background(), "127.0.0.1", port, cert, &out)
+	var port int
+	var stop func()
+	// Another process can take a port between freePort and serve; retry.
+	for range 5 {
+		port = freePort(t)
+		if stop, err = serve(context.Background(), "127.0.0.1", port, cert, &out); err == nil {
+			break
+		}
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,6 +131,18 @@ func TestParseFlows(t *testing.T) {
 	for _, bad := range []string{"cubic:1", "photon-bbr:0", "photon-bbr:x"} {
 		if _, err := parseFlows(bad); err == nil {
 			t.Fatal("accepted", bad)
+		}
+	}
+}
+
+func TestRunClientRejectsBadTiming(t *testing.T) {
+	for _, cfg := range []clientConfig{
+		{mix: []string{"photon-bbr"}, duration: 10 * time.Second, from: 9500 * time.Millisecond},
+		{mix: []string{"photon-bbr", "quic-go"}, duration: 10 * time.Second, from: 2 * time.Second, stagger: -time.Second},
+		{mix: []string{"photon-bbr", "quic-go"}, duration: 10 * time.Second, from: time.Second, stagger: 2 * time.Second},
+	} {
+		if _, err := runClient(context.Background(), cfg); err == nil {
+			t.Fatalf("accepted %+v", cfg)
 		}
 	}
 }

@@ -6,13 +6,15 @@
 // and reports each flow's goodput, share and RTT over a measurement window.
 // The server logs each connection's sender-side statistics when it closes.
 //
-//	pathbench server -cert-out cert.pem [-addr 0.0.0.0] [-port 4433]
+//	pathbench server -cert-out cert.pem -addr 0.0.0.0 [-port 4433]
 //	pathbench client -server host -cert cert.pem [-port 4433] \
 //	    -flows photon-bbr:1,quic-go:1 [-duration 40s] [-measure-from 10s] \
 //	    [-stagger 2s] [-json]
 //
 // Only the server's congestion control paces the data: the client is
 // quic-go throughout, and it sends nothing but a short request per flow.
+// The server answers anyone who connects, with one endless download per
+// connection, so run it only for a measurement and on hosts made for it.
 // The server's certificate is self-signed for the name "pathbench" and
 // written to -cert-out; the client trusts exactly that certificate (-cert),
 // so copy the file from server to client.
@@ -51,9 +53,11 @@ const alpn = "pathbench"
 var senders = []string{"photon-bbr", "photon-newreno", "quic-go"}
 
 // The client's receive windows, large enough not to limit a long, fast path
-// (64 MiB covers 1 Gbit/s at 500 ms). The server receives only a request.
+// (64 MiB covers 1 Gbit/s at 500 ms). Each flow is one stream on its own
+// connection, so the stream window is the one that binds. The server
+// receives only a request.
 const (
-	streamWindow     = 32 << 20
+	streamWindow     = 64 << 20
 	connectionWindow = 64 << 20
 )
 
@@ -80,7 +84,7 @@ func main() {
 
 func serverMain(args []string) error {
 	fs := flag.NewFlagSet("server", flag.ExitOnError)
-	addr := fs.String("addr", "0.0.0.0", "address to listen on")
+	addr := fs.String("addr", "127.0.0.1", "address to listen on; 0.0.0.0 to serve remote clients")
 	port := fs.Int("port", 4433, "base UDP port: photon-bbr, then photon-newreno, then quic-go")
 	certOut := fs.String("cert-out", "pathbench-cert.pem", "where to write the server's certificate, for clients' -cert")
 	fs.Parse(args)
@@ -91,13 +95,10 @@ func serverMain(args []string) error {
 	if err := os.WriteFile(*certOut, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Certificate[0]}), 0o644); err != nil {
 		return err
 	}
-	ctx := context.Background()
-	stop, err := serve(ctx, *addr, *port, cert, os.Stdout)
-	if err != nil {
+	if _, err := serve(context.Background(), *addr, *port, cert, os.Stdout); err != nil {
 		return err
 	}
-	defer stop()
-	select {}
+	select {} // until killed
 }
 
 // serve starts the three senders' listeners and returns a function that
@@ -157,10 +158,10 @@ type connStats struct {
 	LossPercent float64 `json:"loss_percent"`
 	MinRTTms    float64 `json:"min_rtt_ms"`
 	SRTTms      float64 `json:"srtt_ms"`
-	CwndBytes   uint64  `json:"cwnd_bytes"`
+	CwndBytes   *uint64 `json:"cwnd_bytes,omitempty"` // nil where the sender doesn't expose it
 }
 
-func newConnStats(sender string, remote net.Addr, start time.Time, sent, packetsSent, lost, packetsLost uint64, minRTT, srtt time.Duration, cwnd uint64) connStats {
+func newConnStats(sender string, remote net.Addr, start time.Time, sent, packetsSent, lost, packetsLost uint64, minRTT, srtt time.Duration, cwnd *uint64) connStats {
 	s := connStats{Sender: sender, Remote: remote.String(), Seconds: time.Since(start).Seconds(), BytesSent: sent, PacketsSent: packetsSent, BytesLost: lost, PacketsLost: packetsLost, MinRTTms: ms(minRTT), SRTTms: ms(srtt), CwndBytes: cwnd}
 	if packetsSent > 0 {
 		s.LossPercent = 100 * float64(packetsLost) / float64(packetsSent)
@@ -190,18 +191,16 @@ func acceptPhoton(ctx context.Context, l *quic.Listener, name string, logStats f
 					}
 				}
 			}()
-			for {
-				s, err := c.AcceptStream(c.Context())
-				if err != nil {
-					break
-				}
+			// One download per connection.
+			if s, err := c.AcceptStream(c.Context()); err == nil {
 				go sendForever(s)
 			}
 			<-done
 			if final := c.ConnectionStats(); final.BytesSent >= last.BytesSent {
 				last = final
 			}
-			logStats(newConnStats(name, c.RemoteAddr(), start, last.BytesSent, last.PacketsSent, last.BytesLost, last.PacketsLost, last.MinRTT, last.SmoothedRTT, last.CongestionWindow))
+			cwnd := last.CongestionWindow
+			logStats(newConnStats(name, c.RemoteAddr(), start, last.BytesSent, last.PacketsSent, last.BytesLost, last.PacketsLost, last.MinRTT, last.SmoothedRTT, &cwnd))
 		}()
 	}
 }
@@ -214,15 +213,13 @@ func acceptUpstream(ctx context.Context, l *upstream.Listener, name string, logS
 		}
 		go func() {
 			start := time.Now()
-			for {
-				s, err := c.AcceptStream(c.Context())
-				if err != nil {
-					break
-				}
+			// One download per connection.
+			if s, err := c.AcceptStream(c.Context()); err == nil {
 				go sendForever(s)
 			}
+			<-c.Context().Done()
 			st := c.ConnectionStats()
-			logStats(newConnStats(name, c.RemoteAddr(), start, st.BytesSent, st.PacketsSent, st.BytesLost, st.PacketsLost, st.MinRTT, st.SmoothedRTT, 0))
+			logStats(newConnStats(name, c.RemoteAddr(), start, st.BytesSent, st.PacketsSent, st.BytesLost, st.PacketsLost, st.MinRTT, st.SmoothedRTT, nil))
 		}()
 	}
 }
@@ -324,7 +321,7 @@ func clientMain(args []string) error {
 			fmt.Printf("%-4d %-15s %6.0fs  error: %s\n", f.Flow, f.Sender, f.StartSeconds, f.Error)
 			continue
 		}
-		fmt.Printf("%-4d %-15s %6.0fs %9.1f %6.0f%% %6.0fms %7.0fms\n", f.Flow, f.Sender, f.StartSeconds, f.Mbps, f.SharePercent, f.MinRTTms, f.MeanSRTTms)
+		fmt.Printf("%-4d %-15s %6.0fs %9.1f %6.0f%% %8s %9s\n", f.Flow, f.Sender, f.StartSeconds, f.Mbps, f.SharePercent, msOrDash(f.MinRTTms), msOrDash(f.MeanSRTTms))
 	}
 	fmt.Printf("total %.1f Mbit/s over %.0fs\n", res.TotalMbps, res.WindowSeconds)
 	return nil
@@ -362,8 +359,11 @@ func senderPort(name string) int {
 }
 
 func runClient(ctx context.Context, cfg clientConfig) (runResult, error) {
-	if cfg.from >= cfg.duration {
-		return runResult{}, errors.New("the measurement window must start before the run ends")
+	if cfg.stagger < 0 || cfg.from < 0 {
+		return runResult{}, errors.New("stagger and measurement start must not be negative")
+	}
+	if cfg.duration-cfg.from < time.Second {
+		return runResult{}, errors.New("the measurement window must be at least a second, to sample RTT")
 	}
 	if last := time.Duration(len(cfg.mix)-1) * cfg.stagger; last >= cfg.from {
 		return runResult{}, fmt.Errorf("the last flow starts at %v, not before the measurement window at %v", last, cfg.from)
@@ -371,7 +371,6 @@ func runClient(ctx context.Context, cfg clientConfig) (runResult, error) {
 	tlsConfig := &tls.Config{ServerName: "pathbench", RootCAs: cfg.roots, NextProtos: []string{alpn}}
 	quicConfig := &upstream.Config{MaxIdleTimeout: 30 * time.Second, HandshakeIdleTimeout: cfg.handshakeTimeout, InitialStreamReceiveWindow: streamWindow, MaxStreamReceiveWindow: streamWindow, InitialConnectionReceiveWindow: connectionWindow, MaxConnectionReceiveWindow: connectionWindow}
 	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
 	type flow struct {
 		received atomic.Uint64
 		err      atomic.Pointer[error]
@@ -382,6 +381,20 @@ func runClient(ctx context.Context, cfg clientConfig) (runResult, error) {
 	flows := make([]*flow, len(cfg.mix))
 	start := time.Now()
 	var wg sync.WaitGroup
+	// However the run ends, end the flows: closing each connection fails its
+	// read, and lets the server log the connection's statistics.
+	defer func() {
+		cancel()
+		for _, f := range flows {
+			if f == nil {
+				continue
+			}
+			if c := f.conn.Load(); c != nil {
+				c.CloseWithError(0, "")
+			}
+		}
+		wg.Wait()
+	}()
 	for i, sender := range cfg.mix {
 		f := &flow{}
 		flows[i] = f
@@ -450,7 +463,8 @@ func runClient(ctx context.Context, cfg clientConfig) (runResult, error) {
 			return runResult{}, ctx.Err()
 		}
 		for _, f := range flows {
-			if c := f.conn.Load(); c != nil {
+			// A failed flow's frozen statistics aren't samples of the window.
+			if c := f.conn.Load(); c != nil && f.err.Load() == nil {
 				st := c.ConnectionStats()
 				f.srtt = append(f.srtt, st.SmoothedRTT)
 				f.minRTT = st.MinRTT
@@ -478,15 +492,6 @@ func runClient(ctx context.Context, cfg clientConfig) (runResult, error) {
 			res.Flows[i].SharePercent = 100 * res.Flows[i].Mbps / total
 		}
 	}
-	// End the flows: closing each connection fails its read, and lets the
-	// server log the connection's statistics.
-	cancel()
-	for _, f := range flows {
-		if c := f.conn.Load(); c != nil {
-			c.CloseWithError(0, "")
-		}
-	}
-	wg.Wait()
 	return res, nil
 }
 
@@ -502,3 +507,11 @@ func mean(ds []time.Duration) time.Duration {
 }
 
 func ms(d time.Duration) float64 { return float64(d) / float64(time.Millisecond) }
+
+// msOrDash prints a millisecond value, or "-" when there was no sample.
+func msOrDash(v float64) string {
+	if v == 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%.0fms", v)
+}
