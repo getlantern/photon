@@ -172,12 +172,17 @@ func (c *Conn) pathHasData(id uint64) bool {
 	if own == nil {
 		return false
 	}
+	held := false
 	for _, item := range own.space.queue {
 		if c.sendable(item) {
 			return true
 		}
+		held = held || !item.acked
 	}
-	if !c.mayBorrow(id) {
+	// nextSharedPathData doesn't borrow onto a non-empty queue. Items held
+	// there, such as CID advertisements while forwarding is blocked, keep it
+	// non-empty across send passes, so the path can't borrow until they go.
+	if held || !c.mayBorrow(id) {
 		return false
 	}
 	for source, state := range c.multipath.paths {
