@@ -444,3 +444,55 @@ func TestCongestionControlSelectsBBR(t *testing.T) {
 		t.Fatalf("multipath path controller %T, want BBR", app.congestion)
 	}
 }
+
+// forcingController asks the owner to mark the path application limited.
+type forcingController struct{ recovery.Controller }
+
+func (forcingController) ForcesAppLimited() bool { return true }
+
+// When the controller holds the sender back, as BBR's ProbeRTT does, the
+// owner marks the path application limited after the ACK; otherwise, with
+// data still queued, it doesn't.
+func TestControllerForcesAppLimited(t *testing.T) {
+	appLimitedAfterACK := func(force bool) bool {
+		p := streamParameters()
+		p.InitialMaxData, p.InitialMaxStreamDataBidiRemote, p.InitialMaxStreamDataBidiLocal = 1<<20, 1<<20, 1<<20
+		client, server, now, _ := settledPair(t, p)
+		id, err := client.OpenStream(false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// More than a window, so data stays queued.
+		for data := make([]byte, 30000); len(data) > 0; {
+			n, err := client.WriteStream(id, data, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data = data[n:]
+		}
+		for _, d := range drain(t, client, now) {
+			if err := server.HandleDatagram(d, now); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if force {
+			client.congestion = forcingController{client.congestion}
+		}
+		ackNow(server)
+		for _, d := range drain(t, server, now) {
+			if err := client.HandleDatagram(d, now.Add(30*time.Millisecond)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if !client.hasQueuedData() {
+			t.Fatal("setup: nothing left queued")
+		}
+		return client.recovery.AppLimited()
+	}
+	if appLimitedAfterACK(false) {
+		t.Fatal("setup: path app limited with data queued and no controller request")
+	}
+	if !appLimitedAfterACK(true) {
+		t.Fatal("controller's request to mark the path app limited ignored")
+	}
+}

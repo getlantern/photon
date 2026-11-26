@@ -1167,6 +1167,9 @@ func (c *Conn) handleAck(space int, f wire.AckFrame, now time.Time) error {
 	}
 	c.onCongestionLoss(events.Lost, now)
 	c.congestion.OnACK(recovery.ACKEvent{Acked: events.Acked, Rate: events.Rate, Limited: limited, Flight: c.recovery.BytesInFlight, Now: now})
+	if c.congestion.ForcesAppLimited() {
+		c.recovery.MarkAppLimited()
+	}
 	if len(events.Acked) > 0 {
 		c.probeAllowance[space] = false
 	}

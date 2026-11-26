@@ -69,7 +69,7 @@ func (c *Conn) expireMultipathRecovery(now time.Time) error {
 			app.noteMTULoss(event.Lost)
 			app.observeMTUBlackhole(nil, event.Lost, now)
 			app.updateMTURaise(now)
-			app.congestion.OnLoss(recovery.LossEvent{Lost: event.Lost, TotalLost: app.sent.LostBytes(), Flight: app.sent.BytesInFlight, Now: now})
+			app.congestion.OnLoss(recovery.LossEvent{Lost: event.Lost, TotalLost: app.sent.LostBytes(), TotalDelivered: app.sent.DeliveredBytes(), Flight: app.sent.BytesInFlight, Now: now})
 			if len(event.Lost) > 0 && app.sent.PersistentCongestion(maxDelay) {
 				app.congestion.OnPersistentCongestion()
 				app.sent.RTT.OnPersistentCongestion()
