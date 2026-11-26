@@ -183,6 +183,11 @@ type numberSpace struct {
 	sentAny               bool
 	largestSent           uint64
 	sent                  map[uint64]*sendItem
+	// untracked holds the packet numbers in sent that recovery no longer
+	// tracks (declared lost, or abandoned on a path change), kept so a late
+	// ACK can still mark their items delivered. ACK processing visits these
+	// and the packets recovery reports newly acknowledged, never all of sent.
+	untracked             map[uint64]struct{}
 	queue                 []*sendItem
 	ackPending, discarded bool
 	unackedEliciting      int       // ack-eliciting packets since the last ACK
@@ -783,7 +788,7 @@ func (c *Conn) discard(space int) {
 		}
 	}
 	s.queue = nil
-	s.sent = nil
+	s.sent, s.untracked = nil, nil
 	if space == initialSpace {
 		c.originalInitialRead = nil
 		c.candidateInitial = candidateInitialKeys{}
@@ -1173,7 +1178,7 @@ func (c *Conn) handleAck(space int, f wire.AckFrame, now time.Time) error {
 	if len(events.Acked) > 0 {
 		c.probeAllowance[space] = false
 	}
-	if err := acknowledgeItems(s, f, func(item *sendItem) error {
+	if err := acknowledgeItems(s, f, events.Acked, func(item *sendItem) error {
 		if space == applicationSpace {
 			if err := c.ackStreamFrame(item.frame); err != nil {
 				return err
@@ -1185,7 +1190,6 @@ func (c *Conn) handleAck(space int, f wire.AckFrame, now time.Time) error {
 	}); err != nil {
 		return c.fail(err)
 	}
-	pruneAcknowledged(s)
 	c.queueLost(space, events.Lost)
 	return nil
 }

@@ -169,7 +169,7 @@ func TestStreamDeliveryPartialPacketOwnership(t *testing.T) {
 		}
 		ack := func(pn uint64) {
 			t.Helper()
-			if err := acknowledgeItems(s, wire.AckFrame{Ranges: []wire.AckRange{{Smallest: pn, Largest: pn}}}, complete); err != nil {
+			if err := acknowledgeFrame(s, wire.AckFrame{Ranges: []wire.AckRange{{Smallest: pn, Largest: pn}}}, complete); err != nil {
 				t.Fatal(err)
 			}
 		}

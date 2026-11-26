@@ -49,7 +49,7 @@ func (c *Conn) handleRetry(raw []byte, h wire.Header, now time.Time) error {
 	}
 	sort.Slice(frames, func(i, j int) bool { return frames[i].Offset < frames[j].Offset })
 	s.queue = nil
-	s.sent = make(map[uint64]*sendItem)
+	s.sent, s.untracked = make(map[uint64]*sendItem), nil
 	s.clearACK()
 	packetSize := c.basePacketPayloadLimit()
 	header, err := c.makeHeader(initialSpace, s.nextPN, packetSize)
@@ -71,7 +71,7 @@ func (c *Conn) handleRetry(raw []byte, h wire.Header, now time.Time) error {
 	}
 	// Repacketize early data with the Retry CID and fresh application packet numbers.
 	c.queueLost(applicationSpace, c.recovery.Abandon(recovery.Application))
-	c.spaces[applicationSpace].sent = make(map[uint64]*sendItem)
+	c.spaces[applicationSpace].sent, c.spaces[applicationSpace].untracked = make(map[uint64]*sendItem), nil
 	c.recovery.ResetForRetry()
 	c.congestion.Reset(uint64(packetSize))
 	c.pacer = recovery.Pacer{}

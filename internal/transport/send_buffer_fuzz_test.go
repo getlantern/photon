@@ -66,7 +66,7 @@ func FuzzSendBufferOwnership(f *testing.F) {
 				switch op {
 				case 1, 4: // Successful or refused completion, including late/duplicate ACKs.
 					prior := r.state
-					err := acknowledgeItems(spaces[tx.path], wire.AckFrame{Ranges: []wire.AckRange{{Smallest: tx.pn, Largest: tx.pn}}}, func(item *sendItem) error {
+					err := acknowledgeFrame(spaces[tx.path], wire.AckFrame{Ranges: []wire.AckRange{{Smallest: tx.pn, Largest: tx.pn}}}, func(item *sendItem) error {
 						if op == 4 {
 							return refused
 						}

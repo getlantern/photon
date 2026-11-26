@@ -63,6 +63,7 @@ func (e *ServerEndpoint) HandleWriteError(out *Outbound, err error, now time.Tim
 		if app.mtu != nil && app.space.sent[packet.number] == packet.item && app.sent.RejectLargePacket(packet.number) {
 			queueLostItems(app.space, app.space, []recovery.Packet{{Number: packet.number}})
 			delete(app.space.sent, packet.number)
+			delete(app.space.untracked, packet.number)
 			if packet.ack {
 				out.Conn.restoreBundledACK(app.space, packet.ackSent, packet.ackGeneration)
 			}
@@ -101,6 +102,7 @@ func (e *ServerEndpoint) HandleWriteError(out *Outbound, err error, now time.Tim
 			if packet.item != nil {
 				c.queueLost(applicationSpace, []recovery.Packet{{Number: packet.number}})
 				delete(s.sent, packet.number)
+				delete(s.untracked, packet.number)
 			}
 			if packet.ack {
 				c.restoreBundledACK(s, packet.ackSent, packet.ackGeneration)

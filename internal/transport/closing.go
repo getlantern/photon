@@ -161,7 +161,7 @@ func (c *Conn) startClosing(frame wire.ConnectionCloseFrame, now time.Time, caus
 		c.closing.pathID, c.closing.network, c.closing.budget = closePath, app.network, app.budget
 		for _, state := range c.multipath.paths {
 			if app := state.application; app != nil {
-				app.space.queue, app.space.sent = nil, nil
+				app.space.queue, app.space.sent, app.space.untracked = nil, nil, nil
 				app.space.clearACK()
 				app.sent.Discard(recovery.Application)
 				app.timer.DiscardKeys()
@@ -179,7 +179,7 @@ func (c *Conn) startClosing(frame wire.ConnectionCloseFrame, now time.Time, caus
 	// peer close and transition to draining, plus routing IDs until retirement.
 	for i := range c.spaces {
 		c.spaces[i].queue = nil
-		c.spaces[i].sent = nil
+		c.spaces[i].sent, c.spaces[i].untracked = nil, nil
 		c.spaces[i].clearACK()
 		c.recovery.Discard(recovery.Space(i))
 	}

@@ -16,10 +16,10 @@ func TestSendBufferLateACKAndLoss(t *testing.T) {
 	s := &numberSpace{sent: map[uint64]*sendItem{0: item, 1: item}, queue: []*sendItem{item}}
 	complete := func(item *sendItem) error { c.recycleStreamItem(item); return nil }
 	refused := errors.New("completion refused")
-	if err := acknowledgeItems(s, wire.AckFrame{Ranges: []wire.AckRange{{Smallest: 0, Largest: 0}}}, func(*sendItem) error { return refused }); !errors.Is(err, refused) || len(c.sendBuffers) != 0 || item.acked {
+	if err := acknowledgeFrame(s, wire.AckFrame{Ranges: []wire.AckRange{{Smallest: 0, Largest: 0}}}, func(*sendItem) error { return refused }); !errors.Is(err, refused) || len(c.sendBuffers) != 0 || item.acked {
 		t.Fatal("failed completion released storage", err)
 	}
-	if err := acknowledgeItems(s, wire.AckFrame{Ranges: []wire.AckRange{{Smallest: 1, Largest: 1}}}, complete); err != nil {
+	if err := acknowledgeFrame(s, wire.AckFrame{Ranges: []wire.AckRange{{Smallest: 1, Largest: 1}}}, complete); err != nil {
 		t.Fatal(err)
 	}
 	if len(c.sendBuffers) != 1 || !item.acked || item.frame != nil {
@@ -35,7 +35,7 @@ func TestSendBufferLateACKAndLoss(t *testing.T) {
 	if len(destination.queue) != 0 {
 		t.Fatal("retransmitted recycled bytes")
 	}
-	if err := acknowledgeItems(s, wire.AckFrame{Ranges: []wire.AckRange{{Smallest: 0, Largest: 1}}}, complete); err != nil || len(c.sendBuffers) != 0 {
+	if err := acknowledgeFrame(s, wire.AckFrame{Ranges: []wire.AckRange{{Smallest: 0, Largest: 1}}}, complete); err != nil || len(c.sendBuffers) != 0 {
 		t.Fatal("late ACK released active reused buffer", err)
 	}
 	pruneAcknowledged(s)
@@ -116,4 +116,16 @@ func TestSendBufferCleanup(t *testing.T) {
 			t.Fatal("cleanup retained send plaintext")
 		}
 	}
+}
+
+// acknowledgeFrame acknowledges every packet in s's ledger that ack covers,
+// as recovery would report them newly acknowledged.
+func acknowledgeFrame(s *numberSpace, ack wire.AckFrame, complete func(*sendItem) error) error {
+	var acked []recovery.Packet
+	for pn := range s.sent {
+		if _, untracked := s.untracked[pn]; !untracked && ack.Acknowledges(pn) {
+			acked = append(acked, recovery.Packet{Number: pn})
+		}
+	}
+	return acknowledgeItems(s, ack, acked, complete)
 }

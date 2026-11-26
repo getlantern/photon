@@ -8,12 +8,39 @@ import (
 // acknowledgeItems runs completion once per logical item, including late ACKs
 // for transmissions already declared lost. Retransmissions share item pointers,
 // even across paths. The owner validates ACK-of-unsent before calling this.
-func acknowledgeItems(source *numberSpace, ack wire.AckFrame, complete func(*sendItem) error) error {
-	for pn, item := range source.sent {
-		if ack.Acknowledges(pn) && !item.acked {
+// acked is recovery's newly acknowledged packets for ack; with source's
+// untracked packets, they are the only entries ack can complete, so the cost
+// is theirs, not the whole ledger's. Completed entries leave the ledger, and
+// so do untracked ones whose items another packet completed.
+func acknowledgeItems(source *numberSpace, ack wire.AckFrame, acked []recovery.Packet, complete func(*sendItem) error) error {
+	// An entry leaves only once its item is complete: a refused completion
+	// keeps it for the next ACK.
+	for _, p := range acked {
+		item, ok := source.sent[p.Number]
+		if !ok {
+			continue
+		}
+		if !item.acked {
 			if err := acknowledgeSendItem(item, complete); err != nil {
 				return err
 			}
+		}
+		delete(source.sent, p.Number)
+	}
+	for pn := range source.untracked {
+		item, ok := source.sent[pn]
+		switch {
+		case !ok:
+			delete(source.untracked, pn)
+			continue
+		case !item.acked && ack.Acknowledges(pn):
+			if err := acknowledgeSendItem(item, complete); err != nil {
+				return err
+			}
+		}
+		if item.acked {
+			delete(source.sent, pn)
+			delete(source.untracked, pn)
 		}
 	}
 	return nil
@@ -23,6 +50,7 @@ func pruneAcknowledged(s *numberSpace) {
 	for pn, item := range s.sent {
 		if item.acked {
 			delete(s.sent, pn)
+			delete(s.untracked, pn)
 		}
 	}
 }
@@ -31,8 +59,15 @@ func pruneAcknowledged(s *numberSpace) {
 // the old packet mapping for late ACKs. A shared item is queued at most once.
 func queueLostItems(source, destination *numberSpace, lost []recovery.Packet) {
 	for _, packet := range lost {
+		if _, ok := source.sent[packet.Number]; ok {
+			if source.untracked == nil {
+				source.untracked = make(map[uint64]struct{})
+			}
+			source.untracked[packet.Number] = struct{}{}
+		}
 		visitSendLeaves(source.sent[packet.Number], func(item *sendItem) bool {
-			if !item.queued {
+			// Another path's ACK may already have completed a shared item.
+			if !item.queued && !item.acked {
 				item.queued = true
 				destination.queue = append(destination.queue, item)
 			}
@@ -80,6 +115,7 @@ func reclaimSent(s *numberSpace, tracked func(pn uint64) bool) bool {
 	for pn := range s.sent {
 		if !tracked(pn) {
 			delete(s.sent, pn)
+			delete(s.untracked, pn)
 		}
 	}
 	return len(s.sent) < maxSentPackets
