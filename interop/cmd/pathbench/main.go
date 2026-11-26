@@ -165,8 +165,8 @@ type connStats struct {
 	BytesLost   uint64  `json:"bytes_lost"`
 	PacketsLost uint64  `json:"packets_lost"`
 	LossPercent float64 `json:"loss_percent"`
-	MinRTTms    float64 `json:"min_rtt_ms"`
-	SRTTms      float64 `json:"srtt_ms"`
+	MinRTTms    float64 `json:"min_rtt_ms,omitempty"` // left out if not sampled
+	SRTTms      float64 `json:"srtt_ms,omitempty"`    // left out if not sampled
 	CwndBytes   *uint64 `json:"cwnd_bytes,omitempty"` // nil where the sender doesn't expose it
 }
 
@@ -400,6 +400,7 @@ func runClient(ctx context.Context, cfg clientConfig) (runResult, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	type flow struct {
 		received atomic.Uint64
+		reading  atomic.Bool // the download has started
 		err      atomic.Pointer[error]
 		conn     atomic.Pointer[upstream.Conn]
 		srtt     []time.Duration
@@ -454,6 +455,7 @@ func runClient(ctx context.Context, cfg clientConfig) (runResult, error) {
 				return
 			}
 			s.Close()
+			f.reading.Store(true)
 			buf := make([]byte, 64<<10)
 			for {
 				n, err := s.Read(buf)
@@ -482,8 +484,9 @@ func runClient(ctx context.Context, cfg clientConfig) (runResult, error) {
 	}
 	t0 := time.Now()
 	base := make([]uint64, len(flows))
+	present := make([]bool, len(flows)) // downloading when the window opened
 	for i, f := range flows {
-		base[i] = f.received.Load()
+		base[i], present[i] = f.received.Load(), f.reading.Load()
 	}
 	for next := cfg.from + time.Second; next < cfg.duration; next += time.Second {
 		if !sleepUntil(start.Add(next)) {
@@ -509,15 +512,38 @@ func runClient(ctx context.Context, cfg clientConfig) (runResult, error) {
 	for i, f := range flows {
 		ends[i], errs[i] = f.received.Load(), f.err.Load()
 	}
-	res := runResult{Server: cfg.server, WindowSeconds: window}
-	var total float64
+	samples := make([]flowSample, len(flows))
 	for i, f := range flows {
-		mbps := float64(ends[i]-base[i]) * 8 / window / 1e6
-		r := flowResult{Flow: i + 1, Sender: cfg.mix[i], StartSeconds: (time.Duration(i) * cfg.stagger).Seconds(), Mbps: mbps, MinRTTms: ms(f.minRTT), MeanSRTTms: ms(mean(f.srtt))}
-		if err := errs[i]; err != nil {
-			r.Error = (*err).Error()
+		samples[i] = flowSample{sender: cfg.mix[i], start: time.Duration(i) * cfg.stagger, bytes: ends[i] - base[i], minRTT: f.minRTT, meanSRTT: mean(f.srtt)}
+		switch {
+		case errs[i] != nil:
+			samples[i].err = (*errs[i]).Error()
+		case !present[i]:
+			samples[i].err = "not downloading when the measurement window opened"
 		}
-		res.Flows = append(res.Flows, r)
+	}
+	res := summarize(cfg.server, window, samples)
+	return res, nil
+}
+
+// flowSample is one flow's measurement over the window, before summary.
+type flowSample struct {
+	sender           string
+	start            time.Duration
+	bytes            uint64
+	minRTT, meanSRTT time.Duration
+	err              string
+}
+
+// summarize turns the window's samples into results. Every flow, failed or
+// not, counts toward the total and the shares: a failed flow still used the
+// path while it ran, and leaving it out would hand its share to the others.
+func summarize(server string, window float64, samples []flowSample) runResult {
+	res := runResult{Server: server, WindowSeconds: window}
+	var total float64
+	for i, f := range samples {
+		mbps := float64(f.bytes) * 8 / window / 1e6
+		res.Flows = append(res.Flows, flowResult{Flow: i + 1, Sender: f.sender, StartSeconds: f.start.Seconds(), Mbps: mbps, MinRTTms: ms(f.minRTT), MeanSRTTms: ms(f.meanSRTT), Error: f.err})
 		total += mbps
 	}
 	res.TotalMbps = total
@@ -526,7 +552,7 @@ func runClient(ctx context.Context, cfg clientConfig) (runResult, error) {
 			res.Flows[i].SharePercent = 100 * res.Flows[i].Mbps / total
 		}
 	}
-	return res, nil
+	return res
 }
 
 func mean(ds []time.Duration) time.Duration {
