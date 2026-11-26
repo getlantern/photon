@@ -118,7 +118,7 @@ func TestDeliveryRateCountsLoss(t *testing.T) {
 	// declares it lost by packet threshold. last is not acknowledged yet.
 	events := rateACK(t, r, first+1, last-1, start.Add(50*time.Millisecond))
 	rs := events.Rate
-	if len(events.Lost) != 1 || rs.NewlyLost != 1200 || rs.NewlyAcked != 3600 || r.LostBytes() != 1200 {
+	if len(events.Lost) != 1 || rs.NewlyAcked != 3600 || r.LostBytes() != 1200 {
 		t.Fatalf("lost %d packets, sample %+v, total lost %d", len(events.Lost), rs, r.LostBytes())
 	}
 	// The newest acknowledged packet was sent before the loss was declared.

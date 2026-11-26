@@ -47,9 +47,8 @@ type RateSample struct {
 	// Lost is the in-flight bytes declared lost since the newest
 	// acknowledged packet was sent, this ACK's losses included.
 	Lost uint64
-	// NewlyAcked and NewlyLost are the in-flight bytes this ACK newly
-	// acknowledged and newly declared lost.
-	NewlyAcked, NewlyLost uint64
+	// NewlyAcked is the in-flight bytes this ACK newly acknowledged.
+	NewlyAcked uint64
 	// PriorDelivered is the path's delivered bytes when the newest
 	// acknowledged packet was sent, which marks packet-timed round trips.
 	PriorDelivered uint64
