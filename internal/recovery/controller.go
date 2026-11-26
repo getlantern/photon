@@ -1,6 +1,9 @@
 package recovery
 
-import "time"
+import (
+	"errors"
+	"time"
+)
 
 // Controller is one path's congestion controller. The owner asks it whether a
 // packet fits (CanSend, Window) and reports what happens to sent packets.
@@ -71,3 +74,29 @@ type LossEvent struct {
 }
 
 var _ Controller = (*NewReno)(nil)
+
+// Algorithm selects a congestion controller.
+type Algorithm uint8
+
+const (
+	// NewRenoAlgorithm is RFC 9002's NewReno, the default.
+	NewRenoAlgorithm Algorithm = iota
+	// BBRAlgorithm is BBRv3, as in draft-ietf-ccwg-bbr-07.
+	BBRAlgorithm
+)
+
+// NewController returns a controller of algorithm a for maxDatagram-byte
+// packets.
+func NewController(a Algorithm, maxDatagram uint64) (Controller, error) {
+	if maxDatagram < 1200 || maxDatagram > 65527 {
+		return nil, errors.New("quic: invalid congestion datagram size")
+	}
+	if a == BBRAlgorithm {
+		return NewBBR(maxDatagram), nil
+	}
+	c, err := NewCongestion(maxDatagram)
+	if err != nil {
+		return nil, err
+	}
+	return c, nil
+}

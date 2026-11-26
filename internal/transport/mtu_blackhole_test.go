@@ -52,7 +52,7 @@ func TestMTUBlackholeEvidenceFilters(t *testing.T) {
 		return recovery.Packet{Number: n, Bytes: size, AckEliciting: true, InFlight: true, MTUProbe: probe}
 	}
 	fresh := func() *pathApplication {
-		a := newPathApplication()
+		a := newPathApplication(recovery.NewRenoAlgorithm)
 		m, _ := newMTUSearch(1500)
 		m.confirmed = 1400
 		a.mtu = &m

@@ -1,6 +1,8 @@
 package transport
 
 import (
+	"github.com/getlantern/photon/internal/recovery"
+
 	"bytes"
 	"fmt"
 	"syscall"
@@ -36,7 +38,7 @@ func TestInitialPathSizeAdoption(t *testing.T) {
 				if _, err := p.application(1); err == nil {
 					t.Fatal("fixture unexpectedly has path 1 CIDs")
 				}
-				if newPathApplication().packetPayloadLimit() != 1200 {
+				if newPathApplication(recovery.NewRenoAlgorithm).packetPayloadLimit() != 1200 {
 					t.Fatal("new path inherited original tuple size")
 				}
 				app.resetMTU()

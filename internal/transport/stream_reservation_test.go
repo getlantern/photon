@@ -1,6 +1,8 @@
 package transport
 
 import (
+	"github.com/getlantern/photon/internal/recovery"
+
 	"errors"
 	"github.com/getlantern/photon/internal/wire"
 	"runtime"
@@ -79,7 +81,7 @@ func TestLargeWriteAdmissionDoesNotConsumeCreditWhenBlocked(t *testing.T) {
 
 func TestLargeStreamPayloadIncludesLengthWidth(t *testing.T) {
 	for _, limit := range []int{1200, 3000, 16443, 16444, 16445, 65527} {
-		a := newPathApplication()
+		a := newPathApplication(recovery.NewRenoAlgorithm)
 		m, _ := newMTUSearch(limit)
 		m.confirmed = limit
 		a.mtu = &m

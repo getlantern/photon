@@ -50,7 +50,7 @@ func (c *Conn) initiateMultipathPath(id uint64, local, remote netip.AddrPort) er
 	if !advertised {
 		return errPathInitiation
 	}
-	app := newPathApplication()
+	app := newPathApplication(c.multipath.congestionControl)
 	app.network = &tuple
 	// Client transmissions are exempt from the server's amplification limit.
 	// This is independent of the PATH_CHALLENGE reachability/MTU validation.

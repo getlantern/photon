@@ -1,6 +1,8 @@
 package quic
 
 import (
+	"github.com/getlantern/photon/internal/recovery"
+
 	"context"
 	"crypto/rand"
 	"crypto/tls"
@@ -122,6 +124,9 @@ type Config struct {
 	// starts at InitialPacketSize; write failure or migration can reduce it.
 	// Discovery is supported on concrete-address Linux/macOS sockets up to 1452.
 	DisablePathMTUDiscovery bool
+	// CongestionControl selects the congestion controller for the
+	// connection's paths. The zero value is NewReno (RFC 9002).
+	CongestionControl CongestionControl
 	// EnableMultipath opts into RFC 10069 multipath, with path IDs 0–3.
 	// Both endpoints must opt in. ListenAddr requires a concrete bind address.
 	// Servers validate client address rebinding within the existing socket family,
@@ -243,7 +248,7 @@ func makeServerConfig(tlsConfig *tls.Config, cfg Config, params wire.TransportPa
 		return transport.Config{}, nil, err
 	}
 
-	engineConfig := transport.Config{MaxStreamReceiveWindow: cfg.MaxStreamReceiveWindow, MaxConnectionReceiveWindow: cfg.MaxConnectionReceiveWindow, AcceptEarly: early, EnableEarlyData: cfg.Allow0RTT, CompatibleVersions: compatibleVersions(cfg), PreferredAddresses: cfg.PreferredAddresses, AddressTokens: addressTokens, DisablePathMTUDiscovery: cfg.DisablePathMTUDiscovery, InitialPacketSize: cfg.InitialPacketSize, EnableMigration: true, EnableMultipath: cfg.EnableMultipath, RequireStreamCreditRelease: cfg.RequireStreamCreditRelease, Version: version, TLS: tlsConfig, Parameters: params, HandshakeTimeout: cfg.HandshakeTimeout, HandshakeIdleTimeout: cfg.HandshakeIdleTimeout, KeepAlivePeriod: cfg.KeepAlivePeriod}
+	engineConfig := transport.Config{MaxStreamReceiveWindow: cfg.MaxStreamReceiveWindow, MaxConnectionReceiveWindow: cfg.MaxConnectionReceiveWindow, AcceptEarly: early, EnableEarlyData: cfg.Allow0RTT, CompatibleVersions: compatibleVersions(cfg), PreferredAddresses: cfg.PreferredAddresses, AddressTokens: addressTokens, DisablePathMTUDiscovery: cfg.DisablePathMTUDiscovery, CongestionControl: recovery.Algorithm(cfg.CongestionControl), InitialPacketSize: cfg.InitialPacketSize, EnableMigration: true, EnableMultipath: cfg.EnableMultipath, RequireStreamCreditRelease: cfg.RequireStreamCreditRelease, Version: version, TLS: tlsConfig, Parameters: params, HandshakeTimeout: cfg.HandshakeTimeout, HandshakeIdleTimeout: cfg.HandshakeIdleTimeout, KeepAlivePeriod: cfg.KeepAlivePeriod}
 	engineConfig.AdapterData = acceptedConfig{cfg.EnableDatagrams, cfg.AllowConnectionWindowIncrease}
 	if cfg.GetConfigForClient != nil {
 		engineConfig.ConfigureClient = serverConfigSelector(cfg)

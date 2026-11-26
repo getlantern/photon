@@ -410,3 +410,37 @@ func TestHeldAdvertisementBlocksBorrowing(t *testing.T) {
 		t.Fatal("path 1 counted data it can't borrow past a held advertisement")
 	}
 }
+
+// CongestionControl selects BBR for the connection's base path and for every
+// multipath path created later.
+func TestCongestionControlSelectsBBR(t *testing.T) {
+	clientTLS, _ := testTLS(t)
+	c, err := NewConn(Config{Version: wire.Version1, TLS: clientTLS, LocalCID: []byte("client00"), PeerCID: []byte("original"), OriginalDCID: []byte("original"), Parameters: wire.DefaultTransportParameters(), CongestionControl: recovery.BBRAlgorithm})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if _, ok := c.congestion.(*recovery.BBR); !ok {
+		t.Fatalf("base path controller %T, want BBR", c.congestion)
+	}
+	client, server := testPair(t, wire.Version1)
+	drivePair(t, client, server, false, false)
+	if _, ok := client.congestion.(*recovery.NewReno); !ok {
+		t.Fatalf("default controller %T, want NewReno", client.congestion)
+	}
+	client.config.CongestionControl = recovery.BBRAlgorithm
+	p, err := adoptPathZero(client, 3, 3, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.issue(1); err != nil {
+		t.Fatal(err)
+	}
+	app, err := p.application(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := app.congestion.(*recovery.BBR); !ok {
+		t.Fatalf("multipath path controller %T, want BBR", app.congestion)
+	}
+}
