@@ -79,8 +79,9 @@ type rateSampler struct {
 // acked counts an in-flight packet as delivered and keeps the most recently
 // sent one as the sample's packet. A packet already declared lost and then
 // acknowledged late never reaches it, since loss detection removed it from
-// the ledger; as the draft does for spurious retransmissions, its data counts
-// once, with its retransmission, and its loss already reached the controller.
+// the ledger, so its data counts once, with its retransmission, and its loss
+// already reached the controller. (TCP's version of the draft does sample
+// such a packet, since there it is the same buffer as its retransmission.)
 func (d *deliveryRate) acked(s *rateSampler, p Packet, now time.Time) {
 	if !p.InFlight {
 		return
