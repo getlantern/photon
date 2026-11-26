@@ -42,13 +42,20 @@ func TestECNPathProbeBudgetAndLoss(t *testing.T) {
 func TestECNPathFeedbackAndIsolation(t *testing.T) {
 	p := NewECNPath()
 	p.Sent(Application, 100)
+	p.Sent(Application, 101)
 	p.ACK(Application, ack(0, 99), ECNFeedbackResult{Validated: true})
 	p.ACK(Initial, ack(100, 100), ECNFeedbackResult{Validated: true})
 	p.ACK(Application, ack(100, 100), ECNFeedbackResult{})
 	if p.State() != ECNTesting {
 		t.Fatal("old path, wrong space, or unvalidated feedback established capability")
 	}
+	// Probe 100's first acknowledgment carried no validated feedback, so it
+	// has no outcome; probe 101's establishes capability.
 	p.ACK(Application, ack(100, 100), ECNFeedbackResult{Validated: true, ECT: 1})
+	if p.State() != ECNTesting {
+		t.Fatal("a probe already acknowledged without feedback established capability")
+	}
+	p.ACK(Application, ack(100, 101), ECNFeedbackResult{Validated: true, ECT: 1})
 	if p.State() != ECNCapable || p.Marking() != ECT0 {
 		t.Fatal("valid feedback did not enable ECN")
 	}
@@ -161,5 +168,29 @@ func TestECNPathRemarkedToCE(t *testing.T) {
 		if want := map[bool]ECNPathState{false: ECNFailed, true: ECNCapable}[oneECT]; p.State() != want {
 			t.Fatalf("one ECT probe %t: state %d, want %d", oneECT, p.State(), want)
 		}
+	}
+}
+
+// After a path change, an old-path packet reported ECT, acknowledged with
+// the new path's probe reported CE, doesn't make the new path capable: the
+// counts can't say which arrived how, so the old packet takes the ECT.
+func TestECNNewPathIgnoresOldPathECT(t *testing.T) {
+	r := tracker(t)
+	r.EnableECN()
+	at := time.Unix(100, 0)
+	if err := r.OnSent(Application, Packet{Number: 0, SentAt: at, Bytes: 1200, AckEliciting: true, InFlight: true, ECN: ECT0}); err != nil {
+		t.Fatal(err)
+	}
+	r.ResetForPathChange()
+	if err := r.OnSent(Application, Packet{Number: 1, SentAt: at, Bytes: 1200, AckEliciting: true, InFlight: true, ECN: r.ECNMarkingAt(Application, at)}); err != nil {
+		t.Fatal(err)
+	}
+	frame := ack(0, 1)
+	frame.ECN = &[3]uint64{1, 0, 1}
+	if _, err := r.OnACK(Application, frame, at.Add(time.Millisecond), 0, 0, true); err != nil {
+		t.Fatal(err)
+	}
+	if r.ECNState() == ECNCapable {
+		t.Fatal("old-path ECT established the new path's capability")
 	}
 }
