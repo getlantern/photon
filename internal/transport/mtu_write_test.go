@@ -25,9 +25,6 @@ func mtuWriteEndpoint(t *testing.T, version wire.Version) (*ServerEndpoint, *Con
 func mtuWriteEndpointPair(t *testing.T, version wire.Version, ceiling int) (*ServerEndpoint, *Conn, *Conn) {
 	t.Helper()
 	c, remote := sendingPathPair(t, version)
-	// These tests check that rejected writes don't cut the window, which only
-	// NewReno would otherwise do.
-	useNewReno(t, c)
 	local := netip.MustParseAddrPort("192.0.2.1:443")
 	peer := netip.MustParseAddrPort("192.0.2.2:443")
 	r, _ := NewRouter(8, 2)
@@ -53,6 +50,9 @@ func TestMTUWriteRejection(t *testing.T) {
 	for _, version := range []wire.Version{wire.Version1, wire.Version2} {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
 			e, c := mtuWriteEndpoint(t, version)
+			// A rejected write mustn't cut the window, which only NewReno
+			// would otherwise do.
+			useNewReno(t, c)
 			defer e.Close()
 			now := time.Unix(101, 0)
 			idleBefore := c.idle
@@ -107,6 +107,9 @@ func TestLargeStreamWriteRejection(t *testing.T) {
 	for _, version := range []wire.Version{wire.Version1, wire.Version2} {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
 			e, c := mtuWriteEndpoint(t, version)
+			// A rejected write mustn't cut the window, which only NewReno
+			// would otherwise do.
+			useNewReno(t, c)
 			defer e.Close()
 			a := c.multipath.paths[1].application
 			// Establish a large confirmed limit; actual encrypted discovery is covered
