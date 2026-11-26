@@ -81,3 +81,24 @@ func TestPacerUsesControllerRate(t *testing.T) {
 		t.Fatal("rate 0 paced", d, "want the window-derived", want)
 	}
 }
+
+// A packet larger than the burst still goes once its delay has passed: the
+// bucket grows to hold it, rather than capping below its size forever.
+func TestPacerSendsPacketLargerThanBurst(t *testing.T) {
+	now := time.Unix(100, 0)
+	reno, _ := NewCongestion(1200)
+	// 36 KB/s: the burst is 1 ms of that, raised to 2400 bytes.
+	c := rateController{NewReno: reno, rate: 36_000}
+	var p Pacer
+	if d := p.DelayFor(now, c, time.Second, 1200); d != 0 {
+		t.Fatal("first packet delayed", d)
+	}
+	p.Sent(1200)
+	d := p.DelayFor(now, c, time.Second, 3000)
+	if d <= 0 {
+		t.Fatal("3000 bytes sent from a 1200-byte balance")
+	}
+	if d := p.DelayFor(now.Add(d), c, time.Second, 3000); d != 0 {
+		t.Fatal("3000-byte packet still blocked after its delay:", d)
+	}
+}
