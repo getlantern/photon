@@ -146,7 +146,7 @@ func (p *pathCIDs) receiveACK(frame wire.Frame, now time.Time, exponent uint8, m
 		a.congestion.OnPersistentCongestion()
 		a.sent.RTT.OnPersistentCongestion()
 	}
-	a.congestion.OnACK(recovery.ACKEvent{Acked: events.Acked, Rate: events.Rate, Limited: limited, Flight: a.sent.BytesInFlight, Now: now})
+	a.congestion.OnACK(recovery.ACKEvent{Acked: events.Acked, Rate: events.Rate, Limited: limited, Flight: a.sent.BytesInFlight, SmoothedRTT: a.sent.SmoothedRTT(), Now: now})
 	if a.congestion.ForcesAppLimited() {
 		a.sent.MarkAppLimited()
 	}

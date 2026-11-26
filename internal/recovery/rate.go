@@ -141,6 +141,14 @@ func (d *deliveryRate) sample(s *rateSampler, now time.Time, minRTT time.Duratio
 // aside.
 func (r *Sent) LostBytes() uint64 { return r.rate.lost }
 
+// SmoothedRTT is the path's smoothed RTT, or zero before any RTT sample.
+func (r *Sent) SmoothedRTT() time.Duration {
+	if !r.RTT.Sampled {
+		return 0
+	}
+	return r.RTT.Smoothed
+}
+
 // DeliveredBytes is the path's in-flight bytes delivered so far.
 func (r *Sent) DeliveredBytes() uint64 { return r.rate.delivered }
 

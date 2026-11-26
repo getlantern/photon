@@ -54,7 +54,10 @@ type ACKEvent struct {
 	// Flight is the bytes in flight once the ACK, and any loss it declared,
 	// has been processed.
 	Flight uint64
-	Now    time.Time
+	// SmoothedRTT is the path's smoothed RTT after the ACK, zero before any
+	// RTT sample.
+	SmoothedRTT time.Duration
+	Now         time.Time
 }
 
 // SentEvent is one in-flight packet as it is sent.

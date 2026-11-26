@@ -1166,7 +1166,7 @@ func (c *Conn) handleAck(space int, f wire.AckFrame, now time.Time) error {
 		c.congestion.OnECN(events.ECNSentAt, now)
 	}
 	c.onCongestionLoss(events.Lost, now)
-	c.congestion.OnACK(recovery.ACKEvent{Acked: events.Acked, Rate: events.Rate, Limited: limited, Flight: c.recovery.BytesInFlight, Now: now})
+	c.congestion.OnACK(recovery.ACKEvent{Acked: events.Acked, Rate: events.Rate, Limited: limited, Flight: c.recovery.BytesInFlight, SmoothedRTT: c.recovery.SmoothedRTT(), Now: now})
 	if c.congestion.ForcesAppLimited() {
 		c.recovery.MarkAppLimited()
 	}

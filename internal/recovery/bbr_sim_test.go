@@ -74,7 +74,7 @@ func simulate(t *testing.T, c Controller, link *simLink, d time.Duration, observ
 				res.lost += len(events.Lost)
 				c.OnLoss(LossEvent{Lost: events.Lost, TotalLost: sent.LostBytes(), TotalDelivered: sent.DeliveredBytes(), Flight: sent.BytesInFlight, Now: a.at})
 			}
-			c.OnACK(ACKEvent{Acked: events.Acked, Rate: events.Rate, Flight: sent.BytesInFlight, Now: a.at})
+			c.OnACK(ACKEvent{Acked: events.Acked, Rate: events.Rate, Flight: sent.BytesInFlight, SmoothedRTT: sent.SmoothedRTT(), Now: a.at})
 			if observe != nil {
 				observe(a.at)
 			}
