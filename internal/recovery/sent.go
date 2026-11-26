@@ -269,12 +269,18 @@ func (r *Sent) OnACK(space Space, f wire.AckFrame, now time.Time, delay, maxDela
 		}
 		r.RTT.Update(now.Sub(largestPacket.SentAt), delay, maxDelay, confirmed)
 	}
-	events.Rate = r.rate.sample(&sampler, now, r.RTT.Minimum, r.RTT.Sampled)
 	if !s.hasAck || largest > s.largestAcked {
 		s.largestAcked = largest
 		s.hasAck = true
 	}
 	events.Lost = r.DetectLoss(space, now)
+	// After loss detection, so the sample counts this ACK's losses.
+	events.Rate = r.rate.sample(&sampler, now, r.RTT.Minimum, r.RTT.Sampled)
+	for _, p := range events.Lost {
+		if p.InFlight {
+			events.Rate.NewlyLost += uint64(p.Bytes)
+		}
+	}
 	if !lookup {
 		order(events.Acked)
 	}
@@ -310,6 +316,9 @@ func (r *Sent) DetectLoss(space Space, now time.Time) []Packet {
 	order(lost)
 	for _, p := range lost {
 		r.ecnPath.Lost(space, p.Number)
+		if p.InFlight {
+			r.rate.lost += uint64(p.Bytes)
+		}
 	}
 	r.history.lost(space, lost)
 	return lost

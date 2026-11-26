@@ -106,3 +106,29 @@ func TestDeliveryRateIgnoresACKOnly(t *testing.T) {
 		t.Fatal("an ACK-only packet counted as delivered", rs)
 	}
 }
+
+// An ACK that also declares packets lost reports, in its sample, the bytes it
+// newly acknowledged and newly declared lost, and the loss since its newest
+// packet was sent.
+func TestDeliveryRateCountsLoss(t *testing.T) {
+	r, _ := NewSent(64)
+	start := time.Unix(100, 0)
+	first, last := rateFlight(t, r, start, 5, 1200, time.Millisecond)
+	// Packet first is never acknowledged; acknowledging the three after it
+	// declares it lost by packet threshold. last is not acknowledged yet.
+	events := rateACK(t, r, first+1, last-1, start.Add(50*time.Millisecond))
+	rs := events.Rate
+	if len(events.Lost) != 1 || rs.NewlyLost != 1200 || rs.NewlyAcked != 3600 || r.LostBytes() != 1200 {
+		t.Fatalf("lost %d packets, sample %+v, total lost %d", len(events.Lost), rs, r.LostBytes())
+	}
+	// The newest acknowledged packet was sent before the loss was declared.
+	if rs.Lost != 1200 || rs.PriorDelivered != 0 {
+		t.Fatalf("sample %+v, want 1200 lost since the newest packet was sent", rs)
+	}
+	// A packet sent after the loss doesn't count it.
+	next := start.Add(60 * time.Millisecond)
+	later, _ := rateFlight(t, r, next, 1, 1200, 0)
+	if rs := rateACK(t, r, last, later, next.Add(50*time.Millisecond)).Rate; rs.Lost != 0 || rs.PriorDelivered != 3600 {
+		t.Fatalf("sample %+v, want no loss since it was sent", rs)
+	}
+}

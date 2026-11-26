@@ -19,6 +19,24 @@ func (p *Pacer) Delay(now time.Time, window uint64, rtt time.Duration, size int)
 	burst := float64(min(window, uint64(12000)))
 	rtt = max(rtt, Granularity)
 	rate := 1.25 * float64(window) / float64(rtt) // Bytes per nanosecond.
+	return p.delay(now, rate, burst, size)
+}
+
+// DelayFor paces at the controller's own rate when it sets one, with bursts
+// of its send quantum: 1 ms at that rate, between two maximum-size packets
+// and 64 KB, as draft-ietf-ccwg-bbr does. Otherwise it paces from the
+// controller's window, as Delay does.
+func (p *Pacer) DelayFor(now time.Time, c Controller, rtt time.Duration, size int) time.Duration {
+	bps := c.PacingRate()
+	if bps == 0 {
+		return p.Delay(now, c.Window(), rtt, size)
+	}
+	rate := float64(bps) / float64(time.Second)
+	burst := min(max(rate*float64(time.Millisecond), 2*1452), 64*1024)
+	return p.delay(now, rate, burst, size)
+}
+
+func (p *Pacer) delay(now time.Time, rate, burst float64, size int) time.Duration {
 	if !p.initialized {
 		p.tokens = burst
 		p.last = now

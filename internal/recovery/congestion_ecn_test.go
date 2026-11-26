@@ -13,13 +13,13 @@ func TestECNAndLossShareRecovery(t *testing.T) {
 		if ecnFirst {
 			c.OnECN(p.SentAt, start.Add(time.Second))
 		} else {
-			c.OnLoss([]Packet{p}, start.Add(time.Second))
+			c.OnLoss(LossEvent{Lost: []Packet{p}, Now: start.Add(time.Second)})
 		}
 		if c.Window() != 6000 || c.Threshold() != 6000 {
 			t.Fatal("initial reduction", c.Window())
 		}
 		if ecnFirst {
-			c.OnLoss([]Packet{p}, start.Add(2*time.Second))
+			c.OnLoss(LossEvent{Lost: []Packet{p}, Now: start.Add(2 * time.Second)})
 		} else {
 			c.OnECN(p.SentAt, start.Add(2*time.Second))
 		}

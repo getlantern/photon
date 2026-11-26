@@ -109,7 +109,7 @@ func TestPersistentCongestionFromACK(t *testing.T) {
 		t.Fatal("missing persistent congestion")
 	}
 	c, _ := NewCongestion(1200)
-	c.OnLoss(ev.Lost, start.Add(4*time.Second))
+	c.OnLoss(LossEvent{Lost: ev.Lost, Now: start.Add(4 * time.Second)})
 	c.OnPersistentCongestion()
 	if c.Window() != 2400 {
 		t.Fatal(c.Window())

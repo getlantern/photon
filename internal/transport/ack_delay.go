@@ -138,7 +138,7 @@ func (c *Conn) bundlePathACK(app *pathApplication, ackPath uint64, f wire.Frame,
 	}
 	size := headerLen + len(payload) + 16
 	if size <= bundledSizeLimit(f, app.packetPayloadLimit(), size-ackBytes, true) && app.budget.CanSend(size) && app.congestion.CanSend(app.sent.BytesInFlight, size, inFlight, probe) &&
-		(!inFlight || probe || app.pacer.Delay(now, app.congestion.Window(), app.sent.RTT.Smoothed, size) <= 0) {
+		(!inFlight || probe || app.pacer.DelayFor(now, app.congestion, app.sent.RTT.Smoothed, size) <= 0) {
 		return payload, ack.Ranges[0].Largest, true, nil
 	}
 	payload, err = f.Append(c.payloadScratch[:0])
@@ -197,5 +197,5 @@ func (c *Conn) canSendBundled(size int, inFlight bool, now time.Time) bool {
 	if !c.congestion.CanSend(c.recovery.BytesInFlight, size, inFlight, false) || !c.budget.CanSend(size) {
 		return false
 	}
-	return !inFlight || c.pacer.Delay(now, c.congestion.Window(), c.recovery.RTT.Smoothed, size) <= 0
+	return !inFlight || c.pacer.DelayFor(now, c.congestion, c.recovery.RTT.Smoothed, size) <= 0
 }

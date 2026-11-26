@@ -1164,7 +1164,7 @@ func (c *Conn) handleAck(space int, f wire.AckFrame, now time.Time) error {
 		c.congestion.OnECN(events.ECNSentAt, now)
 	}
 	c.onCongestionLoss(events.Lost, now)
-	c.congestion.OnACK(recovery.ACKEvent{Acked: events.Acked, Rate: events.Rate, Limited: limited, Now: now})
+	c.congestion.OnACK(recovery.ACKEvent{Acked: events.Acked, Rate: events.Rate, Limited: limited, Flight: c.recovery.BytesInFlight, Now: now})
 	if len(events.Acked) > 0 {
 		c.probeAllowance[space] = false
 	}
@@ -1399,7 +1399,7 @@ func (c *Conn) nextBaseDatagram(now time.Time) ([]byte, error) {
 			continue
 		}
 		if inFlight {
-			delay := c.pacer.Delay(now, c.congestion.Window(), c.recovery.RTT.Smoothed, size)
+			delay := c.pacer.DelayFor(now, c.congestion, c.recovery.RTT.Smoothed, size)
 			if !probe && delay > 0 {
 				at := now.Add(delay)
 				if c.pacingAt.IsZero() || at.Before(c.pacingAt) {
@@ -1433,8 +1433,12 @@ func (c *Conn) nextBaseDatagram(now time.Time) ([]byte, error) {
 			c.recovery.EnableECN()
 		}
 		marking := c.recovery.ECNMarkingAt(recovery.Space(space), now)
+		sent := recovery.SentEvent{Bytes: len(out), Flight: c.recovery.BytesInFlight, AppLimited: c.recovery.AppLimited(), Now: now}
 		if err := c.recovery.OnSent(recovery.Space(space), recovery.Packet{ECN: marking, Number: s.nextPN, SentAt: now, Bytes: len(out), AckEliciting: wire.AckEliciting(f), InFlight: inFlight}); err != nil {
 			return nil, c.fail(err)
+		}
+		if inFlight {
+			c.congestion.OnPacketSent(sent)
 		}
 		c.lastBaseApplication = space == applicationSpace && !early
 		_, c.lastBaseDatagram = f.(wire.DatagramFrame)
