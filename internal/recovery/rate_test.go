@@ -172,3 +172,41 @@ func TestDeliveryRateCountsCE(t *testing.T) {
 		t.Fatalf("sample %+v, want no marks since it was sent", events.Rate)
 	}
 }
+
+// Marks beyond the in-flight packets an ACK newly acknowledges, such as on
+// ACK-only packets, don't count, nor do marks on an ACK that acknowledges
+// only packets not in flight.
+func TestDeliveryRateCapsCE(t *testing.T) {
+	r, _ := NewSent(64)
+	r.EnableECN()
+	start := time.Unix(100, 0)
+	packets := []Packet{
+		{Number: 0, Bytes: 1200, AckEliciting: true, InFlight: true},
+		{Number: 1, Bytes: 50},
+		{Number: 2, Bytes: 50},
+		{Number: 3, Bytes: 50},
+	}
+	for _, p := range packets {
+		p.SentAt, p.ECN = start, ECT0
+		if err := r.OnSent(Application, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	frame := ack(0, 2)
+	frame.ECN = &[3]uint64{0, 0, 3}
+	events, err := r.OnACK(Application, frame, start.Add(50*time.Millisecond), 0, 0, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if events.Rate.NewCE != 1200 {
+		t.Fatalf("sample %+v, want 3 marks capped at the one 1200-byte in-flight packet", events.Rate)
+	}
+	frame = ack(0, 3)
+	frame.ECN = &[3]uint64{0, 0, 4}
+	if events, err = r.OnACK(Application, frame, start.Add(60*time.Millisecond), 0, 0, true); err != nil {
+		t.Fatal(err)
+	}
+	if events.Rate.NewCE != 0 || r.CEBytes() != 1200 {
+		t.Fatalf("sample %+v, total %d: a mark on an ACK-only packet counted", events.Rate, r.CEBytes())
+	}
+}

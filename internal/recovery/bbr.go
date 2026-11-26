@@ -236,10 +236,11 @@ func (b *BBR) OnPersistentCongestion() {
 	// The path stopped delivering for long enough that its model can't be
 	// trusted: start over as on a new path, from the minimum window, and
 	// don't restore the old one (RFC 9002 section 7.6.2).
-	now, inflight := b.now, b.inflight
+	now, inflight, noted := b.now, b.inflight, b.lossNoted
 	b.Reset(b.smss)
 	b.at(now)
-	b.inflight = inflight
+	// The loss that led here is still this ACK's loss event.
+	b.inflight, b.lossNoted = inflight, noted
 	b.cwnd = b.minPipeCwnd()
 	b.inRecovery, b.recoveryStart = true, now
 }
@@ -256,6 +257,8 @@ func (b *BBR) OnLoss(e LossEvent) {
 			batch += uint64(p.Bytes)
 		}
 	}
+	// Whether this detection was a loss event, for the ACK that may follow.
+	b.lossNoted = batch > 0
 	if batch == 0 {
 		return
 	}
@@ -266,7 +269,6 @@ func (b *BBR) OnLoss(e LossEvent) {
 		b.inRecovery, b.recoveryStart = true, e.Now
 	}
 	b.noteLoss()
-	b.lossNoted = true
 	state := b.state
 	// Each packet sees the loss as it stood at its turn: the total before
 	// this batch, plus the packets up to and including it.
@@ -293,7 +295,7 @@ func (b *BBR) OnACK(e ACKEvent) {
 	// A loss this ACK's detection noted makes its marks the same loss event.
 	lossNoted := e.Lost && b.lossNoted
 	b.lossNoted = false
-	if rs.NewlyAcked == 0 && rs.NewCE == 0 {
+	if rs.NewlyAcked == 0 {
 		return
 	}
 	b.at(e.Now)
@@ -305,14 +307,9 @@ func (b *BBR) OnACK(e ACKEvent) {
 		if !lossNoted {
 			b.noteLoss()
 		}
-		if congested := rs.Lost + rs.CE; b.checkProbeLoss && rs.InFlight > 0 && isInflightTooHigh(congested, rs.InFlight) {
+		if congested := rs.Lost + rs.CE; b.checkProbeLoss && isInflightTooHigh(congested, rs.InFlight) {
 			b.handleInflightTooHigh(rs.AppLimited, inflightAtLoss(min(rs.NewCE, congested), rs.InFlight, congested))
 		}
-	}
-	if rs.NewlyAcked == 0 {
-		// Marks reported for packets no longer in flight: nothing else to
-		// update.
-		return
 	}
 	if rtt := e.SmoothedRTT; !b.hasSeenRTT && rtt > 0 {
 		// InitPacingRate, now that there is an RTT to pace over: the smoothed
