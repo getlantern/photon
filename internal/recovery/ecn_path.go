@@ -85,18 +85,24 @@ func (p *ECNPath) ACK(space Space, frame wire.AckFrame, feedback ECNFeedbackResu
 	// A probe's outcome comes from the first validated feedback that
 	// acknowledges it. Feedback Check skipped doesn't consume the counts, so
 	// a later validated ACK still reports the probe's marking.
-	acknowledged := false
+	var newly []int
 	for i := range p.probes[:p.count] {
 		probe := &p.probes[i]
 		if probe.space == space && !probe.acked && frame.Acknowledges(probe.number) {
 			probe.acked = true
-			acknowledged = true
-			// Only CE this path's share reports marks it remarked.
-			probe.ce = feedback.ECT == 0 && feedback.CE > 0
+			newly = append(newly, i)
 		}
 	}
-	if !acknowledged {
+	if len(newly) == 0 {
 		return
+	}
+	// The probes are remarked only if this path's share of CE covers every
+	// one; otherwise some may have arrived ECT, and their outcomes stay
+	// unresolved, which never counts as remarked.
+	if feedback.ECT == 0 && feedback.CE >= uint64(len(newly)) {
+		for _, i := range newly {
+			p.probes[i].ce = true
+		}
 	}
 	if feedback.ECT > 0 {
 		p.state = ECNCapable
