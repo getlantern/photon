@@ -90,11 +90,10 @@ var _ Controller = (*NewReno)(nil)
 type Algorithm uint8
 
 const (
-	// NewRenoAlgorithm is RFC 9002's NewReno, the transport's zero value;
-	// the public API defaults to BBR.
-	NewRenoAlgorithm Algorithm = iota
-	// BBRAlgorithm is BBRv3, as in draft-ietf-ccwg-bbr-07.
-	BBRAlgorithm
+	// BBRAlgorithm is BBRv3, as in draft-ietf-ccwg-bbr-07, and the default.
+	BBRAlgorithm Algorithm = iota
+	// NewRenoAlgorithm is RFC 9002's NewReno.
+	NewRenoAlgorithm
 )
 
 // NewController returns a controller of algorithm a for maxDatagram-byte

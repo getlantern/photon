@@ -98,6 +98,7 @@ func TestPersistentCongestionRefreshesPathRTT(t *testing.T) {
 	ledger, _ := recovery.NewSent(20)
 	ledger.RTT.Update(10*time.Millisecond, 0, 0, true)
 	client.recovery = ledger
+	client.congestion = renoController(t)
 	for i := 0; i < 4; i++ {
 		if err := ledger.OnSent(recovery.Application, recovery.Packet{Number: uint64(i), SentAt: now.Add(time.Duration(i) * time.Second), Bytes: 1200, InFlight: true, AckEliciting: true}); err != nil {
 			t.Fatal(err)
@@ -411,24 +412,24 @@ func TestHeldAdvertisementBlocksBorrowing(t *testing.T) {
 	}
 }
 
-// CongestionControl selects BBR for the connection's base path and for every
-// multipath path created later.
-func TestCongestionControlSelectsBBR(t *testing.T) {
+// CongestionControl selects the controller for the connection's base path
+// and for every multipath path created later; BBR is the default.
+func TestCongestionControlSelectsController(t *testing.T) {
 	clientTLS, _ := testTLS(t)
-	c, err := NewConn(Config{Version: wire.Version1, TLS: clientTLS, LocalCID: []byte("client00"), PeerCID: []byte("original"), OriginalDCID: []byte("original"), Parameters: wire.DefaultTransportParameters(), CongestionControl: recovery.BBRAlgorithm})
+	c, err := NewConn(Config{Version: wire.Version1, TLS: clientTLS, LocalCID: []byte("client00"), PeerCID: []byte("original"), OriginalDCID: []byte("original"), Parameters: wire.DefaultTransportParameters(), CongestionControl: recovery.NewRenoAlgorithm})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer c.Close()
-	if _, ok := c.congestion.(*recovery.BBR); !ok {
-		t.Fatalf("base path controller %T, want BBR", c.congestion)
+	if _, ok := c.congestion.(*recovery.NewReno); !ok {
+		t.Fatalf("base path controller %T, want NewReno", c.congestion)
 	}
 	client, server := testPair(t, wire.Version1)
 	drivePair(t, client, server, false, false)
-	if _, ok := client.congestion.(*recovery.NewReno); !ok {
-		t.Fatalf("default controller %T, want NewReno", client.congestion)
+	if _, ok := client.congestion.(*recovery.BBR); !ok {
+		t.Fatalf("default controller %T, want BBR", client.congestion)
 	}
-	client.config.CongestionControl = recovery.BBRAlgorithm
+	client.config.CongestionControl = recovery.NewRenoAlgorithm
 	p, err := adoptPathZero(client, 3, 3, 4)
 	if err != nil {
 		t.Fatal(err)
@@ -440,8 +441,8 @@ func TestCongestionControlSelectsBBR(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := app.congestion.(*recovery.BBR); !ok {
-		t.Fatalf("multipath path controller %T, want BBR", app.congestion)
+	if _, ok := app.congestion.(*recovery.NewReno); !ok {
+		t.Fatalf("multipath path controller %T, want NewReno", app.congestion)
 	}
 }
 
@@ -495,4 +496,15 @@ func TestControllerForcesAppLimited(t *testing.T) {
 	if !appLimitedAfterACK(true) {
 		t.Fatal("controller's request to mark the path app limited ignored")
 	}
+}
+
+// renoController is a NewReno controller, for tests of NewReno's responses
+// to loss and ECN-CE, which BBR doesn't share.
+func renoController(t testing.TB) recovery.Controller {
+	t.Helper()
+	c, err := recovery.NewController(recovery.NewRenoAlgorithm, 1200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
 }

@@ -24,6 +24,7 @@ func TestEncryptedMTUBlackholeRecovery(t *testing.T) {
 			}
 			c.multipath.paths[0].backup = true
 			a := c.multipath.paths[1].application
+			a.congestion = renoController(t)
 			if err := c.startPathMTUSearch(1, 4800); err != nil {
 				t.Fatal(err)
 			}
