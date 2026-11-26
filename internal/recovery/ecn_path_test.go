@@ -401,3 +401,38 @@ func TestECNReclaimedEvidenceAcrossPathChange(t *testing.T) {
 		t.Fatal("a reclaimed pre-change packet's ECT validated a remarking new path")
 	}
 }
+
+// The old path's possible reports aren't used up by the new path's CE: a
+// CE report and then the old packet's late ECT still can't validate a path
+// that remarks everything, nor can feedback for an old packet the ACK's
+// ranges omit.
+func TestECNOldPathAllowanceNotDrainedByCE(t *testing.T) {
+	r := tracker(t)
+	r.EnableECN()
+	at := time.Unix(100, 0)
+	send := func(pn uint64, marking ECNMark) {
+		t.Helper()
+		if err := r.OnSent(Application, Packet{Number: pn, SentAt: at, Bytes: 1200, AckEliciting: true, InFlight: true, ECN: marking}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	send(0, ECT0)
+	r.ResetForPathChange()
+	send(1, r.ECNMarkingAt(Application, at))
+	send(2, r.ECNMarkingAt(Application, at))
+	frame := ack(1, 1) // the new probe, remarked
+	frame.ECN = &[3]uint64{0, 0, 1}
+	if _, err := r.OnACK(Application, frame, at.Add(time.Millisecond), 0, 0, true); err != nil {
+		t.Fatal(err)
+	}
+	// Probe 2 remarked, and old packet 0's ECT counted though the ranges
+	// omit it.
+	frame = ack(1, 2)
+	frame.ECN = &[3]uint64{1, 0, 2}
+	if _, err := r.OnACK(Application, frame, at.Add(2*time.Millisecond), 0, 0, true); err != nil {
+		t.Fatal(err)
+	}
+	if r.ECNState() == ECNCapable {
+		t.Fatal("the old packet's ECT validated a remarking new path")
+	}
+}

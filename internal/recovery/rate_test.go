@@ -281,17 +281,19 @@ func TestDeliveryRateLeavesOldPathCE(t *testing.T) {
 	}
 	send(0)
 	r.ResetForPathChange()
-	// Validate the new path with its own probe.
+	// Validate the new path with its own probes: one ECT report could be
+	// the old packet's, two can't.
 	send(1)
-	frame := ack(1, 1)
-	frame.ECN = &[3]uint64{1, 0, 0}
+	send(2)
+	frame := ack(1, 2)
+	frame.ECN = &[3]uint64{2, 0, 0}
 	if _, err := r.OnACK(Application, frame, at.Add(time.Millisecond), 0, 0, true); err != nil || r.ECNState() != ECNCapable {
 		t.Fatal("new path not validated", err)
 	}
 	// The old packet arrives late, marked, acknowledged with a new one.
-	send(2)
-	frame = ack(0, 2)
-	frame.ECN = &[3]uint64{2, 0, 1}
+	send(3)
+	frame = ack(0, 3)
+	frame.ECN = &[3]uint64{3, 0, 1}
 	events, err := r.OnACK(Application, frame, at.Add(2*time.Millisecond), 0, 0, true)
 	if err != nil {
 		t.Fatal(err)

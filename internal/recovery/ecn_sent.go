@@ -55,9 +55,6 @@ func (r *Sent) reclaimECN(space Space) {
 	for pn, evidence := range s.ecnPending {
 		if _, ok := s.packets[pn]; !ok && evidence.currentPath {
 			delete(s.ecnPending, pn)
-			// A late ACK may still report it, after a path change as the
-			// old path's.
-			s.ecnReclaimed++
 		}
 	}
 }
@@ -133,9 +130,8 @@ func (r *Sent) ECNMarkingAt(space Space, now time.Time) ECNMark {
 // ackECN is called only after ACK range/unsent validation. For sparse ACKs,
 // inspect their packet numbers directly instead of scanning retained loss
 // evidence. Dense ranges still scan the bounded ledger rather than enumerate
-// potentially enormous ranges supplied by a peer. old counts those of the
-// newly acknowledged marked packets sent before a path change.
-func (s *packetSpace) ackECN(frame wire.AckFrame) (newly [2]uint64, old uint64) {
+// potentially enormous ranges supplied by a peer.
+func (s *packetSpace) ackECN(frame wire.AckFrame) (newly [2]uint64) {
 	if len(s.ecnPending) == 0 {
 		return
 	}
@@ -144,9 +140,6 @@ func (s *packetSpace) ackECN(frame wire.AckFrame) (newly [2]uint64, old uint64) 
 			for pn := span.Smallest; pn <= span.Largest; pn++ {
 				if evidence, ok := s.ecnPending[pn]; ok {
 					newly[evidence.marking.index()]++
-					if !evidence.currentPath {
-						old++
-					}
 					delete(s.ecnPending, pn)
 				}
 			}
@@ -155,9 +148,6 @@ func (s *packetSpace) ackECN(frame wire.AckFrame) (newly [2]uint64, old uint64) 
 		for pn, evidence := range s.ecnPending {
 			if frame.Acknowledges(pn) {
 				newly[evidence.marking.index()]++
-				if !evidence.currentPath {
-					old++
-				}
 				delete(s.ecnPending, pn)
 			}
 		}
