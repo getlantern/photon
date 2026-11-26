@@ -13,14 +13,15 @@ import (
 func (c *Conn) nextSharedPathData(dest uint64, ids []uint64, now time.Time) ([]byte, error) {
 	p := c.multipath
 	target := p.paths[dest].application
-	if target.mtuNeedsValidation || target.space.ackPending || target.probePending || len(target.space.queue) != 0 || ((dest != 0 || target.mtuNeedsValidation) && target.validation.state != PathValidated) {
+	// An ACK owed, or the path's own work, goes first.
+	if !c.mayBorrow(dest) || target.space.ackPending || len(target.space.queue) != 0 {
 		return nil, nil
 	}
 	for _, source := range ids {
-		state := p.paths[source]
-		if source == dest || p.abandoned[source] != nil || state.application.probePending {
+		if !c.mayLend(source, dest) {
 			continue
 		}
+		state := p.paths[source]
 		queue := state.application.space
 		preferred := c.prioritizedStreamIndex(queue)
 		for offset := 0; offset < len(queue.queue); offset++ {
@@ -33,21 +34,8 @@ func (c *Conn) nextSharedPathData(dest uint64, ids []uint64, now time.Time) ([]b
 				}
 			}
 			item := queue.queue[index]
-			if item.acked {
+			if !c.borrowable(item, dest) {
 				continue
-			}
-			switch item.frame.(type) {
-			case wire.StreamFrame, wire.DatagramFrame:
-			default:
-				continue
-			}
-			if frame, ok := item.frame.(wire.DatagramFrame); ok {
-				peer := p.paths[dest].peer
-				if !datagramFitsPath(frame, target.packetPayloadLimit(), len(peer.active[peer.current].cid)) {
-					// Keep it on the source rather than dropping it on a smaller
-					// idle path. Borrow rollback must not resurrect a dropped item.
-					continue
-				}
 			}
 			// Split in the source queue before borrowing. Otherwise a blocked
 			// destination could discard the new tail during rollback.
@@ -72,4 +60,43 @@ func (c *Conn) nextSharedPathData(dest uint64, ids []uint64, now time.Time) ([]b
 		}
 	}
 	return nil, nil
+}
+
+// mayBorrow reports whether path dest is eligible to carry another path's
+// queued data: usable, validated (path zero excepted), and with no probe or
+// MTU validation of its own pending. nextSharedPathData also waits while dest
+// owes an ACK or has its own queue to send.
+func (c *Conn) mayBorrow(dest uint64) bool {
+	p := c.multipath
+	state := p.paths[dest]
+	if state == nil || state.application == nil || p.abandoned[dest] != nil || len(state.peer.active[state.peer.current].cid) == 0 {
+		return false
+	}
+	target := state.application
+	return !target.mtuNeedsValidation && !target.probePending && (dest == 0 || target.validation.state == PathValidated)
+}
+
+// mayLend reports whether path source's queue may lend to path dest.
+func (c *Conn) mayLend(source, dest uint64) bool {
+	state := c.multipath.paths[source]
+	return source != dest && state != nil && state.application != nil && c.multipath.abandoned[source] == nil && !state.application.probePending
+}
+
+// borrowable reports whether item, queued on another path, can be carried by
+// path dest: unacknowledged STREAM data, or a DATAGRAM that fits dest. Control
+// and probe frames keep their path; a DATAGRAM too large for dest stays on its
+// source rather than being dropped on the smaller path.
+func (c *Conn) borrowable(item *sendItem, dest uint64) bool {
+	if item.acked {
+		return false
+	}
+	switch f := item.frame.(type) {
+	case wire.StreamFrame:
+		return true
+	case wire.DatagramFrame:
+		state := c.multipath.paths[dest]
+		peer := state.peer
+		return datagramFitsPath(f, state.application.packetPayloadLimit(), len(peer.active[peer.current].cid))
+	}
+	return false
 }
