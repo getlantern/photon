@@ -72,8 +72,12 @@ func (a *pathApplication) recordSent(packet recovery.Packet) error {
 	if packet.Number != a.space.nextPN {
 		return errors.New("quic: incorrect path packet number")
 	}
+	sent := recovery.SentEvent{Bytes: packet.Bytes, Flight: a.sent.BytesInFlight, AppLimited: a.sent.AppLimited(), Now: packet.SentAt}
 	if err := a.sent.OnSent(recovery.Application, packet); err != nil {
 		return err
+	}
+	if packet.InFlight {
+		a.congestion.OnPacketSent(sent)
 	}
 	a.space.nextPN++
 	a.space.sentAny = true
@@ -137,12 +141,12 @@ func (p *pathCIDs) receiveACK(frame wire.Frame, now time.Time, exponent uint8, m
 	if events.ECNCongestion {
 		a.congestion.OnECN(events.ECNSentAt, now)
 	}
-	a.congestion.OnLoss(events.Lost, now)
+	a.congestion.OnLoss(recovery.LossEvent{Lost: events.Lost, TotalLost: a.sent.LostBytes(), Flight: a.sent.BytesInFlight, Now: now})
 	if len(events.Lost) > 0 && a.sent.PersistentCongestion(maxDelay) {
 		a.congestion.OnPersistentCongestion()
 		a.sent.RTT.OnPersistentCongestion()
 	}
-	a.congestion.OnACK(recovery.ACKEvent{Acked: events.Acked, Rate: events.Rate, Limited: limited, Now: now})
+	a.congestion.OnACK(recovery.ACKEvent{Acked: events.Acked, Rate: events.Rate, Limited: limited, Flight: a.sent.BytesInFlight, Now: now})
 	return events, nil
 }
 

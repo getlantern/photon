@@ -31,6 +31,12 @@ func (c *NewReno) Reset(maxDatagram uint64) {
 	*c = NewReno{window: min(10*maxDatagram, max(14720, 2*maxDatagram)), threshold: math.MaxUint64, datagram: maxDatagram}
 }
 
+// PacingRate is 0: NewReno is paced from its window.
+func (c *NewReno) PacingRate() uint64 { return 0 }
+
+// OnPacketSent does nothing: NewReno needs only ACK and loss events.
+func (c *NewReno) OnPacketSent(SentEvent) {}
+
 func (c *NewReno) Window() uint64    { return c.window }
 func (c *NewReno) Threshold() uint64 { return c.threshold }
 func (c *NewReno) CanSend(flight uint64, size int, inFlight, probe bool) bool {
@@ -77,7 +83,8 @@ func (c *NewReno) OnACK(e ACKEvent) {
 
 // OnLoss reduces the window once per recovery epoch, never for ACK-only
 // packets or dedicated MTU probes. PTO and key discard do not call this method.
-func (c *NewReno) OnLoss(packets []Packet, now time.Time) {
+func (c *NewReno) OnLoss(e LossEvent) {
+	packets, now := e.Lost, e.Now
 	var latest time.Time
 	found := false
 	for _, p := range packets {

@@ -28,12 +28,12 @@ func TestMTUProbeRecoveryAccounting(t *testing.T) {
 			if err != nil || len(events.Lost) != 1 || !events.Lost[0].MTUProbe {
 				t.Fatal(events, err)
 			}
-			c.OnLoss(events.Lost, now.Add(2*time.Second))
+			c.OnLoss(LossEvent{Lost: events.Lost, Now: now.Add(2 * time.Second)})
 			if c.Window() != before {
 				t.Fatal("size probe reduced congestion window")
 			}
 			// Ordinary loss in the same batch must still reduce the window.
-			c.OnLoss(append(events.Lost, later), now.Add(2*time.Second))
+			c.OnLoss(LossEvent{Lost: append(events.Lost, later), Now: now.Add(2 * time.Second)})
 			if c.Window() != before/2 {
 				t.Fatal("MTU probe hid ordinary loss")
 			}

@@ -40,11 +40,11 @@ func TestSlowStartAndRecovery(t *testing.T) {
 	if c.Window() != 13200 {
 		t.Fatal("slow start")
 	}
-	c.OnLoss([]Packet{p}, start.Add(time.Second))
+	c.OnLoss(LossEvent{Lost: []Packet{p}, Now: start.Add(time.Second)})
 	if c.Window() != 6600 || c.Threshold() != 6600 {
 		t.Fatal("loss reduction")
 	}
-	c.OnLoss([]Packet{p}, start.Add(2*time.Second))
+	c.OnLoss(LossEvent{Lost: []Packet{p}, Now: start.Add(2 * time.Second)})
 	c.OnACK(ACKEvent{Acked: []Packet{p}, Limited: false})
 	if c.Window() != 6600 {
 		t.Fatal("recovery changed window twice")
@@ -59,12 +59,12 @@ func TestSlowStartAndRecovery(t *testing.T) {
 	if c.Window() != 7800 {
 		t.Fatal("congestion avoidance", c.Window())
 	}
-	c.OnLoss([]Packet{p}, start.Add(4*time.Second))
+	c.OnLoss(LossEvent{Lost: []Packet{p}, Now: start.Add(4 * time.Second)})
 	if c.Window() != 3900 {
 		t.Fatal("new epoch failed to reduce")
 	}
 	p.SentAt = start.Add(5 * time.Second)
-	c.OnLoss([]Packet{p}, start.Add(6*time.Second))
+	c.OnLoss(LossEvent{Lost: []Packet{p}, Now: start.Add(6 * time.Second)})
 	if c.Window() != 2400 {
 		t.Fatal("minimum window")
 	}
@@ -73,7 +73,7 @@ func TestACKOnlyDoesNotAffectCongestion(t *testing.T) {
 	c := congestion(t)
 	p := Packet{SentAt: time.Unix(1000, 0), Bytes: 1200}
 	c.OnACK(ACKEvent{Acked: []Packet{p}, Limited: false})
-	c.OnLoss([]Packet{p}, p.SentAt.Add(time.Second))
+	c.OnLoss(LossEvent{Lost: []Packet{p}, Now: p.SentAt.Add(time.Second)})
 	if c.Window() != 12000 {
 		t.Fatal("ACK-only changed window")
 	}
@@ -83,7 +83,7 @@ func TestPersistentCongestionEndsRecovery(t *testing.T) {
 	c := congestion(t)
 	now := time.Unix(1000, 0)
 	p := Packet{SentAt: now, Bytes: 1200, InFlight: true, AckEliciting: true}
-	c.OnLoss([]Packet{p}, now.Add(time.Second))
+	c.OnLoss(LossEvent{Lost: []Packet{p}, Now: now.Add(time.Second)})
 	c.credit = 100
 	c.OnPersistentCongestion()
 	if c.Window() != 2400 || c.recovering || c.credit != 0 {

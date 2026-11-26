@@ -13,11 +13,16 @@ type Controller interface {
 	// already in flight. Packets that are not in flight, and probes, are
 	// always allowed.
 	CanSend(flight uint64, size int, inFlight, probe bool) bool
+	// PacingRate is the rate, in bytes per second, at which the controller
+	// wants packets paced, or 0 to pace from Window and the smoothed RTT.
+	PacingRate() uint64
+	// OnPacketSent reports an in-flight packet as it is sent.
+	OnPacketSent(SentEvent)
 	// OnACK reports newly acknowledged packets, with the delivery rate their
 	// acknowledgment measured.
 	OnACK(ACKEvent)
 	// OnLoss reports packets declared lost.
-	OnLoss(packets []Packet, now time.Time)
+	OnLoss(LossEvent)
 	// OnECN reports an ECN-CE increase for a packet sent at sent.
 	OnECN(sent, now time.Time)
 	// OnPersistentCongestion reports persistent congestion (RFC 9002 section
@@ -38,7 +43,31 @@ type ACKEvent struct {
 	// Limited is true when the sender was application- or flow-control
 	// limited, with room left in the window, when the ACK arrived.
 	Limited bool
-	Now     time.Time
+	// Flight is the bytes in flight once the ACK, and any loss it declared,
+	// has been processed.
+	Flight uint64
+	Now    time.Time
+}
+
+// SentEvent is one in-flight packet as it is sent.
+type SentEvent struct {
+	Bytes int
+	// Flight is the bytes in flight before the packet, and AppLimited
+	// whether the path was application limited, when it was sent.
+	Flight     uint64
+	AppLimited bool
+	Now        time.Time
+}
+
+// LossEvent is one detection of lost packets.
+type LossEvent struct {
+	Lost []Packet
+	// TotalLost is the path's lost in-flight bytes, these included, which
+	// with each packet's Delivery.Lost gives the loss since it was sent.
+	TotalLost uint64
+	// Flight is the bytes in flight once these packets are removed.
+	Flight uint64
+	Now    time.Time
 }
 
 var _ Controller = (*NewReno)(nil)

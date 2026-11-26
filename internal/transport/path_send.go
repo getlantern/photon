@@ -221,7 +221,7 @@ func (c *Conn) nextPacketOnPathSelection(id, ackPath uint64, now time.Time, allo
 		return fallbackACK()
 	}
 	if inFlight && !probe {
-		if delay := app.pacer.Delay(now, app.congestion.Window(), app.sent.RTT.Smoothed, size); delay > 0 {
+		if delay := app.pacer.DelayFor(now, app.congestion, app.sent.RTT.Smoothed, size); delay > 0 {
 			b, err := fallbackACK()
 			app.pacingAt = now.Add(delay)
 			return b, err
