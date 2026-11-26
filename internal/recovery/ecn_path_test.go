@@ -48,7 +48,7 @@ func TestECNPathFeedbackAndIsolation(t *testing.T) {
 	if p.State() != ECNTesting {
 		t.Fatal("old path, wrong space, or unvalidated feedback established capability")
 	}
-	p.ACK(Application, ack(100, 100), ECNFeedbackResult{Validated: true, CE: 1})
+	p.ACK(Application, ack(100, 100), ECNFeedbackResult{Validated: true, ECT: 1})
 	if p.State() != ECNCapable || p.Marking() != ECT0 {
 		t.Fatal("valid feedback did not enable ECN")
 	}
@@ -134,4 +134,32 @@ func FuzzECNPathTransitions(f *testing.F) {
 			}
 		}
 	})
+}
+
+// A path that remarks every test packet CE fails validation, as quic-go
+// does, rather than reading as constant congestion; one probe that arrives
+// still ECT establishes capability.
+func TestECNPathRemarkedToCE(t *testing.T) {
+	for _, oneECT := range []bool{false, true} {
+		p := NewECNPath()
+		for n := uint64(0); n < 10; n++ {
+			p.Sent(Application, n)
+		}
+		p.ACK(Application, ack(0, 0), ECNFeedbackResult{Validated: true, CE: 1})
+		if p.State() != ECNUnknown {
+			t.Fatal("CE-only feedback for one probe decided the path:", p.State())
+		}
+		p.Lost(Application, 1)
+		for n := uint64(2); n < 9; n++ {
+			p.ACK(Application, ack(n, n), ECNFeedbackResult{Validated: true, CE: 1})
+		}
+		last := ECNFeedbackResult{Validated: true, CE: 1}
+		if oneECT {
+			last = ECNFeedbackResult{Validated: true, ECT: 1}
+		}
+		p.ACK(Application, ack(9, 9), last)
+		if want := map[bool]ECNPathState{false: ECNFailed, true: ECNCapable}[oneECT]; p.State() != want {
+			t.Fatalf("one ECT probe %t: state %d, want %d", oneECT, p.State(), want)
+		}
+	}
 }

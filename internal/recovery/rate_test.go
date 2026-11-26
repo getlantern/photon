@@ -145,11 +145,15 @@ func TestDeliveryRateCountsCE(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// An ACK-only packet, not in flight, doesn't count toward the average.
+	// An ACK-only packet, not in flight, and an in-flight one sent Not-ECT
+	// don't count toward the average: neither could carry a mark.
 	if err := r.OnSent(Application, Packet{Number: 2, SentAt: start, Bytes: 50}); err != nil {
 		t.Fatal(err)
 	}
-	frame := ack(0, 2)
+	if err := r.OnSent(Application, Packet{Number: 3, SentAt: start, Bytes: 2000, AckEliciting: true, InFlight: true}); err != nil {
+		t.Fatal(err)
+	}
+	frame := ack(0, 3)
 	frame.ECN = &[3]uint64{1, 0, 1}
 	events, err := r.OnACK(Application, frame, start.Add(50*time.Millisecond), 0, 0, true)
 	if err != nil {
@@ -159,10 +163,10 @@ func TestDeliveryRateCountsCE(t *testing.T) {
 		t.Fatalf("congestion %t, sample %+v, want 1200 marked bytes", events.ECNCongestion, events.Rate)
 	}
 	next := start.Add(60 * time.Millisecond)
-	if err := r.OnSent(Application, Packet{Number: 3, SentAt: next, Bytes: 1200, AckEliciting: true, InFlight: true, ECN: ECT0}); err != nil {
+	if err := r.OnSent(Application, Packet{Number: 4, SentAt: next, Bytes: 1200, AckEliciting: true, InFlight: true, ECN: ECT0}); err != nil {
 		t.Fatal(err)
 	}
-	frame = ack(3, 3)
+	frame = ack(4, 4)
 	frame.ECN = &[3]uint64{2, 0, 1}
 	events, err = r.OnACK(Application, frame, next.Add(50*time.Millisecond), 0, 0, true)
 	if err != nil {

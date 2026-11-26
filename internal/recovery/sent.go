@@ -275,16 +275,19 @@ func (r *Sent) OnACK(space Space, f wire.AckFrame, now time.Time, delay, maxDela
 	}
 	events.Lost = r.DetectLoss(space, now)
 	// Validated marks, attributed to this ledger's newly acknowledged
-	// packets; ECNCongestion additionally needs a send time for NewReno's
-	// recovery epoch.
-	if events.ECN.CE > 0 {
-		var count uint64
+	// ECT-marked, in-flight packets; ECNCongestion additionally needs a send
+	// time for NewReno's recovery epoch. Only application data counts: a
+	// marked datagram of coalesced handshake packets would otherwise count
+	// once per packet number space.
+	if events.ECN.CE > 0 && space == Application {
+		var marked, bytes uint64
 		for _, p := range events.Acked {
-			if p.InFlight {
-				count++
+			if p.InFlight && p.ECN != NotECT {
+				marked++
+				bytes += uint64(p.Bytes)
 			}
 		}
-		r.rate.marked(&sampler, events.ECN.CE, sampler.newlyAcked, count)
+		r.rate.marked(&sampler, events.ECN.CE, bytes, marked)
 	}
 	// After loss detection and CE, so the sample counts this ACK's.
 	events.Rate = r.rate.sample(&sampler, now, r.RTT.Minimum, r.RTT.Sampled)

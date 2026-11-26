@@ -20,13 +20,18 @@ import (
 func TestECNSenderContinuesAfterValidationUpstream(t *testing.T) {
 	for _, v := range []quic.Version{quic.Version1, quic.Version2} {
 		for _, address := range []string{"127.0.0.1:0", "[::1]:0"} {
-			for _, server := range []bool{false, true} {
-				t.Run(fmt.Sprintf("%x/%s/server=%v", v, address, server), func(t *testing.T) {
+			// Both controllers mark ECT(0) and answer CE.
+			for _, tc := range []struct {
+				server     bool
+				congestion quic.CongestionControl
+			}{{false, quic.CongestionControlBBR}, {true, quic.CongestionControlBBR}, {false, quic.CongestionControlNewReno}, {true, quic.CongestionControlNewReno}} {
+				server := tc.server
+				t.Run(fmt.Sprintf("%x/%s/server=%v/congestion=%d", v, address, server, tc.congestion), func(t *testing.T) {
 					ct, st := tlsConfigs(t)
 					trace := &ecnSenderTrace{datagrams: make(chan qlog.ECN, 64)}
 					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 					defer cancel()
-					config := &quic.Config{Versions: []quic.Version{v}, EnableDatagrams: true}
+					config := &quic.Config{Versions: []quic.Version{v}, EnableDatagrams: true, CongestionControl: tc.congestion}
 					upstreamConfig := &upstream.Config{Versions: []upstream.Version{upstream.Version(v)}, EnableDatagrams: true, Tracer: func(context.Context, bool, upstream.ConnectionID) qlogwriter.Trace { return trace }}
 					var c *quic.Conn
 					var peer *upstream.Conn

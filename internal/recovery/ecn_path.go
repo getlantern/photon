@@ -28,6 +28,7 @@ type ecnProbe struct {
 	space  Space
 	number uint64
 	lost   bool
+	ce     bool // acknowledged by feedback that reported only CE
 }
 
 func NewECNPath() *ECNPath             { return &ECNPath{state: ECNTesting} }
@@ -61,8 +62,11 @@ func (p *ECNPath) Sent(space Space, number uint64) {
 }
 
 // ACK consumes a result from ECNFeedback.Check after normal ACK validation.
-// Successful feedback must acknowledge this path's own probe before it can
-// establish capability. Failure in any space disables the entire path.
+// Successful feedback must acknowledge this path's own probe, and report a
+// packet that arrived still ECT, before it can establish capability.
+// Failure in any space disables the entire path. A path that remarks every
+// test packet CE fails too, as quic-go does: such remarking would otherwise
+// read as constant congestion.
 func (p *ECNPath) ACK(space Space, frame wire.AckFrame, feedback ECNFeedbackResult) {
 	if p.state == ECNDisabled || p.state == ECNFailed {
 		return
@@ -71,14 +75,44 @@ func (p *ECNPath) ACK(space Space, frame wire.AckFrame, feedback ECNFeedbackResu
 		p.state = ECNFailed
 		return
 	}
-	if !feedback.Validated || space > Application {
+	if !feedback.Validated || space > Application || p.state == ECNCapable {
 		return
 	}
-	for _, probe := range p.probes[:p.count] {
+	acknowledged := false
+	for i := range p.probes[:p.count] {
+		probe := &p.probes[i]
 		if probe.space == space && frame.Acknowledges(probe.number) {
-			p.state = ECNCapable
+			acknowledged = true
+			if feedback.ECT == 0 {
+				probe.ce = true
+			}
+		}
+	}
+	if !acknowledged {
+		return
+	}
+	if feedback.ECT > 0 {
+		p.state = ECNCapable
+		return
+	}
+	p.checkRemarked()
+}
+
+// checkRemarked fails the path once its whole test flight is sent and every
+// probe has come back CE or been lost, at least one CE.
+func (p *ECNPath) checkRemarked() {
+	if p.state != ECNUnknown || p.count == 0 {
+		return
+	}
+	ce := false
+	for _, probe := range p.probes[:p.count] {
+		if !probe.ce && !probe.lost {
 			return
 		}
+		ce = ce || probe.ce
+	}
+	if ce {
+		p.state = ECNFailed
 	}
 }
 
@@ -100,7 +134,9 @@ func (p *ECNPath) Lost(space Space, number uint64) {
 	}
 	if p.state == ECNUnknown && p.count > 0 && lost == p.count {
 		p.state = ECNFailed
+		return
 	}
+	p.checkRemarked()
 }
 
 // forget removes a probe that did not leave the host or whose encryption space

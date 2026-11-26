@@ -52,9 +52,8 @@ type RateSample struct {
 	// CE is the bytes reported ECN-CE-marked since the newest acknowledged
 	// packet was sent, and NewCE those this ACK reported. An ACK reports
 	// how many packets were marked, not which, so marked bytes are the count,
-	// capped at the in-flight packets it newly acknowledged, times their
-	// average size. (A CE-marked datagram of coalesced handshake packets
-	// counts once per packet number space.)
+	// capped at the ECT-marked in-flight packets it newly acknowledged, times
+	// their average size. Only application-data marks count.
 	CE, NewCE uint64
 	// NewlyAcked is the in-flight bytes this ACK newly acknowledged.
 	NewlyAcked uint64
@@ -102,10 +101,10 @@ type rateSampler struct {
 }
 
 // marked counts packets this ACK newly reported ECN-CE-marked, at the
-// average size of the in-flight packets it newly acknowledged (bytes in
-// count packets), and at most count of them. Marks on an ACK that newly
-// acknowledged no in-flight packet count for nothing: they are on packets
-// not in flight, or on ones already declared lost, whose loss counted.
+// average size of the ECT-marked in-flight packets it newly acknowledged
+// (bytes in count packets), and at most count of them. Marks on an ACK that
+// newly acknowledged none count for nothing: they are on packets not in
+// flight, or on ones already declared lost, whose loss counted.
 func (d *deliveryRate) marked(s *rateSampler, packets, bytes, count uint64) {
 	if count == 0 {
 		return
