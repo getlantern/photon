@@ -104,7 +104,7 @@ func (c *Conn) sealMigrationProbe(id uint64, candidate *migrationCandidate, now 
 	if candidate.budget.CanSend(1200) {
 		size = 1200
 	}
-	if !candidate.budget.CanSend(size) || !app.congestion.CanSend(app.sent.BytesInFlight, size, true, false) || !app.sent.CanRecord(recovery.Application, true) {
+	if !candidate.budget.CanSend(size) || !app.congestion.CanSend(app.sent.BytesInFlight, size, true, false) || !app.sent.CanRecord(recovery.Application, true) || app.sent.Outstanding(recovery.Application) >= maxSentPackets {
 		return nil, pathTuple{}, nil
 	}
 	if delay := app.pacer.DelayFor(now, app.congestion, app.sent.RTT.Smoothed, size); delay > 0 {

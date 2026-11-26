@@ -2,6 +2,7 @@ package transport
 
 import (
 	"bytes"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -180,5 +181,108 @@ func TestEvacuatedPathLateACKCompletes(t *testing.T) {
 	ack(0, 3, now.Add(20*time.Millisecond))
 	if !completed[items[0]] {
 		t.Fatal("late ACK of a lost packet on an evacuated path didn't complete its item")
+	}
+}
+
+// In-flight packets that never enter the frame ledger, such as DATAGRAMs,
+// still count toward the limit: once recovery holds maxSentPackets of them,
+// ordinary frames wait, leaving the headroom for the PTO probe.
+func TestUnframedPacketsFillLedger(t *testing.T) {
+	c := ledgerPair(t)
+	s := &c.spaces[applicationSpace]
+	now := time.Unix(200, 0)
+	for range maxSentPackets {
+		if err := c.recovery.OnSent(recovery.Application, recovery.Packet{Number: s.nextPN, SentAt: now, Bytes: 1, AckEliciting: true, InFlight: true}); err != nil {
+			t.Fatal(err)
+		}
+		s.nextPN++
+	}
+	for {
+		out, err := c.NextDatagram(now)
+		if err != nil || c.closed {
+			t.Fatal(err)
+		}
+		if out == nil {
+			break
+		}
+	}
+	if len(s.sent) != 0 {
+		t.Fatalf("sent %d framed packets into the probe headroom", len(s.sent))
+	}
+	c.armTimer(now)
+	now = c.RecoveryDeadline()
+	if now.IsZero() {
+		t.Fatal("no recovery deadline")
+	}
+	if err := c.HandleTimeout(now); err != nil {
+		t.Fatal(err)
+	}
+	start := s.nextPN
+	if _, err := c.NextDatagram(now); err != nil || c.closed {
+		t.Fatal(err)
+	}
+	if s.nextPN == start {
+		t.Fatal("no PTO probe")
+	}
+}
+
+// The same on a multipath path: unframed packets fill its recovery, and an
+// ordinary frame queued on the path waits.
+func TestUnframedPacketsFillPathLedger(t *testing.T) {
+	client, _ := sendingPathPair(t, wire.Version1)
+	app := client.multipath.paths[1].application
+	app.budget.Validate()
+	app.congestion = openController{app.congestion}
+	now := time.Unix(101, 0)
+	s := app.space
+	for range maxSentPackets {
+		if err := app.sent.OnSent(recovery.Application, recovery.Packet{Number: s.nextPN, SentAt: now, Bytes: 1, AckEliciting: true, InFlight: true}); err != nil {
+			t.Fatal(err)
+		}
+		s.nextPN++
+	}
+	if err := client.queueFrameOnPath(1, wire.PingFrame{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.nextPacketOnPath(1, now); err != nil || client.closed {
+		t.Fatal(err)
+	}
+	if len(s.sent) != 0 {
+		t.Fatal("sent a framed packet into the path's probe headroom")
+	}
+}
+
+// Migration PATH_CHALLENGEs are ordinary in-flight packets too: at a full
+// ledger they wait rather than take the probe headroom.
+func TestFullLedgerHoldsMigrationProbe(t *testing.T) {
+	client, server := testPair(t, wire.Version1, streamParameters())
+	drivePair(t, client, server, false, false)
+	local := netip.MustParseAddrPort("192.0.2.1:443")
+	next := netip.MustParseAddrPort("192.0.2.1:445")
+	remote := netip.MustParseAddrPort("192.0.2.2:444")
+	if err := client.activateBasePath(local, remote); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.activateBasePath(remote, local); err != nil {
+		t.Fatal(err)
+	}
+	client.peerParams.DisableActiveMigration = false
+	server.config.allowCandidateMigration = true
+	server.config.allowFreshCIDMigration = true
+	now := time.Unix(101, 0)
+	if _, err := client.prepareLocalMigration(0, next, now); err != nil {
+		t.Fatal(err)
+	}
+	app := client.multipath.paths[0].application
+	app.congestion = openController{app.congestion}
+	for range maxSentPackets {
+		if err := app.sent.OnSent(recovery.Application, recovery.Packet{Number: app.space.nextPN, SentAt: now, Bytes: 1, AckEliciting: true, InFlight: true}); err != nil {
+			t.Fatal(err)
+		}
+		app.space.nextPN++
+	}
+	pn := app.space.nextPN
+	if packet, _, err := client.nextLocalMigrationProbe(0, now); err != nil || packet != nil || app.space.nextPN != pn {
+		t.Fatal("migration probe sent into the probe headroom", err)
 	}
 }
