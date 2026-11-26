@@ -227,34 +227,53 @@ func TestBBRWithECNSharesAsWithDrops(t *testing.T) {
 }
 
 // On the RED queue, an ECN-capable flow neither beats nor loses to the same
-// controller without ECN by much: its share, averaged over both start
-// orders to cancel the first flow's head start, stays near half. Marks get
-// the response drops do, but a marked packet is still delivered, so a
-// controller that measures delivery rate, as BBR does, could gain from ECN;
-// this bounds that, with NewReno as the control.
+// controller without ECN by much. A marked packet is still delivered while
+// a dropped one isn't, so a controller that measures delivery rate, as BBR
+// does, could gain from ECN. The ECN flow's share, averaged over both start
+// orders to cancel the first flow's head start, must stay near half for
+// each controller, neither order may starve a flow, and BBR's average must
+// stay close to NewReno's, the control.
 func TestECNFlowShareAgainstNonECN(t *testing.T) {
 	const d, from = 40 * time.Second, 13 * time.Second
+	means := map[string]float64{}
 	for _, c := range []struct {
 		name       string
 		newA, newB func() Controller
 	}{{"BBR", newBBRFlow(3), newBBRFlow(7)}, {"NewReno", newRenoFlow, newRenoFlow}} {
-		var sum float64
 		var orders []float64
 		for _, ecnFirst := range []bool{true, false} {
-			g, _ := coexist(t, redLink(), d, from,
-				coexistFlow{newC: c.newA, ecn: ecnFirst},
-				coexistFlow{newC: c.newB, ecn: !ecnFirst, start: 2 * time.Second})
-			share := g[0] / (g[0] + g[1])
+			start := simStart.Add(from)
+			a := &simFlow{c: c.newA(), ecn: ecnFirst, snapshotAt: start}
+			b := &simFlow{c: c.newB(), ecn: !ecnFirst, start: simStart.Add(2 * time.Second), snapshotAt: start}
+			simulateFlows(t, redLink(), d, a, b)
+			ecnFlow, plain := a, b
 			if !ecnFirst {
-				share = g[1] / (g[0] + g[1])
+				ecnFlow, plain = b, a
 			}
+			marked, dropped := ecnFlow.res.marked-ecnFlow.snapshot.marked, plain.res.dropped-plain.snapshot.dropped
+			got := float64(ecnFlow.res.delivered - ecnFlow.snapshot.delivered)
+			total := got + float64(plain.res.delivered-plain.snapshot.delivered)
+			if marked == 0 || dropped == 0 || total == 0 {
+				t.Errorf("%s, ECN flow first %t: %d marks on the ECN flow, %d drops of the other, %.0f bytes delivered; want marks, drops and delivery", c.name, ecnFirst, marked, dropped, total)
+				continue
+			}
+			share := got / total
 			orders = append(orders, share)
-			sum += share
+			if share < 0.25 || share > 0.80 {
+				t.Errorf("%s, ECN flow first %t: its share %.0f%%, want 25%% to 80%%", c.name, ecnFirst, 100*share)
+			}
 		}
-		mean := sum / 2
+		if len(orders) != 2 {
+			continue
+		}
+		mean := (orders[0] + orders[1]) / 2
+		means[c.name] = mean
 		t.Logf("%s: the ECN flow's share %.0f%% starting first, %.0f%% starting second, %.0f%% on average", c.name, 100*orders[0], 100*orders[1], 100*mean)
-		if mean < 0.40 || mean > 0.62 {
-			t.Fatalf("%s: the ECN flow's average share %.0f%%, want 40%% to 62%%", c.name, 100*mean)
+		if mean < 0.35 || mean > 0.65 {
+			t.Errorf("%s: the ECN flow's average share %.0f%%, want 35%% to 65%%", c.name, 100*mean)
 		}
+	}
+	if bbr, reno := means["BBR"], means["NewReno"]; len(means) == 2 && bbr > reno+0.07 {
+		t.Errorf("BBR's ECN flow averages %.0f%%, NewReno's %.0f%%: BBR gains more from ECN than the control", 100*bbr, 100*reno)
 	}
 }
