@@ -9,6 +9,9 @@ import (
 func TestMTUTimeoutPreservesRecoveryAndLateACK(t *testing.T) {
 	for _, version := range []wire.Version{wire.Version1, wire.Version2} {
 		c, _ := sendingPathPair(t, version)
+		// A probe timeout mustn't cut the window, which only NewReno would
+		// otherwise do.
+		useNewReno(t, c)
 		a := c.multipath.paths[1].application
 		a.validation.state = PathValidated
 		a.budget.Validate()

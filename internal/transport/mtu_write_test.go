@@ -25,6 +25,9 @@ func mtuWriteEndpoint(t *testing.T, version wire.Version) (*ServerEndpoint, *Con
 func mtuWriteEndpointPair(t *testing.T, version wire.Version, ceiling int) (*ServerEndpoint, *Conn, *Conn) {
 	t.Helper()
 	c, remote := sendingPathPair(t, version)
+	// These tests check that rejected writes don't cut the window, which only
+	// NewReno would otherwise do.
+	useNewReno(t, c)
 	local := netip.MustParseAddrPort("192.0.2.1:443")
 	peer := netip.MustParseAddrPort("192.0.2.2:443")
 	r, _ := NewRouter(8, 2)

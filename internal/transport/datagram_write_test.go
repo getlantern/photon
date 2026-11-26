@@ -16,9 +16,6 @@ func TestLargeDatagramWriteRejection(t *testing.T) {
 		for _, discovery := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%x/discovery=%t", version, discovery), func(t *testing.T) {
 				e, c, peer := mtuWriteEndpointPair(t, version, 1500)
-				// A rejected write mustn't cut the window, which only NewReno
-				// would otherwise do.
-				useNewReno(t, c)
 				defer e.Close()
 				c.peerParams.MaxDatagramFrameSize = 65535
 				c.config.InitialPacketSize = 1452
