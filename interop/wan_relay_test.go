@@ -40,6 +40,32 @@ type wanRelay struct {
 
 func newWANRelay(tb testing.TB, server string, up, down wanLink) *wanRelay {
 	tb.Helper()
+	return newSharedWANRelay(tb, server, newWANBottleneck(up), newWANBottleneck(down), 1)
+}
+
+// wanBottleneck is one direction of a link that several relays can share,
+// so their clients' flows compete for its rate and queue.
+type wanBottleneck struct {
+	link  wanLink
+	mu    sync.Mutex
+	shape wanShaper
+}
+
+func newWANBottleneck(link wanLink) *wanBottleneck {
+	return &wanBottleneck{link: link, shape: wanShaper{link: link}}
+}
+
+func (b *wanBottleneck) admit(now time.Time, n int) (time.Time, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.shape.admit(now, n)
+}
+
+// newSharedWANRelay is a relay for one client over shared bottlenecks. Its
+// random loss is drawn from seeds derived from seed, so relays sharing a
+// link lose different packets.
+func newSharedWANRelay(tb testing.TB, server string, up, down *wanBottleneck, seed uint64) *wanRelay {
+	tb.Helper()
 	remote, err := net.ResolveUDPAddr("udp", server)
 	if err != nil {
 		tb.Fatal(err)
@@ -58,14 +84,14 @@ func newWANRelay(tb testing.TB, server string, up, down wanLink) *wanRelay {
 		c.SetWriteBuffer(8 << 20)
 	}
 	r := &wanRelay{front: front, back: back}
-	r.direction(0, up, 1, func(b []byte) (int, error) {
+	r.direction(0, up, 2*seed-1, func(b []byte) (int, error) {
 		n, from, err := front.ReadFromUDP(b)
 		if err == nil {
 			r.client.Store(from)
 		}
 		return n, err
 	}, func(b []byte) { back.Write(b) })
-	r.direction(1, down, 2, back.Read, func(b []byte) {
+	r.direction(1, down, 2*seed, back.Read, func(b []byte) {
 		if to := r.client.Load(); to != nil {
 			front.WriteToUDP(b, to)
 		}
@@ -108,16 +134,17 @@ func (s *wanShaper) admit(now time.Time, n int) (time.Time, bool) {
 }
 
 // direction reads datagrams, applies the link, and delivers them in order from
-// a second goroutine once their time comes. Departure times never decrease and
-// the delay is fixed, so delivery order is arrival order.
-func (r *wanRelay) direction(index int, link wanLink, seed uint64, read func([]byte) (int, error), write func([]byte)) {
+// a second goroutine once their time comes. Departure times never decrease,
+// even on a shared bottleneck, and the delay is fixed, so delivery order is
+// arrival order.
+func (r *wanRelay) direction(index int, bottleneck *wanBottleneck, seed uint64, read func([]byte) (int, error), write func([]byte)) {
+	link := bottleneck.link
 	ready := make(chan wanPacket, 1<<14)
 	r.wg.Add(2)
 	go func() {
 		defer r.wg.Done()
 		defer close(ready)
 		rng := rand.New(rand.NewPCG(seed, seed))
-		shape := wanShaper{link: link}
 		buf := make([]byte, 65536)
 		for {
 			n, err := read(buf)
@@ -132,7 +159,7 @@ func (r *wanRelay) direction(index int, link wanLink, seed uint64, read func([]b
 				r.dropped[index].Add(1)
 				continue
 			}
-			departure, ok := shape.admit(now, n)
+			departure, ok := bottleneck.admit(now, n)
 			if !ok {
 				r.dropped[index].Add(1)
 				continue
