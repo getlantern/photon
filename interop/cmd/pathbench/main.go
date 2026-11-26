@@ -98,6 +98,9 @@ func serverMain(args []string) error {
 	if _, err := serve(context.Background(), *addr, *port, cert, os.Stdout); err != nil {
 		return err
 	}
+	for i, name := range senders {
+		log.Printf("%s on %s", name, net.JoinHostPort(*addr, strconv.Itoa(*port+i)))
+	}
 	select {} // until killed
 }
 
@@ -258,8 +261,8 @@ type flowResult struct {
 	StartSeconds float64 `json:"start_seconds"`
 	Mbps         float64 `json:"mbps"`
 	SharePercent float64 `json:"share_percent"`
-	MinRTTms     float64 `json:"min_rtt_ms"`
-	MeanSRTTms   float64 `json:"mean_srtt_ms"`
+	MinRTTms     float64 `json:"min_rtt_ms,omitempty"`   // 0 if not sampled
+	MeanSRTTms   float64 `json:"mean_srtt_ms,omitempty"` // 0 if not sampled
 	Error        string  `json:"error,omitempty"`
 }
 
@@ -362,8 +365,8 @@ func runClient(ctx context.Context, cfg clientConfig) (runResult, error) {
 	if cfg.stagger < 0 || cfg.from < 0 {
 		return runResult{}, errors.New("stagger and measurement start must not be negative")
 	}
-	if cfg.duration-cfg.from < time.Second {
-		return runResult{}, errors.New("the measurement window must be at least a second, to sample RTT")
+	if cfg.duration-cfg.from <= time.Second {
+		return runResult{}, errors.New("the measurement window must be over a second, to sample RTT")
 	}
 	if last := time.Duration(len(cfg.mix)-1) * cfg.stagger; last >= cfg.from {
 		return runResult{}, fmt.Errorf("the last flow starts at %v, not before the measurement window at %v", last, cfg.from)
@@ -476,19 +479,22 @@ func runClient(ctx context.Context, cfg clientConfig) (runResult, error) {
 	}
 	window := time.Since(t0).Seconds()
 	res := runResult{Server: cfg.server, WindowSeconds: window}
+	// A failed flow's bytes cover only part of the window, so it is left out
+	// of the total and the shares.
 	var total float64
 	for i, f := range flows {
 		mbps := float64(f.received.Load()-base[i]) * 8 / window / 1e6
 		r := flowResult{Flow: i + 1, Sender: cfg.mix[i], StartSeconds: (time.Duration(i) * cfg.stagger).Seconds(), Mbps: mbps, MinRTTms: ms(f.minRTT), MeanSRTTms: ms(mean(f.srtt))}
 		if err := f.err.Load(); err != nil {
 			r.Error = (*err).Error()
+		} else {
+			total += mbps
 		}
 		res.Flows = append(res.Flows, r)
-		total += mbps
 	}
 	res.TotalMbps = total
 	for i := range res.Flows {
-		if total > 0 {
+		if total > 0 && res.Flows[i].Error == "" {
 			res.Flows[i].SharePercent = 100 * res.Flows[i].Mbps / total
 		}
 	}

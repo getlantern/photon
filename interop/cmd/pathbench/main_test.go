@@ -86,6 +86,7 @@ func TestPathbenchLocalhost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(stop)
 	mix, err := parseFlows("photon-bbr:1,photon-newreno:1,quic-go:1")
 	if err != nil {
 		t.Fatal(err)
@@ -137,7 +138,7 @@ func TestParseFlows(t *testing.T) {
 
 func TestRunClientRejectsBadTiming(t *testing.T) {
 	for _, cfg := range []clientConfig{
-		{mix: []string{"photon-bbr"}, duration: 10 * time.Second, from: 9500 * time.Millisecond},
+		{mix: []string{"photon-bbr"}, duration: 10 * time.Second, from: 9 * time.Second},
 		{mix: []string{"photon-bbr", "quic-go"}, duration: 10 * time.Second, from: 2 * time.Second, stagger: -time.Second},
 		{mix: []string{"photon-bbr", "quic-go"}, duration: 10 * time.Second, from: time.Second, stagger: 2 * time.Second},
 	} {
