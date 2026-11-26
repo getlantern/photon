@@ -29,11 +29,30 @@ func (m ECNMark) index() int {
 }
 
 // CanMarkECN reports whether another marked packet can retain exact evidence
-// until acknowledged. Loss and pure-ACK metadata eviction do not free this
-// ledger: late ACKs still need their original marking. At capacity the owner
-// can continue sending Not-ECT packets. Each space is bounded independently.
+// until acknowledged. At capacity the owner can continue sending Not-ECT
+// packets. Each space is bounded independently.
 func (r *Sent) CanMarkECN(space Space) bool {
 	return space <= Application && len(r.spaces[space].ecnPending) < r.capacity
+}
+
+// reclaimECN, at capacity, drops the evidence of packets no longer tracked:
+// declared lost, or ACK-only with their metadata evicted. Late ACKs of
+// those are rare, and one that comes then reports more marked packets than
+// it newly acknowledges, which feedback validation allows, so evidence for
+// truly lost packets doesn't fill the ledger and end marking for good.
+func (r *Sent) reclaimECN(space Space) {
+	if space > Application {
+		return
+	}
+	s := &r.spaces[space]
+	if len(s.ecnPending) < r.capacity {
+		return
+	}
+	for pn := range s.ecnPending {
+		if _, ok := s.packets[pn]; !ok {
+			delete(s.ecnPending, pn)
+		}
+	}
 }
 
 // ECNSent returns cumulative ECT(0)/ECT(1) transmissions in this recovery
@@ -62,6 +81,7 @@ func (r *Sent) ECNState() ECNPathState { return r.ecnPath.State() }
 // ECNMarkingAt to enforce the testing deadline. The owner
 // must put this exact marking in Packet.ECN and the outgoing IP datagram.
 func (r *Sent) ECNMarking(space Space) ECNMark {
+	r.reclaimECN(space)
 	if !r.CanMarkECN(space) {
 		return NotECT
 	}
