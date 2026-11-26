@@ -118,8 +118,11 @@ func TestSendBufferCleanup(t *testing.T) {
 	}
 }
 
-// acknowledgeFrame acknowledges every packet in s's ledger that ack covers,
-// as recovery would report them newly acknowledged.
+// acknowledgeFrame acknowledges every packet in s's ledger that ack covers.
+// Unlike recovery, which reports a packet newly acknowledged only once, it
+// reports a covered entry again on every call, so these unit tests can retry
+// a completion they refused; production fails the connection instead. Tests
+// of the ledger contract itself use a real recovery.Sent.
 func acknowledgeFrame(s *numberSpace, ack wire.AckFrame, complete func(*sendItem) error) error {
 	var acked []recovery.Packet
 	for pn := range s.sent {

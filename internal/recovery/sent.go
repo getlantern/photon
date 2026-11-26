@@ -107,14 +107,14 @@ func (r *Sent) CanTrack(space Space) bool {
 	return space <= Application && len(r.spaces[space].packets) < r.capacity
 }
 
-// Tracks reports whether packet number is still in the ledger: sent and
-// neither acknowledged, declared lost nor evicted.
-func (r *Sent) Tracks(space Space, number uint64) bool {
+// Outstanding is the number of packets in space's ledger that can't make
+// room for another: those besides pure ACKs, whose metadata is expendable.
+func (r *Sent) Outstanding(space Space) int {
 	if space > Application {
-		return false
+		return 0
 	}
-	_, ok := r.spaces[space].packets[number]
-	return ok
+	s := &r.spaces[space]
+	return len(s.packets) - s.ackOnly.Len()
 }
 
 // CanRecord reserves full metadata for in-flight packets. Pure ACK history is

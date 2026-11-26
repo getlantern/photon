@@ -13,8 +13,8 @@ import (
 // is theirs, not the whole ledger's. Completed entries leave the ledger, and
 // so do untracked ones whose items another packet completed.
 func acknowledgeItems(source *numberSpace, ack wire.AckFrame, acked []recovery.Packet, complete func(*sendItem) error) error {
-	// An entry leaves only once its item is complete: a refused completion
-	// keeps it for the next ACK.
+	// An entry leaves only once its item is complete. A refused completion
+	// returns an error, on which every caller fails the connection.
 	for _, p := range acked {
 		item, ok := source.sent[p.Number]
 		if !ok {
@@ -58,13 +58,8 @@ func pruneAcknowledged(s *numberSpace) {
 // queueLostItems permits retransmission on a different path while preserving
 // the old packet mapping for late ACKs. A shared item is queued at most once.
 func queueLostItems(source, destination *numberSpace, lost []recovery.Packet) {
+	noteUntracked(source, lost)
 	for _, packet := range lost {
-		if _, ok := source.sent[packet.Number]; ok {
-			if source.untracked == nil {
-				source.untracked = make(map[uint64]struct{})
-			}
-			source.untracked[packet.Number] = struct{}{}
-		}
 		visitSendLeaves(source.sent[packet.Number], func(item *sendItem) bool {
 			// Another path's ACK may already have completed a shared item.
 			if !item.queued && !item.acked {
@@ -102,21 +97,36 @@ func detachItems(s *numberSpace) []*sendItem {
 }
 
 // reclaimSent reports whether s's packet ledger has room for another packet
-// carrying frames. At capacity it first drops the packets tracked no longer
-// reports, declared lost: they stay only so a late ACK can still mark their
-// frames delivered, and dropping one costs at most a duplicate
-// retransmission. A ledger still full holds only packets in flight, which
-// ACKs or loss detection will release, so the caller waits rather than
-// failing the connection.
-func reclaimSent(s *numberSpace, tracked func(pn uint64) bool) bool {
-	if len(s.sent) < maxSentPackets {
+// carrying frames: maxSentPackets of them, plus probeHeadroom for a PTO
+// probe. At capacity it first drops the untracked entries (declared lost or
+// abandoned, kept only so a late ACK can still mark their frames delivered;
+// dropping one costs at most a duplicate retransmission). A ledger still
+// full holds only packets in flight, which ACKs or loss detection will
+// release, so the caller waits rather than failing the connection.
+func reclaimSent(s *numberSpace, probe bool) bool {
+	limit := maxSentPackets
+	if probe {
+		limit += probeHeadroom
+	}
+	if len(s.sent) < limit {
 		return true
 	}
-	for pn := range s.sent {
-		if !tracked(pn) {
-			delete(s.sent, pn)
-			delete(s.untracked, pn)
+	for pn := range s.untracked {
+		delete(s.sent, pn)
+		delete(s.untracked, pn)
+	}
+	return len(s.sent) < limit
+}
+
+// noteUntracked records that recovery no longer tracks lost's packets, so
+// ACK processing still visits their ledger entries for late ACKs.
+func noteUntracked(s *numberSpace, lost []recovery.Packet) {
+	for _, packet := range lost {
+		if _, ok := s.sent[packet.Number]; ok {
+			if s.untracked == nil {
+				s.untracked = make(map[uint64]struct{})
+			}
+			s.untracked[packet.Number] = struct{}{}
 		}
 	}
-	return len(s.sent) < maxSentPackets
 }

@@ -63,12 +63,10 @@ func TestFullSentLedgerWaits(t *testing.T) {
 func TestFullSentLedgerReclaimsLost(t *testing.T) {
 	c := ledgerPair(t)
 	s := &c.spaces[applicationSpace]
-	// Packet numbers below the next one that recovery never tracked stand in
-	// for packets declared lost.
-	for pn := uint64(0); len(s.sent) < maxSentPackets; pn++ {
-		if !c.recovery.Tracks(recovery.Application, pn) {
-			s.sent[1<<40+pn] = &sendItem{frame: wire.PingFrame{}, transmitted: true}
-		}
+	// Entries for packets declared lost, as queueLostItems records them.
+	for pn := uint64(1 << 40); len(s.sent) < maxSentPackets; pn++ {
+		s.sent[pn] = &sendItem{frame: wire.PingFrame{}, transmitted: true}
+		noteUntracked(s, []recovery.Packet{{Number: pn}})
 	}
 	pn := s.nextPN
 	if _, err := c.NextDatagram(time.Unix(200, 0)); err != nil || c.closed {
@@ -107,5 +105,80 @@ func TestFullPathSentLedgerWaits(t *testing.T) {
 	}
 	if _, ok := s.sent[pn]; ok {
 		t.Fatal("sent frames past a full path ledger")
+	}
+}
+
+// With the ledger full of packets in flight and the peer silent, the PTO
+// still sends its probe, from the headroom kept for probes, and the timer
+// stays armed: recovery from a silent peer never waits on the full ledger.
+func TestFullSentLedgerStillProbes(t *testing.T) {
+	c := ledgerPair(t)
+	s := &c.spaces[applicationSpace]
+	now := time.Unix(200, 0)
+	for len(s.sent) < maxSentPackets {
+		pn := s.nextPN
+		if err := c.recovery.OnSent(recovery.Application, recovery.Packet{Number: pn, SentAt: now, Bytes: 1200, AckEliciting: true, InFlight: true}); err != nil {
+			t.Fatal(err)
+		}
+		s.sent[pn] = &sendItem{frame: wire.PingFrame{}, transmitted: true}
+		s.nextPN++
+	}
+	c.armTimer(now)
+	for round := range 3 {
+		deadline := c.RecoveryDeadline()
+		if deadline.IsZero() {
+			t.Fatal("no recovery deadline at round", round)
+		}
+		now = deadline
+		if err := c.HandleTimeout(now); err != nil {
+			t.Fatal(err)
+		}
+		start := s.nextPN
+		for {
+			out, err := c.NextDatagram(now)
+			if err != nil || c.closed {
+				t.Fatal(err)
+			}
+			if out == nil {
+				break
+			}
+		}
+		if s.nextPN == start {
+			t.Fatal("no PTO probe at a full ledger, round", round)
+		}
+	}
+}
+
+// On an evacuated path, a packet declared lost isn't requeued, but a late
+// ACK of it still completes its item: ACK processing, with real recovery,
+// visits it among the untracked entries.
+func TestEvacuatedPathLateACKCompletes(t *testing.T) {
+	p, _, b := pathRecoveryPair(t)
+	now := time.Unix(100, 0)
+	items := make([]*sendItem, 4)
+	for pn := range uint64(4) {
+		sendPathPacket(t, b, now)
+		items[pn] = &sendItem{frame: wire.PingFrame{}, transmitted: true}
+		b.space.sent[pn] = items[pn]
+	}
+	b.evacuated = true
+	completed := map[*sendItem]bool{}
+	complete := func(item *sendItem) error { completed[item] = true; return nil }
+	ack := func(lo, hi uint64, at time.Time) {
+		t.Helper()
+		events, err := p.receiveReliableACK(wire.PathAckFrame{PathID: 1, AckFrame: wire.AckFrame{Ranges: []wire.AckRange{{Smallest: lo, Largest: hi}}}}, at, 3, 0, false, complete)
+		if err != nil {
+			t.Fatal(err)
+		}
+		notePathLoss(b, events.Lost)
+	}
+	// Packets 1-3 acknowledged: packet 0 is lost by packet threshold.
+	ack(1, 3, now.Add(10*time.Millisecond))
+	if completed[items[0]] || len(b.space.queue) != 0 {
+		t.Fatal("lost packet completed or requeued on an evacuated path")
+	}
+	ack(0, 3, now.Add(20*time.Millisecond))
+	if !completed[items[0]] {
+		t.Fatal("late ACK of a lost packet on an evacuated path didn't complete its item")
 	}
 }
