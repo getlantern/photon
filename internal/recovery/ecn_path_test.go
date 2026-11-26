@@ -311,3 +311,20 @@ func TestECNReorderedACKKeepsOldPathAttribution(t *testing.T) {
 		t.Fatal("the old path's deferred ECT validated a remarking new path")
 	}
 }
+
+// When this path's share of CE can't cover every probe an ACK acknowledges,
+// some may have arrived ECT: none is taken as remarked, so the path doesn't
+// fail on them.
+func TestECNPathPartialCENotRemarked(t *testing.T) {
+	p := NewECNPath()
+	for n := uint64(0); n < 10; n++ {
+		p.Sent(Application, n)
+	}
+	p.ACK(Application, ack(0, 1), ECNFeedbackResult{Validated: true, CE: 1})
+	for n := uint64(2); n < 10; n++ {
+		p.ACK(Application, ack(n, n), ECNFeedbackResult{Validated: true, CE: 1})
+	}
+	if p.State() == ECNFailed {
+		t.Fatal("two probes with one CE between them failed the path as remarked")
+	}
+}
