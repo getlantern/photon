@@ -352,3 +352,22 @@ func TestPendingWriteIsNotAppLimited(t *testing.T) {
 		t.Fatal("pending foreign write marked the path app limited")
 	}
 }
+
+// A DATAGRAM too large for a path stays on its source, so it doesn't count as
+// data that path could send; one that fits does.
+func TestOversizedDatagramIsNotBorrowable(t *testing.T) {
+	client, _ := sendingPathPair(t, wire.Version1)
+	client.multipath.paths[1].application.validation.state = PathValidated
+	if err := client.queueFrameOnPath(0, wire.DatagramFrame{Data: make([]byte, 1300), OmitLength: true}); err != nil {
+		t.Fatal(err)
+	}
+	if client.pathHasData(1) {
+		t.Fatal("path 1 counted a DATAGRAM too large for it")
+	}
+	if err := client.queueFrameOnPath(0, wire.DatagramFrame{Data: make([]byte, 100), OmitLength: true}); err != nil {
+		t.Fatal(err)
+	}
+	if !client.pathHasData(1) {
+		t.Fatal("path 1 did not count a DATAGRAM that fits it")
+	}
+}

@@ -161,30 +161,31 @@ func (c *Conn) noteMultipathSendIdle() {
 }
 
 // pathHasData reports whether path id has something it could send: an
-// unacknowledged item in its own queue, or STREAM or DATAGRAM data queued on
-// another usable path, which it can borrow (see nextSharedPathData). Stream
+// unacknowledged item in its own queue, or data on another path it may borrow
+// (mayBorrow, mayLend, borrowable, as nextSharedPathData uses them). Stream
 // data is queued on one path and shared, so a path's own queue being empty
-// does not make it application limited.
+// does not make it application limited. The scheduler's transient waits, for
+// an owed ACK or the path's own queue, don't count: they pass within a send
+// pass and don't leave the window unused.
 func (c *Conn) pathHasData(id uint64) bool {
-	// A path may borrow only once validated (path zero excepted) and with no
-	// probe or MTU validation of its own pending, as nextSharedPathData
-	// requires; from a source with no probe pending.
 	own := c.multipath.paths[id].application
-	borrow := own != nil && (id == 0 || own.validation.state == PathValidated) && !own.mtuNeedsValidation && !own.probePending
+	if own == nil {
+		return false
+	}
+	for _, item := range own.space.queue {
+		if !item.acked {
+			return true
+		}
+	}
+	if !c.mayBorrow(id) {
+		return false
+	}
 	for source, state := range c.multipath.paths {
-		app := state.application
-		if app == nil || source != id && (!borrow || c.multipath.abandoned[source] != nil || app.probePending) {
+		if !c.mayLend(source, id) {
 			continue
 		}
-		for _, item := range app.space.queue {
-			if item.acked {
-				continue
-			}
-			if source == id {
-				return true
-			}
-			switch item.frame.(type) {
-			case wire.StreamFrame, wire.DatagramFrame:
+		for _, item := range state.application.space.queue {
+			if c.borrowable(item, id) {
 				return true
 			}
 		}
