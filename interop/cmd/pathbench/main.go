@@ -96,11 +96,14 @@ func serverMain(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(*certOut, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Certificate[0]}), 0o644); err != nil {
+	// Publish the certificate only once the listeners hold their ports, so a
+	// second server started by mistake can't replace a running one's.
+	stop, addrs, err := serve(context.Background(), *addr, *port, cert, os.Stdout)
+	if err != nil {
 		return err
 	}
-	_, addrs, err := serve(context.Background(), *addr, *port, cert, os.Stdout)
-	if err != nil {
+	if err := os.WriteFile(*certOut, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Certificate[0]}), 0o644); err != nil {
+		stop()
 		return err
 	}
 	for _, a := range addrs {
@@ -475,8 +478,8 @@ func runClient(ctx context.Context, cfg clientConfig) (runResult, error) {
 			}
 		}()
 	}
-	// Sample each flow's RTT once a second through the window, and its bytes
-	// at the window's edges.
+	// Sample each flow's smoothed RTT once a second through the window, its
+	// bytes at the window's edges, and its minimum RTT as the window closes.
 	sleepUntil := func(t time.Time) bool {
 		select {
 		case <-time.After(time.Until(t)):
@@ -504,7 +507,6 @@ func runClient(ctx context.Context, cfg clientConfig) (runResult, error) {
 			if c := f.conn.Load(); c != nil && f.err.Load() == nil {
 				st := c.ConnectionStats()
 				f.srtt = append(f.srtt, st.SmoothedRTT)
-				f.minRTT = st.MinRTT
 			}
 		}
 	}
@@ -518,6 +520,11 @@ func runClient(ctx context.Context, cfg clientConfig) (runResult, error) {
 	errs := make([]*error, len(flows))
 	for i, f := range flows {
 		ends[i], errs[i] = f.received.Load(), f.err.Load()
+		// The lifetime minimum stays valid after a failure, unlike the
+		// smoothed RTT samples.
+		if c := f.conn.Load(); c != nil {
+			f.minRTT = c.ConnectionStats().MinRTT
+		}
 	}
 	samples := make([]flowSample, len(flows))
 	for i, f := range flows {
