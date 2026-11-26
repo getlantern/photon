@@ -430,11 +430,12 @@ func TestCongestionControlSelectsController(t *testing.T) {
 	if _, ok := client.congestion.(*recovery.BBR); !ok {
 		t.Fatalf("default controller %T, want BBR", client.congestion)
 	}
-	for _, c := range []struct {
+	// The zero value is the default, BBR.
+	for _, tc := range []struct {
 		algorithm recovery.Algorithm
 		want      string
 	}{{0, "*recovery.BBR"}, {recovery.NewRenoAlgorithm, "*recovery.NewReno"}} {
-		client.config.CongestionControl = c.algorithm
+		client.config.CongestionControl = tc.algorithm
 		p, err := adoptPathZero(client, 3, 3, 4)
 		if err != nil {
 			t.Fatal(err)
@@ -446,8 +447,8 @@ func TestCongestionControlSelectsController(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := fmt.Sprintf("%T", app.congestion); got != c.want {
-			t.Fatalf("multipath path controller %s with algorithm %d, want %s", got, c.algorithm, c.want)
+		if got := fmt.Sprintf("%T", app.congestion); got != tc.want {
+			t.Fatalf("multipath path controller %s with algorithm %d, want %s", got, tc.algorithm, tc.want)
 		}
 	}
 }
@@ -504,11 +505,12 @@ func TestControllerForcesAppLimited(t *testing.T) {
 	}
 }
 
-// renoController is a NewReno controller, for tests of NewReno's responses
-// to loss and ECN-CE, which BBR doesn't share.
-func renoController(t testing.TB) recovery.Controller {
+// renoController is a NewReno controller for size-byte datagrams (1200 if
+// unset), for tests of NewReno's responses to loss and ECN-CE, which BBR
+// doesn't share.
+func renoController(t testing.TB, size uint16) recovery.Controller {
 	t.Helper()
-	c, err := recovery.NewController(recovery.NewRenoAlgorithm, 1200)
+	c, err := recovery.NewController(recovery.NewRenoAlgorithm, max(uint64(size), 1200))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -517,11 +519,12 @@ func renoController(t testing.TB) recovery.Controller {
 
 // useNewReno switches c to NewReno as if configured with it: its config
 // (which also decides ECN marking), its base path's controller, and its
-// multipath paths, existing and future.
+// multipath paths, existing and future. The new controllers start fresh, so
+// tests call it before sending what they measure.
 func useNewReno(t testing.TB, c *Conn) {
 	t.Helper()
 	c.config.CongestionControl = recovery.NewRenoAlgorithm
-	c.congestion = renoController(t)
+	c.congestion = renoController(t, c.config.InitialPacketSize)
 	if c.multipath != nil {
 		useNewRenoPaths(t, c.multipath)
 		// Path zero shares the base path's controller.
@@ -537,7 +540,7 @@ func useNewRenoPaths(t testing.TB, p *pathCIDs) {
 	p.congestionControl = recovery.NewRenoAlgorithm
 	for _, s := range p.paths {
 		if s.application != nil {
-			s.application.congestion = renoController(t)
+			s.application.congestion = renoController(t, 0)
 		}
 	}
 }
