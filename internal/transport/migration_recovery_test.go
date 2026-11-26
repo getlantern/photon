@@ -23,11 +23,11 @@ func TestMigrationRecoveryPreservesReliableLateACK(t *testing.T) {
 	if err := c.queueFrameOnPath(0, wire.PingFrame{}); err != nil {
 		t.Fatal(err)
 	}
-	pn := app.space.nextPN
 	raw, err := c.nextPacketOnPath(0, now)
 	if err != nil || raw == nil {
 		t.Fatal(err)
 	}
+	pn := app.space.largestSent
 	item := app.space.sent[pn]
 	beforeBytes := c.queuedBytes
 	ledger, controller, timer, pacer := app.sent, app.congestion, app.timer, app.pacer

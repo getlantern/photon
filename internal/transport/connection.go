@@ -192,6 +192,7 @@ type numberSpace struct {
 	// ACK can still mark their items delivered. ACK processing visits these
 	// and the packets recovery reports newly acknowledged, never all of sent.
 	untracked             map[uint64]struct{}
+	skip                  pnSkipper
 	queue                 []*sendItem
 	ackPending, discarded bool
 	unackedEliciting      int       // ack-eliciting packets since the last ACK
@@ -1364,7 +1365,11 @@ func (c *Conn) nextBaseDatagram(now time.Time) ([]byte, error) {
 			// The ledger is full of packets in flight: wait for ACKs.
 			continue
 		}
-		if s.nextPN >= wire.MaxVarint {
+		pn := s.nextPN
+		if space == applicationSpace && !early {
+			pn = s.nextPacketNumber()
+		}
+		if pn >= wire.MaxVarint {
 			return nil, c.exhaustPacketNumbers()
 		}
 		payload, bundledLargest, bundled, err := c.bundleACK(s, space, early, item, f, now)
@@ -1374,7 +1379,7 @@ func (c *Conn) nextBaseDatagram(now time.Time) ([]byte, error) {
 		if early && wire.ValidateFrame(f, wire.FrameContext{PacketType: wire.ZeroRTT, ResetStreamAtEnabled: c.peerAllowsPartialReset(), MaxDatagramFrameSize: c.streams.peerLimits.MaxDatagramFrameSize}, len(payload)) != nil {
 			continue
 		}
-		header, err := c.makeHeader(space, s.nextPN, len(payload)+16)
+		header, err := c.makeHeader(space, pn, len(payload)+16)
 		if err != nil {
 			return nil, c.fail(err)
 		}
@@ -1386,7 +1391,7 @@ func (c *Conn) nextBaseDatagram(now time.Time) ([]byte, error) {
 			// Recompute the length field after padding. Its varint width can grow.
 			for len(header)+len(payload)+16 < packetLimit {
 				payload = append(payload, make([]byte, packetLimit-len(header)-len(payload)-16)...)
-				header, err = c.makeHeader(space, s.nextPN, len(payload)+16)
+				header, err = c.makeHeader(space, pn, len(payload)+16)
 				if err != nil {
 					return nil, c.fail(err)
 				}
@@ -1394,7 +1399,7 @@ func (c *Conn) nextBaseDatagram(now time.Time) ([]byte, error) {
 			// A width change from a very short ACK can overshoot by one byte.
 			if excess := len(header) + len(payload) + 16 - packetLimit; excess > 0 {
 				payload = payload[:len(payload)-excess]
-				header, err = c.makeHeader(space, s.nextPN, len(payload)+16)
+				header, err = c.makeHeader(space, pn, len(payload)+16)
 				if err != nil {
 					return nil, c.fail(err)
 				}
@@ -1428,6 +1433,9 @@ func (c *Conn) nextBaseDatagram(now time.Time) ([]byte, error) {
 		}
 		if !c.budget.CanSend(size) {
 			continue
+		}
+		if err := commitPacketNumber(s, c.recovery, pn); err != nil {
+			return nil, c.fail(err)
 		}
 		out, err := keys.SealInto(c.sealStorage, header, payload, s.nextPN)
 		if err != nil {

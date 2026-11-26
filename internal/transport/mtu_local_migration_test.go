@@ -51,11 +51,11 @@ func TestMTULocalMigrationExchange(t *testing.T) {
 					t.Fatal("initial size not confirmed", app.mtu.confirmed)
 				}
 				// Leave a larger encrypted probe outstanding across the address move.
-				oldPN := app.space.nextPN
 				_, _, probe, err := client.nextBoundMultipathPacket(now)
 				if err != nil || len(probe) != 1425 || !app.mtu.pending {
 					t.Fatal("pending old probe", len(probe), err)
 				}
+				oldPN := app.space.largestSent
 				now = now.Add(time.Second)
 				candidate, err := client.prepareLocalMigration(0, next, now)
 				if err != nil {

@@ -31,8 +31,8 @@ func TestStatisticsMultipathCrossPathACK(t *testing.T) {
 				zero := sender.multipath.paths[0].application.sent
 				zeroFlight, zeroRTT := zero.BytesInFlight, zero.RTT
 				one := sender.multipath.paths[1].application
-				first := one.space.nextPN
 				var sizes [4]int
+				var pns [4]uint64
 				for i := range sizes {
 					if err := sender.queueFrameOnPath(1, wire.PingFrame{}); err != nil {
 						t.Fatal(err)
@@ -41,12 +41,12 @@ func TestStatisticsMultipathCrossPathACK(t *testing.T) {
 					if err != nil || len(packet) == 0 {
 						t.Fatal("missing path packet", err)
 					}
-					sizes[i] = len(packet)
+					sizes[i], pns[i] = len(packet), one.space.largestSent
 				}
 				now = now.Add(time.Millisecond)
 				ack := func(arrival, pn, acknowledged uint64) {
 					t.Helper()
-					payload, err := (wire.PathAckFrame{PathID: 1, AckFrame: wire.AckFrame{Ranges: []wire.AckRange{{Smallest: acknowledged, Largest: acknowledged}}}}).Append(nil)
+					payload, err := (wire.PathAckFrame{PathID: 1, AckFrame: ackFor(acknowledged)}).Append(nil)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -56,7 +56,7 @@ func TestStatisticsMultipathCrossPathACK(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				ack(0, 1000, first+3)
+				ack(0, 1000, pns[3])
 				lost := sender.Statistics()
 				if lost.PacketsSent != before.PacketsSent+4 || lost.BytesSent != before.BytesSent+uint64(sizes[0]+sizes[1]+sizes[2]+sizes[3]) {
 					t.Fatal("path-one send totals", before, lost, sizes)
@@ -70,14 +70,14 @@ func TestStatisticsMultipathCrossPathACK(t *testing.T) {
 				if lost.MinRTT != before.MinRTT || lost.SmoothedRTT != before.SmoothedRTT {
 					t.Fatal("path-one ACK changed selected path-zero RTT")
 				}
-				ack(0, 1001, first)
+				ack(0, 1001, pns[0])
 				corrected := sender.Statistics()
 				if corrected.PacketsLost != before.PacketsLost || corrected.BytesLost != before.BytesLost {
 					t.Fatal("cross-path correction", before, corrected)
 				}
 				// Repeat identical ACK evidence on another arrival path, including
 				// a packet number already used on path zero.
-				ack(1, 1001, first)
+				ack(1, 1001, pns[0])
 				duplicate := sender.Statistics()
 				if duplicate.PacketsLost != corrected.PacketsLost || duplicate.BytesLost != corrected.BytesLost || duplicate.PacketsReceived != corrected.PacketsReceived+1 {
 					t.Fatal("cross-path duplicate", corrected, duplicate)

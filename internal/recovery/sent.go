@@ -70,6 +70,7 @@ type packetSpace struct {
 	ackNodes          map[uint64]*ackOnlyNode
 	packets           map[uint64]Packet
 	rejected          map[uint64]struct{} // locally rejected packets; never ACKable
+	skipped           []uint64            // the latest skipped packet numbers, ascending; never ACKable
 	next              uint64
 	largestAcked      uint64
 	hasAck            bool
@@ -124,9 +125,8 @@ func (r *Sent) CanRecord(space Space, inFlight bool) bool {
 	return space <= Application && (!inFlight || r.CanTrack(space) || r.spaces[space].ackOnly.Len() > 0)
 }
 
-// OnSent requires contiguous packet numbers starting at zero in each space.
-// This makes ACK-of-unsent validation exact; intentional packet-number skipping
-// requires a separate skipped-number ledger before it can be supported.
+// OnSent requires contiguous packet numbers starting at zero in each space,
+// apart from those Skip consumes. This makes ACK-of-unsent validation exact.
 func (r *Sent) OnSent(space Space, p Packet) error {
 	if space > Application || p.ECN > ECT0 || p.Number > wire.MaxVarint || p.Bytes < 0 || p.Bytes > 65535 || (p.AckEliciting && !p.InFlight) || (p.MTUProbe && (space != Application || !p.AckEliciting || p.Bytes < 1200)) {
 		return errors.New("quic: invalid sent packet")
@@ -176,6 +176,52 @@ func (r *Sent) OnSent(space Space, p Packet) error {
 	}
 	return nil
 }
+
+// maxSkipped is how many skipped packet numbers a space remembers. Skips
+// grow sparser as a connection ages, so the latest few span many packets.
+const maxSkipped = 4
+
+// Skip consumes the next application packet number without sending a packet
+// with it. A peer that acknowledges it is acknowledging a packet it never
+// received, the optimistic ACK of RFC 9000 Section 21.4, and its ACK fails
+// with ErrACK. Only the latest maxSkipped numbers are remembered.
+func (r *Sent) Skip(space Space) (uint64, error) {
+	if space != Application {
+		return 0, errors.New("quic: packet numbers are skipped only in the application space")
+	}
+	s := &r.spaces[space]
+	if s.next+1 >= wire.MaxVarint {
+		return 0, errors.New("quic: no packet number left to skip")
+	}
+	if len(s.skipped) == maxSkipped {
+		s.skipped = append(s.skipped[:0], s.skipped[1:]...)
+	}
+	s.skipped = append(s.skipped, s.next)
+	s.next++
+	return s.next - 1, nil
+}
+
+// Skipped returns the skipped packet numbers space still remembers,
+// ascending.
+func (r *Sent) Skipped(space Space) []uint64 {
+	if space > Application {
+		return nil
+	}
+	return slices.Clone(r.spaces[space].skipped)
+}
+
+// skippedBetween counts the skipped packet numbers strictly between lo and
+// hi: numbers that no packet sent after lo carries.
+func (s *packetSpace) skippedBetween(lo, hi uint64) uint64 {
+	var n uint64
+	for _, pn := range s.skipped {
+		if lo < pn && pn < hi {
+			n++
+		}
+	}
+	return n
+}
+
 func validACK(f wire.AckFrame) bool {
 	if len(f.Ranges) == 0 {
 		return false
@@ -217,6 +263,11 @@ func (r *Sent) OnACK(space Space, f wire.AckFrame, now time.Time, delay, maxDela
 	}
 	s := &r.spaces[space]
 	for pn := range s.rejected {
+		if f.Acknowledges(pn) {
+			return events, ErrACK
+		}
+	}
+	for _, pn := range s.skipped {
 		if f.Acknowledges(pn) {
 			return events, ErrACK
 		}
@@ -349,7 +400,7 @@ func (r *Sent) DetectLoss(space Space, now time.Time) []Packet {
 			continue
 		}
 		at := p.SentAt.Add(delay)
-		if s.largestAcked-pn >= 3 || !at.After(now) {
+		if s.largestAcked-pn-s.skippedBetween(pn, s.largestAcked) >= 3 || !at.After(now) {
 			lost = append(lost, p)
 			r.remove(s, p)
 		} else if s.lossTime.IsZero() || at.Before(s.lossTime) {
@@ -407,10 +458,12 @@ func (r *Sent) Discard(space Space) {
 func (r *Sent) ResetForRetry() {
 	previousECN := r.ecnPath.State()
 	var rejected [3]map[uint64]struct{}
+	var skipped [3][]uint64
 	var next [3]uint64
 	for i := range r.spaces {
 		next[i] = r.spaces[i].next
 		rejected[i] = r.spaces[i].rejected
+		skipped[i] = r.spaces[i].skipped
 	}
 	fresh, _ := NewSent(r.capacity)
 	*r = *fresh
@@ -423,6 +476,7 @@ func (r *Sent) ResetForRetry() {
 	for i := range r.spaces {
 		r.spaces[i].next = next[i]
 		r.spaces[i].rejected = rejected[i]
+		r.spaces[i].skipped = skipped[i]
 	}
 }
 

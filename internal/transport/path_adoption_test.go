@@ -136,7 +136,7 @@ func TestPathZeroHandoffPendingProbe(t *testing.T) {
 	if err != nil || id != 0 || b == nil {
 		t.Fatal("handoff stranded PTO at congestion window", id, err)
 	}
-	if app.probePending || app.space.nextPN != before+1 || !app.timer.Deadline().After(deadline) {
+	if app.probePending || app.space.largestSent != app.space.nextPN-1 || app.space.nextPN-before > 2 || app.space.nextPN == before || !app.timer.Deadline().After(deadline) {
 		t.Fatal("probe commit after handoff")
 	}
 	if _, err := adoptPathZero(client, 1, 1, 2); err == nil {

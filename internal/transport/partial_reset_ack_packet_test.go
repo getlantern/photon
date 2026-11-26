@@ -30,11 +30,11 @@ func TestPartialResetProtectedACKOrders(t *testing.T) {
 					// contents before selectively acknowledging its packet number.
 					emit := func(want wire.Frame) uint64 {
 						t.Helper()
-						pn := sender.spaces[applicationSpace].nextPN
 						packet, err := sender.NextDatagram(now)
 						if err != nil || len(packet) == 0 {
 							t.Fatal("missing packet", err)
 						}
+						pn := sender.spaces[applicationSpace].largestSent
 						header, err := wire.ParseHeader(packet, len(peer.config.LocalCID))
 						if err != nil || header.Type != wire.OneRTT {
 							t.Fatal("wrong header", header, err)

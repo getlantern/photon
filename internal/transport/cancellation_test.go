@@ -126,13 +126,17 @@ func TestFINACKWaitsForEarlierData(t *testing.T) {
 	if packets := drain(t, client, now); len(packets) != 2 {
 		t.Fatal("expected two data packets", len(packets))
 	}
-	if err := client.handleAck(applicationSpace, wire.AckFrame{Ranges: []wire.AckRange{{Smallest: first + 1, Largest: first + 1}}}, now); err != nil {
+	pns := sentNumbers(&client.spaces[applicationSpace], first)
+	if len(pns) != 2 {
+		t.Fatal("expected two data packets in the ledger", pns)
+	}
+	if err := client.handleAck(applicationSpace, ackFor(pns[1]), now); err != nil {
 		t.Fatal(err)
 	}
 	if client.streams.objects[id].send.Complete() {
 		t.Fatal("FIN-only ACK completed send")
 	}
-	if err := client.handleAck(applicationSpace, wire.AckFrame{Ranges: []wire.AckRange{{Smallest: first, Largest: first + 1}}}, now); err != nil {
+	if err := client.handleAck(applicationSpace, ackFor(pns...), now); err != nil {
 		t.Fatal(err)
 	}
 	if !client.streams.objects[id].send.Complete() {
