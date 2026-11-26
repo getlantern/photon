@@ -162,6 +162,10 @@ const (
 	maxDeferredBytes = 64 * 1024
 	maxSendBytes     = 1024 * 1024
 	maxSentPackets   = 4096
+	// probeHeadroom is ledger space beyond maxSentPackets kept for PTO
+	// probes, so a ledger full of packets in flight never stops the probe,
+	// or the ACK it carries, that recovery from a silent peer needs.
+	probeHeadroom = 32
 )
 
 var levels = [3]tls.QUICEncryptionLevel{tls.QUICEncryptionLevelInitial, tls.QUICEncryptionLevelHandshake, tls.QUICEncryptionLevelApplication}
@@ -486,7 +490,7 @@ func NewConn(config Config) (*Conn, error) {
 		h.Close()
 		return nil, err
 	}
-	c.recovery, _ = recovery.NewSent(maxSentPackets)
+	c.recovery, _ = recovery.NewSent(maxSentPackets + probeHeadroom)
 	congestion, err := recovery.NewController(config.CongestionControl, uint64(config.InitialPacketSize))
 	if err != nil {
 		h.Close()
@@ -1356,7 +1360,7 @@ func (c *Conn) nextBaseDatagram(now time.Time) ([]byte, error) {
 			}
 			keys = c.writeKeys(space)
 		}
-		if item != nil && !reclaimSent(s, func(pn uint64) bool { return c.recovery.Tracks(recovery.Space(space), pn) }) {
+		if item != nil && !reclaimSent(s, c.probeAllowance[space] && wire.AckEliciting(f)) {
 			// The ledger is full of packets in flight: wait for ACKs.
 			continue
 		}
@@ -1418,7 +1422,8 @@ func (c *Conn) nextBaseDatagram(now time.Time) ([]byte, error) {
 				continue
 			}
 		}
-		if !c.recovery.CanRecord(recovery.Space(space), inFlight) {
+		// Only probes may use recovery's headroom beyond maxSentPackets.
+		if !c.recovery.CanRecord(recovery.Space(space), inFlight) || inFlight && !probe && c.recovery.Outstanding(recovery.Space(space)) >= maxSentPackets {
 			continue
 		}
 		if !c.budget.CanSend(size) {

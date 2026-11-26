@@ -46,7 +46,7 @@ type pathApplication struct {
 
 func newPathApplication(algorithm recovery.Algorithm) *pathApplication {
 	received, _ := NewReceived(128)
-	sent, _ := recovery.NewSent(maxSentPackets)
+	sent, _ := recovery.NewSent(maxSentPackets + probeHeadroom)
 	congestion, _ := recovery.NewController(algorithm, 1200)
 	return &pathApplication{validation: new(pathValidation), budget: new(Amplification), space: &numberSpace{received: received, sent: make(map[uint64]*sendItem)}, sent: sent, congestion: congestion, timer: new(recovery.Timer), pacer: new(recovery.Pacer)}
 }

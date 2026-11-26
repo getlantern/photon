@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/getlantern/photon/internal/recovery"
 	"github.com/getlantern/photon/internal/wire"
 )
 
@@ -181,12 +182,7 @@ func (c *Conn) dispatchMultipathPacketFrames(decoded *pathPacket, now time.Time,
 			c.noteKeyPhaseWriteACK(f, now)
 			if state != nil && state.application != nil {
 				app := state.application
-				// Retain lost data in its path queue for the outgoing scheduler. Shared
-				// items already delivered or queued elsewhere are not queued again.
-				// Loss on an evacuated path says nothing about the surviving copies.
-				if !app.evacuated {
-					queueLostItems(app.space, app.space, events.Lost)
-				}
+				notePathLoss(app, events.Lost)
 				c.armPathRecovery(acknowledgedPath, now)
 			}
 		case wire.NewTokenFrame:
@@ -207,4 +203,17 @@ func (c *Conn) dispatchMultipathPacketFrames(decoded *pathPacket, now time.Time,
 		}
 	}
 	return nil
+}
+
+// notePathLoss retains lost data in its path queue for the outgoing
+// scheduler. Shared items already delivered or queued elsewhere are not
+// queued again. Loss on an evacuated path says nothing about the surviving
+// copies, but its entries stay for late ACKs, which the evacuated map
+// serves.
+func notePathLoss(app *pathApplication, lost []recovery.Packet) {
+	if !app.evacuated {
+		queueLostItems(app.space, app.space, lost)
+		return
+	}
+	noteUntracked(app.space, lost)
 }

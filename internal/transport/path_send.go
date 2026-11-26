@@ -168,7 +168,7 @@ func (c *Conn) nextPacketOnPathSelection(id, ackPath uint64, now time.Time, allo
 	if s.nextPN >= wire.MaxVarint {
 		return nil, c.exhaustPacketNumbers()
 	}
-	if item != nil && !reclaimSent(s, func(pn uint64) bool { return app.sent.Tracks(recovery.Application, pn) }) {
+	if item != nil && !reclaimSent(s, app.probePending && wire.AckEliciting(f)) {
 		// The ledger is full of packets in flight: wait for ACKs.
 		return nil, nil
 	}
@@ -218,7 +218,8 @@ func (c *Conn) nextPacketOnPathSelection(id, ackPath uint64, now time.Time, allo
 		}
 		return nil, nil
 	}
-	if !app.budget.CanSend(size) || !app.congestion.CanSend(app.sent.BytesInFlight, size, inFlight, probe) || !app.sent.CanRecord(recovery.Application, inFlight) {
+	// Only probes may use recovery's headroom beyond maxSentPackets.
+	if !app.budget.CanSend(size) || !app.congestion.CanSend(app.sent.BytesInFlight, size, inFlight, probe) || !app.sent.CanRecord(recovery.Application, inFlight) || inFlight && !probe && app.sent.Outstanding(recovery.Application) >= maxSentPackets {
 		return fallbackACK()
 	}
 	if inFlight && !probe {
