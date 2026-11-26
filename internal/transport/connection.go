@@ -1142,11 +1142,6 @@ func (c *Conn) handleAck(space int, f wire.AckFrame, now time.Time) error {
 	}
 	s := &c.spaces[space]
 	limited := !c.hasQueuedData() && c.recovery.BytesInFlight < c.congestion.Window()
-	if limited {
-		// Rate samples from packets sent until the current flight is
-		// delivered then understate what the path can carry.
-		c.recovery.MarkAppLimited()
-	}
 	exponent := uint8(3)
 	maxDelay := 25 * time.Millisecond
 	if c.peerParams != nil {
@@ -1221,7 +1216,9 @@ func (c *Conn) RTTStats() recovery.RTT { return c.recovery.RTT }
 // Nil means no output, no write keys, or insufficient path credit.
 func (c *Conn) NextDatagram(now time.Time) ([]byte, error) {
 	b, err := c.nextBaseDatagram(now)
-	if b == nil && err == nil {
+	// A pending foreign write holds a packet in the host send path: the
+	// sender is limited by the socket then, not the application.
+	if b == nil && err == nil && c.pendingWrite == nil {
 		c.noteBaseSendIdle()
 	}
 	return b, err
@@ -1230,7 +1227,9 @@ func (c *Conn) NextDatagram(now time.Time) ([]byte, error) {
 // noteBaseSendIdle marks the base path application limited when a send pass
 // found nothing to send though the window had room, so rate samples from
 // packets sent until the current flight is delivered are known to understate
-// what the path can carry (draft-cheng-iccrg-delivery-rate-estimation).
+// what the path can carry (draft-cheng-iccrg-delivery-rate-estimation). The
+// owner runs a send pass after every input, so this also covers ACKs, after
+// any loss they declare has been requeued.
 func (c *Conn) noteBaseSendIdle() {
 	if c.multipath == nil && c.recovery != nil && c.congestion != nil && c.recovery.BytesInFlight < c.congestion.Window() && !c.hasQueuedData() {
 		c.recovery.MarkAppLimited()

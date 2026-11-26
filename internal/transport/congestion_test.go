@@ -314,3 +314,41 @@ func TestMultipathBorrowableDataIsNotAppLimited(t *testing.T) {
 		t.Fatal("idle send pass marked path 1 app limited while path 0 held borrowable data")
 	}
 }
+
+// A path still validating cannot borrow another path's data, so that data
+// doesn't count as its own.
+func TestValidatingPathCannotCountBorrowableData(t *testing.T) {
+	client, _ := sendingPathPair(t, wire.Version1)
+	app := client.multipath.paths[1].application
+	app.validation.state = PathValidating
+	id, err := client.OpenStream(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.queueFrameOnPath(0, wire.StreamFrame{StreamID: id, Data: make([]byte, 1000)}); err != nil {
+		t.Fatal(err)
+	}
+	if client.pathHasData(1) {
+		t.Fatal("validating path counted data it cannot borrow")
+	}
+	app.validation.state = PathValidated
+	if !client.pathHasData(1) {
+		t.Fatal("validated path did not count data it can borrow")
+	}
+}
+
+// A send pass held back by a pending foreign write is limited by the socket,
+// not the application.
+func TestPendingWriteIsNotAppLimited(t *testing.T) {
+	client, _, now, _ := settledPair(t, streamParameters())
+	drain(t, client, now)
+	client.recovery, _ = recovery.NewSent(maxSentPackets)
+	client.pendingWrite = &pendingForeignWrite{}
+	if b, err := client.NextDatagram(now); err != nil || b != nil {
+		t.Fatal("setup", err)
+	}
+	client.pendingWrite = nil
+	if client.recovery.AppLimited() {
+		t.Fatal("pending foreign write marked the path app limited")
+	}
+}

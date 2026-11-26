@@ -116,9 +116,6 @@ func (p *pathCIDs) receiveACK(frame wire.Frame, now time.Time, exponent uint8, m
 		return recovery.Events{}, pathCIDViolation(frame.Type(), "ACK for path without sent packets")
 	}
 	a := s.application
-	if limited {
-		a.sent.MarkAppLimited()
-	}
 	events, err := a.sent.OnACK(recovery.Application, ack, now, recovery.DecodeACKDelay(ack.Delay, exponent), maxDelay, true)
 	if err != nil {
 		return recovery.Events{}, pathCIDViolation(frame.Type(), err.Error())
@@ -169,9 +166,14 @@ func (c *Conn) noteMultipathSendIdle() {
 // data is queued on one path and shared, so a path's own queue being empty
 // does not make it application limited.
 func (c *Conn) pathHasData(id uint64) bool {
+	// A path may borrow only once validated (path zero excepted) and with no
+	// probe or MTU validation of its own pending, as nextSharedPathData
+	// requires; from a source with no probe pending.
+	own := c.multipath.paths[id].application
+	borrow := own != nil && (id == 0 || own.validation.state == PathValidated) && !own.mtuNeedsValidation && !own.probePending
 	for source, state := range c.multipath.paths {
 		app := state.application
-		if app == nil || source != id && c.multipath.abandoned[source] != nil {
+		if app == nil || source != id && (!borrow || c.multipath.abandoned[source] != nil || app.probePending) {
 			continue
 		}
 		for _, item := range app.space.queue {
