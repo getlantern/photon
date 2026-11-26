@@ -69,6 +69,8 @@ type Config struct {
 	// AddressTokens validates previously issued NEW_TOKEN values during server admission.
 	AddressTokens           *token.AddressTokens
 	DisablePathMTUDiscovery bool
+	// CongestionControl selects each path's congestion controller.
+	CongestionControl recovery.Algorithm
 	// Enabled only by a runtime that configured nonfragmenting sockets.
 	enablePathMTUDiscovery bool
 	// Set by the UDP runtime with per-message marking and local-error fallback.
@@ -480,7 +482,7 @@ func NewConn(config Config) (*Conn, error) {
 		return nil, err
 	}
 	c.recovery, _ = recovery.NewSent(maxSentPackets)
-	congestion, err := recovery.NewCongestion(uint64(config.InitialPacketSize))
+	congestion, err := recovery.NewController(config.CongestionControl, uint64(config.InitialPacketSize))
 	if err != nil {
 		h.Close()
 		return nil, err

@@ -1,6 +1,8 @@
 package transport
 
 import (
+	"github.com/getlantern/photon/internal/recovery"
+
 	"testing"
 	"time"
 )
@@ -15,7 +17,7 @@ func BenchmarkBasePathIdleScheduler(b *testing.B) {
 		}
 		b.Run(name, func(b *testing.B) {
 			c := &Conn{started: true, confirmed: true}
-			c.multipath = &pathCIDs{baseOnly: base, paths: map[uint64]*pathCIDState{0: {application: newPathApplication(), peer: newPeerIDs([]byte("peer-cid"), 2)}}}
+			c.multipath = &pathCIDs{baseOnly: base, paths: map[uint64]*pathCIDState{0: {application: newPathApplication(recovery.NewRenoAlgorithm), peer: newPeerIDs([]byte("peer-cid"), 2)}}}
 			now := time.Unix(101, 0)
 			b.ReportAllocs()
 			for b.Loop() {

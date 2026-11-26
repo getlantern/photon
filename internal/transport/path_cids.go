@@ -1,6 +1,8 @@
 package transport
 
 import (
+	"github.com/getlantern/photon/internal/recovery"
+
 	"bytes"
 	"errors"
 
@@ -32,6 +34,8 @@ type pathCIDBinding struct{ path, sequence uint64 }
 type pathCIDs struct {
 	// baseOnly uses path-zero ownership without negotiating multipath wire frames.
 	baseOnly bool
+	// congestionControl selects new paths' congestion controllers.
+	congestionControl recovery.Algorithm
 	// highestInitiated is client-local; receive order may differ across paths.
 	highestInitiated                  uint64
 	lastScheduled                     uint64

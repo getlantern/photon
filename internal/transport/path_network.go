@@ -146,7 +146,7 @@ func (c *Conn) handleBoundMultipathData(raw []byte, local, remote netip.AddrPort
 		// CID state and advertised local routing already exist. Allocate only a
 		// tentative packet context needed for path-specific key/nonce handling;
 		// failed authentication cannot consume the ID or bind an address.
-		state.application = newPathApplication()
+		state.application = newPathApplication(c.multipath.congestionControl)
 	} else if state.application.network == nil || *state.application.network != tuple {
 		if state.application.localMigration != nil && !c.config.Server {
 			return c.receiveLocalMigrationCandidate(raw, tuple, now)

@@ -44,10 +44,10 @@ type pathApplication struct {
 	pacer             *recovery.Pacer
 }
 
-func newPathApplication() *pathApplication {
+func newPathApplication(algorithm recovery.Algorithm) *pathApplication {
 	received, _ := NewReceived(128)
 	sent, _ := recovery.NewSent(maxSentPackets)
-	congestion, _ := recovery.NewCongestion(1200)
+	congestion, _ := recovery.NewController(algorithm, 1200)
 	return &pathApplication{validation: new(pathValidation), budget: new(Amplification), space: &numberSpace{received: received, sent: make(map[uint64]*sendItem)}, sent: sent, congestion: congestion, timer: new(recovery.Timer), pacer: new(recovery.Pacer)}
 }
 
@@ -63,7 +63,7 @@ func (p *pathCIDs) application(id uint64) (*pathApplication, error) {
 		return nil, errors.New("quic: no CID state for application path")
 	}
 	if s.application == nil {
-		s.application = newPathApplication()
+		s.application = newPathApplication(p.congestionControl)
 	}
 	return s.application, nil
 }

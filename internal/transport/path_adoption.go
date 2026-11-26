@@ -25,6 +25,9 @@ func adoptPathZero(c *Conn, localMax, peerMax uint64, capacity int) (*pathCIDs, 
 		return nil, errors.New("quic: missing path-zero peer CID")
 	}
 	p, err := newPathCIDs(c.config.LocalCID, current.cid, localMax, peerMax, c.config.Parameters.ActiveConnectionIDLimit, c.peerParams.ActiveConnectionIDLimit, capacity)
+	if err == nil {
+		p.congestionControl = c.config.CongestionControl
+	}
 	if err != nil {
 		return nil, err
 	}

@@ -1,6 +1,8 @@
 package quic
 
 import (
+	"github.com/getlantern/photon/internal/recovery"
+
 	"errors"
 	"net"
 	"net/netip"
@@ -46,6 +48,7 @@ func serverConfigSelector(listener Config) func(transport.Config, netip.AddrPort
 		base.EnableMultipath = cfg.EnableMultipath
 		base.RequireStreamCreditRelease = cfg.RequireStreamCreditRelease
 		base.DisablePathMTUDiscovery = cfg.DisablePathMTUDiscovery
+		base.CongestionControl = recovery.Algorithm(cfg.CongestionControl)
 		base.InitialPacketSize = cfg.InitialPacketSize
 		base.HandshakeTimeout = cfg.HandshakeTimeout
 		base.HandshakeIdleTimeout = cfg.HandshakeIdleTimeout

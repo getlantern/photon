@@ -1,6 +1,8 @@
 package transport
 
 import (
+	"github.com/getlantern/photon/internal/recovery"
+
 	"github.com/getlantern/photon/internal/wire"
 	"syscall"
 	"testing"
@@ -80,7 +82,7 @@ func TestMTUCompletedSearchReopens(t *testing.T) {
 }
 
 func TestMTURaiseResetCancelsOldTupleTimer(t *testing.T) {
-	a := newPathApplication()
+	a := newPathApplication(recovery.NewRenoAlgorithm)
 	m, _ := newMTUSearch(1500)
 	m.confirmed, m.upper = 1350, 1350
 	m.sentAny, m.lastNumber = true, 42
