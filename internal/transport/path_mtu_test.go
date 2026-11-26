@@ -113,7 +113,9 @@ func TestPathMTULossAndLateACK(t *testing.T) {
 	if b, err := client.nextPacketOnPath(1, now); err != nil || len(b) != 1350 {
 		t.Fatal(err)
 	}
-	// Three later ordinary packets permit packet-threshold loss of probe zero.
+	probe := app.space.largestSent
+	// Three later ordinary packets permit packet-threshold loss of the probe.
+	var followers []uint64
 	for i := 0; i < 3; i++ {
 		now = now.Add(time.Millisecond)
 		if err := client.queueFrameOnPath(1, wire.PingFrame{}); err != nil {
@@ -122,20 +124,17 @@ func TestPathMTULossAndLateACK(t *testing.T) {
 		if b, err := client.nextPacketOnPath(1, now); err != nil || b == nil {
 			t.Fatal(err)
 		}
+		followers = append(followers, app.space.largestSent)
 	}
 	window := app.congestion.Window()
-	ack := func(n uint64) {
+	ack := func(pns ...uint64) {
 		t.Helper()
-		smallest := n
-		if n == 3 {
-			smallest = 1
-		}
-		f := wire.PathAckFrame{PathID: 1, AckFrame: wire.AckFrame{Ranges: []wire.AckRange{{Smallest: smallest, Largest: n}}}}
+		f := wire.PathAckFrame{PathID: 1, AckFrame: ackFor(pns...)}
 		if _, err := client.multipath.receiveACK(f, now, 0, 0, false); err != nil {
 			t.Fatal(err)
 		}
 	}
-	ack(3)
+	ack(followers...)
 	if app.mtu.pending || app.mtu.confirmed != 1200 || app.mtu.attempts != 1 {
 		t.Fatal("loss feedback missing")
 	}
@@ -149,7 +148,7 @@ func TestPathMTULossAndLateACK(t *testing.T) {
 	if app.mtu.attempts != 2 {
 		t.Fatal("retry ledger")
 	}
-	ack(0) // The original lost probe has already left recovery's packet map.
+	ack(probe) // The original lost probe has already left recovery's packet map.
 	if app.mtu.confirmed != 1350 || app.mtu.pending {
 		t.Fatal("late ACK did not confirm size")
 	}

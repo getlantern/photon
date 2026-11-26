@@ -232,7 +232,7 @@ func TestEvacuatedItemNotRequeuedByUnrelatedTimer(t *testing.T) {
 		t.Fatal("survivor did not send followers")
 	}
 	keys := server.writeKeys(applicationSpace)
-	payload, _ := (wire.AckFrame{Ranges: []wire.AckRange{{Smallest: copyPN + 1, Largest: survivor.largestSent}}}).Append(nil)
+	payload, _ := ackFor(sentNumbers(survivor, copyPN+1)...).Append(nil)
 	if err := client.handleMultipathPacket(sealPathPayload(t, keys, client.config.LocalCID, 0, 100, payload), now.Add(3*time.Millisecond)); err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +269,7 @@ func TestLateLossOnAbandonedPathDoesNotRequeueEvacuatedItem(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	original := app.space.sent[0]
+	original, newest := app.space.sent[0], app.space.largestSent
 	if err := client.abandonFailedPath(1); err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +278,7 @@ func TestLateLossOnAbandonedPathDoesNotRequeueEvacuatedItem(t *testing.T) {
 	}
 	// The peer acknowledges only the newest old-path packet. Packet-threshold
 	// loss of the older ones says nothing about their copies on the survivor.
-	payload, _ := (wire.PathAckFrame{PathID: 1, AckFrame: wire.AckFrame{Ranges: []wire.AckRange{{Smallest: 3, Largest: 3}}}}).Append(nil)
+	payload, _ := (wire.PathAckFrame{PathID: 1, AckFrame: ackFor(newest)}).Append(nil)
 	if err := client.handleMultipathPacket(sealPathPayload(t, server.writeKeys(applicationSpace), client.config.LocalCID, 0, 100, payload), now.Add(time.Millisecond)); err != nil {
 		t.Fatal(err)
 	}

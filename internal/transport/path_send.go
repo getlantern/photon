@@ -165,7 +165,8 @@ func (c *Conn) nextPacketOnPathSelection(id, ackPath uint64, now time.Time, allo
 		}
 		keys = c.writeKeys(applicationSpace)
 	}
-	if s.nextPN >= wire.MaxVarint {
+	pn := s.nextPacketNumber()
+	if pn >= wire.MaxVarint {
 		return nil, c.exhaustPacketNumbers()
 	}
 	// A blocked response, by the ledger or congestion, must not suppress non-congestion-controlled ACKs.
@@ -194,7 +195,7 @@ func (c *Conn) nextPacketOnPathSelection(id, ackPath uint64, now time.Time, allo
 		first |= 4
 	}
 	header := append([]byte{first}, peer.cid...)
-	header = binary.BigEndian.AppendUint32(header, uint32(s.nextPN))
+	header = binary.BigEndian.AppendUint32(header, uint32(pn))
 	inFlight := wire.InFlightFrame(f)
 	probe := app.probePending && wire.AckEliciting(f)
 	bundled, bundledLargest := false, uint64(0)
@@ -233,7 +234,9 @@ func (c *Conn) nextPacketOnPathSelection(id, ackPath uint64, now time.Time, allo
 		app.routeBlocked = true
 		return nil, nil
 	}
-	pn := s.nextPN
+	if err := commitPacketNumber(s, app.sent, pn); err != nil {
+		return nil, c.fail(err)
+	}
 	out, err := keys.SealPathInto(c.sealStorage, header, payload, pn, uint32(id))
 	if err != nil {
 		return nil, c.fail(err)

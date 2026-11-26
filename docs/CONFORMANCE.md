@@ -168,8 +168,9 @@ exempt a frame from this validation.
 
 | Inspected invariant | Implementation | Evidence and limits |
 | --- | --- | --- |
-| Reject packet numbers at or beyond the next send number. | `internal/recovery/sent.go`: OnSent requires contiguous numbers; OnACK checks ranges and largest against each space's next value before ACK/ECN accounting. | `TestACKValidationAndCapacity`; the new protected-close matrix uses exactly nextPN, including zero when nothing has been sent. Intentional number skipping is not supported by this ledger. |
+| Reject packet numbers at or beyond the next send number. | `internal/recovery/sent.go`: OnSent requires contiguous numbers apart from those Skip consumes; OnACK checks ranges and largest against each space's next value before ACK/ECN accounting. | `TestACKValidationAndCapacity`; the new protected-close matrix uses exactly nextPN, including zero when nothing has been sent. |
 | Forgetting expendable packet metadata must not permit ACKs of future numbers. | Next send number outlives bounded pure-ACK timestamp storage. | `TestACKOnlyHistoryCannotExhaustRecovery` sends 10,000 packets against capacity four, accepts ACKs of sent packets and rejects packet 10,000. |
+| Skip application packet numbers and reject ACKs of them, against optimistic ACKs (RFC 9000 Section 21.4). | `internal/transport/pn_skip.go` skips a 1-RTT number on the base path and each multipath path, first 3 to 514 packets in and then ever sparser, the period doubling from 256 to 128 Ki as in quic-go. The number is chosen when a packet is built and recorded only as that packet is sealed, so a packet held back consumes nothing. `Sent.Skip` keeps the latest four; OnACK rejects an ACK of any of them, and packet-threshold loss doesn't count them (an older, forgotten skip still counts toward the distance, as in quic-go). | `TestOptimisticACKFailsConnection`, `TestOptimisticPathACKFailsConnection`, `TestHeldPacketSkipsNothing`, `TestSkipSchedule`, `TestSkippedPacketACKFails`, `TestSkippedNumbersBoundedAndKept`, `TestPacketThresholdExcludesSkipped`. A peer acknowledging ahead is caught only when its ACK covers a remembered skip, so detection is probabilistic. The optimistic-ACK tests check the local PROTOCOL_VIOLATION, not the protected close the peer receives. |
 | Reject numbers consumed by locally failed sends. | OnACK checks the rejected-number ledger before accounting. | `TestRejectMTUProbe`, `TestRejectLargePacket` include later ACK rejection and migration; this is recovery-level evidence, not part of the new protected-close matrix. |
 | Send the correct protected close after detecting an invalid ACK. | `connection.go:handleAck` selects 0x0a and the ACK frame type; `error_close.go` initiates the close. | `TestUnsentACKProtectedClose`: v1/v2, Initial/Handshake/Application, both endpoint roles, ACK/ACK_ECN (24 cases). The opposite engine decrypts and processes the close, verifies remote 0x0a plus trigger 0x02/0x03, and enters draining. |
 
@@ -177,8 +178,8 @@ The Handshake fixture exchanges real TLS flights but withholds client Finished
 to retain keys on both sides. Application cases complete TLS first. Initial
 cases use Initial protection before sending packet zero. These are own-engine
 packet tests, not an independent-peer oracle. They do not cover every malformed
-range, stale early-data ACK, multipath/path-retirement combination or optimistic
-ACK defense. Lower-level tests and code inspection do not replace those gaps.
+range, stale early-data ACK, multipath/path-retirement combination or ACK of a
+skipped packet number. Lower-level tests and code inspection do not replace those gaps.
 
 ## RFC 9000 sections 13.1 and 13.2.1: authentication and ACK loops (2026-09-29)
 

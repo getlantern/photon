@@ -22,7 +22,7 @@ func TestStatisticsProtectedLossCorrection(t *testing.T) {
 				ackNumber := uint64(1000)
 				ack := func(lo, hi uint64) []byte {
 					t.Helper()
-					packet := makePeerPacket(t, peer, applicationSpace, ackNumber, wire.AckFrame{Ranges: []wire.AckRange{{Smallest: lo, Largest: hi}}})
+					packet := makePeerPacket(t, peer, applicationSpace, ackNumber, ackRange(sender.recovery, lo, hi))
 					ackNumber++
 					if err := sender.HandleDatagram(packet, now); err != nil {
 						t.Fatal(err)
@@ -37,6 +37,7 @@ func TestStatisticsProtectedLossCorrection(t *testing.T) {
 				}
 				before := sender.Statistics()
 				var sizes [4]int
+				var pns [4]uint64
 				for i := range sizes {
 					if err := sender.enqueue(applicationSpace, wire.PingFrame{}, 1); err != nil {
 						t.Fatal(err)
@@ -49,8 +50,9 @@ func TestStatisticsProtectedLossCorrection(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					_, plain, pn, err := peer.readKeys(applicationSpace).Open(packet, header.PNOffset, first+uint64(i))
-					if err != nil || pn != first+uint64(i) {
+					pns[i] = sender.spaces[applicationSpace].largestSent
+					_, plain, pn, err := peer.readKeys(applicationSpace).Open(packet, header.PNOffset, pns[i])
+					if err != nil || pn != pns[i] {
 						t.Fatal("packet number", pn, err)
 					}
 					frame, _, err := wire.ConsumeFrame(plain)
@@ -60,7 +62,7 @@ func TestStatisticsProtectedLossCorrection(t *testing.T) {
 					sizes[i] = len(packet)
 				}
 				now = now.Add(time.Millisecond)
-				ack(first+3, first+3)
+				ack(pns[3], pns[3])
 				lost := sender.Statistics()
 				if lost.PacketsLost != before.PacketsLost+1 || lost.BytesLost != before.BytesLost+uint64(sizes[0]) {
 					t.Fatal("loss estimate", before, lost, sizes)
@@ -68,7 +70,7 @@ func TestStatisticsProtectedLossCorrection(t *testing.T) {
 				if lost.PacketsSent != before.PacketsSent+4 || lost.BytesSent != before.BytesSent+uint64(sizes[0]+sizes[1]+sizes[2]+sizes[3]) {
 					t.Fatal("send totals", before, lost)
 				}
-				late := ack(first, first)
+				late := ack(pns[0], pns[0])
 				corrected := sender.Statistics()
 				if corrected.PacketsLost != before.PacketsLost || corrected.BytesLost != before.BytesLost {
 					t.Fatal("late ACK not corrected", before, corrected)
@@ -76,7 +78,7 @@ func TestStatisticsProtectedLossCorrection(t *testing.T) {
 				if err := sender.HandleDatagram(late, now); err != nil {
 					t.Fatal(err)
 				}
-				ack(first, first) // Same ACK evidence in a new protected packet.
+				ack(pns[0], pns[0]) // Same ACK evidence in a new protected packet.
 				duplicate := sender.Statistics()
 				if duplicate.PacketsLost != corrected.PacketsLost || duplicate.BytesLost != corrected.BytesLost || duplicate.PacketsSent != corrected.PacketsSent || duplicate.BytesSent != corrected.BytesSent {
 					t.Fatal("duplicate correction", corrected, duplicate)
