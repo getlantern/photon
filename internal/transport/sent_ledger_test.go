@@ -286,3 +286,66 @@ func TestFullLedgerHoldsMigrationProbe(t *testing.T) {
 		t.Fatal("migration probe sent into the probe headroom", err)
 	}
 }
+
+// A queued PATH_RESPONSE outranks a pending ACK, but when the full ledger
+// holds the response, the ACK, which needs no ledger entry, still goes.
+func TestFullPathLedgerStillACKs(t *testing.T) {
+	client, server := sendingPathPair(t, wire.Version1)
+	app := client.multipath.paths[1].application
+	app.budget.Validate()
+	server.multipath.paths[1].application.budget.Validate()
+	app.congestion = openController{app.congestion}
+	now := time.Unix(101, 0)
+	if err := server.queueFrameOnPath(1, wire.PingFrame{}); err != nil {
+		t.Fatal(err)
+	}
+	s := app.space
+	for range 20 {
+		b, err := server.nextPacketOnPath(1, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if b != nil {
+			if err := app.budget.Received(len(b)); err != nil {
+				t.Fatal(err)
+			}
+			if err := client.handleMultipathPacket(b, now); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if s.ackPending || !s.ackDueAt.IsZero() {
+			break
+		}
+		now = now.Add(time.Millisecond)
+	}
+	if !s.ackPending && s.ackDueAt.IsZero() {
+		t.Fatal("the server's packets left no ACK due")
+	}
+	if !s.ackPending {
+		now = s.ackDueAt
+	}
+	for len(s.sent) < maxSentPackets {
+		pn := s.nextPN
+		if err := app.sent.OnSent(recovery.Application, recovery.Packet{Number: pn, SentAt: now, Bytes: 1200, AckEliciting: true, InFlight: true}); err != nil {
+			t.Fatal(err)
+		}
+		s.sent[pn] = &sendItem{frame: wire.PingFrame{}, transmitted: true}
+		s.nextPN++
+	}
+	if err := client.queueFrameOnPath(1, wire.PathResponseFrame{Data: [8]byte{1}}); err != nil {
+		t.Fatal(err)
+	}
+	if !app.queuedPathResponse() {
+		t.Fatal("PATH_RESPONSE not queued")
+	}
+	b, err := client.nextPacketOnPath(1, now)
+	if err != nil || client.closed {
+		t.Fatal(err)
+	}
+	if b == nil || s.ackPending {
+		t.Fatal("full ledger held the ACK behind a queued PATH_RESPONSE")
+	}
+	if !app.queuedPathResponse() {
+		t.Fatal("PATH_RESPONSE left the queue without a ledger entry")
+	}
+}

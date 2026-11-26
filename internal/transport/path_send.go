@@ -168,9 +168,16 @@ func (c *Conn) nextPacketOnPathSelection(id, ackPath uint64, now time.Time, allo
 	if s.nextPN >= wire.MaxVarint {
 		return nil, c.exhaustPacketNumbers()
 	}
+	// A blocked response, by the ledger or congestion, must not suppress non-congestion-controlled ACKs.
+	fallbackACK := func() ([]byte, error) {
+		if allowResponses && f.Type() == 0x1b && ackApp.space.ackPending {
+			return c.nextPacketOnPathSelection(id, ackPath, now, false, false)
+		}
+		return nil, nil
+	}
 	if item != nil && !reclaimSent(s, app.probePending && wire.AckEliciting(f)) {
 		// The ledger is full of packets in flight: wait for ACKs.
-		return nil, nil
+		return fallbackACK()
 	}
 	f = c.pathWireFrame(f)
 	payload, err := f.Append(c.payloadScratch[:0])
@@ -210,13 +217,6 @@ func (c *Conn) nextPacketOnPathSelection(id, ackPath uint64, now time.Time, allo
 	if (f.Type() == 0x1a || f.Type() == 0x1b) && app.budget.CanSend(1200) {
 		payload = append(payload, make([]byte, 1200-size)...)
 		size = 1200
-	}
-	// A blocked response must not suppress non-congestion-controlled ACKs.
-	fallbackACK := func() ([]byte, error) {
-		if allowResponses && f.Type() == 0x1b && ackApp.space.ackPending {
-			return c.nextPacketOnPathSelection(id, ackPath, now, false, false)
-		}
-		return nil, nil
 	}
 	// Only probes may use recovery's headroom beyond maxSentPackets.
 	if !app.budget.CanSend(size) || !app.congestion.CanSend(app.sent.BytesInFlight, size, inFlight, probe) || !app.sent.CanRecord(recovery.Application, inFlight) || inFlight && !probe && app.sent.Outstanding(recovery.Application) >= maxSentPackets {
