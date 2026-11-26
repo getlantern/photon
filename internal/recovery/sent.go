@@ -107,6 +107,16 @@ func (r *Sent) CanTrack(space Space) bool {
 	return space <= Application && len(r.spaces[space].packets) < r.capacity
 }
 
+// Tracks reports whether packet number is still in the ledger: sent and
+// neither acknowledged, declared lost nor evicted.
+func (r *Sent) Tracks(space Space, number uint64) bool {
+	if space > Application {
+		return false
+	}
+	_, ok := r.spaces[space].packets[number]
+	return ok
+}
+
 // CanRecord reserves full metadata for in-flight packets. Pure ACK history is
 // expendable: forgetting a timestamp may omit an RTT sample, but never changes
 // flight accounting or validation against the monotonically increasing next PN.

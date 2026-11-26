@@ -65,3 +65,22 @@ func detachItems(s *numberSpace) []*sendItem {
 	s.queue = nil
 	return out
 }
+
+// reclaimSent reports whether s's packet ledger has room for another packet
+// carrying frames. At capacity it first drops the packets tracked no longer
+// reports, declared lost: they stay only so a late ACK can still mark their
+// frames delivered, and dropping one costs at most a duplicate
+// retransmission. A ledger still full holds only packets in flight, which
+// ACKs or loss detection will release, so the caller waits rather than
+// failing the connection.
+func reclaimSent(s *numberSpace, tracked func(pn uint64) bool) bool {
+	if len(s.sent) < maxSentPackets {
+		return true
+	}
+	for pn := range s.sent {
+		if !tracked(pn) {
+			delete(s.sent, pn)
+		}
+	}
+	return len(s.sent) < maxSentPackets
+}
