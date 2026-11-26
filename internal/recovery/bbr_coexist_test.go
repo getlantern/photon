@@ -35,26 +35,16 @@ func newRenoFlow() Controller {
 func coexist(t *testing.T, link *simLink, d, measureFrom time.Duration, specs ...coexistFlow) (goodput, loss []float64) {
 	t.Helper()
 	flows := make([]*simFlow, len(specs))
-	base := make([]uint64, len(specs))
-	baseSent := make([]int, len(specs))
-	baseLost := make([]int, len(specs))
 	from := simStart.Add(measureFrom)
 	for i, s := range specs {
-		f := &simFlow{c: s.newC(), start: simStart.Add(s.start), extraDelay: s.extraDelay}
-		measured := false
-		f.observe = func(now time.Time) {
-			if !measured && !now.Before(from) {
-				measured = true
-				base[i], baseSent[i], baseLost[i] = f.sent.rate.delivered, f.res.sent, f.res.lost
-			}
-		}
-		flows[i] = f
+		flows[i] = &simFlow{c: s.newC(), start: simStart.Add(s.start), extraDelay: s.extraDelay, snapshotAt: from}
 	}
 	simulateFlows(t, link, d, flows...)
 	window := (d - measureFrom).Seconds()
-	for i, f := range flows {
-		goodput = append(goodput, float64(f.res.delivered-base[i])*8/window)
-		loss = append(loss, float64(f.res.lost-baseLost[i])/float64(max(f.res.sent-baseSent[i], 1)))
+	for _, f := range flows {
+		base := f.snapshot
+		goodput = append(goodput, float64(f.res.delivered-base.delivered)*8/window)
+		loss = append(loss, float64(f.res.lost-base.lost)/float64(max(f.res.sent-base.sent, 1)))
 	}
 	return goodput, loss
 }

@@ -55,7 +55,7 @@ func BenchmarkServerCoexistWAN(b *testing.B) {
 				n := float64(b.N)
 				b.ReportMetric(a/n/1e6, "a-Mbit/s")
 				b.ReportMetric(c/n/1e6, "b-Mbit/s")
-				b.ReportMetric(100*a/(a+c), "a-share-%")
+				b.ReportMetric(100*a/max(a+c, 1), "a-share-%")
 			})
 		}
 	}
@@ -101,6 +101,10 @@ func runCoexist(b *testing.B, link wanLink, pair [2]coexistServer, join, measure
 	a0, c0 := received[0].Load(), received[1].Load()
 	time.Sleep(time.Until(start.Add(end)))
 	a1, c1 := received[0].Load(), received[1].Load()
+	// A flow that failed delivers nothing, which would read as starvation.
+	if a1 == a0 || c1 == c0 {
+		b.Fatalf("a flow delivered nothing in the measurement window: %d and %d bytes", a1-a0, c1-c0)
+	}
 	window := (end - measureFrom).Seconds()
 	return float64(a1-a0) * 8 / window, float64(c1-c0) * 8 / window
 }

@@ -144,23 +144,29 @@ func TestConnectionStatisticsCongestionWindow(t *testing.T) {
 				}
 				return published
 			}
-			// Wait for the server's post-handshake packets (HANDSHAKE_DONE,
-			// NEW_TOKEN, NEW_CONNECTION_ID) to be acknowledged: BBR's Startup
-			// grows the window with those acknowledgments even though the
-			// server has nothing else to send. After them it sends only ACKs.
-			for {
-				var flight uint64
-				if err := server.server.Do(ctx, func(*transport.ServerEndpoint) error {
-					_, flight = server.raw.CongestionStats()
-					return nil
-				}); err != nil {
-					t.Fatal(err)
+			// BBR's Startup grows the window with every acknowledgment, even
+			// of the receiver's own few control packets, so the receiver's
+			// window is compared only once its packets have all been
+			// acknowledged.
+			drained := func(c *Conn) {
+				t.Helper()
+				for {
+					var flight uint64
+					if err := c.server.Do(ctx, func(*transport.ServerEndpoint) error {
+						_, flight = c.raw.CongestionStats()
+						return nil
+					}); err != nil {
+						t.Fatal(err)
+					}
+					if flight == 0 {
+						return
+					}
+					time.Sleep(time.Millisecond)
 				}
-				if flight == 0 {
-					break
-				}
-				time.Sleep(time.Millisecond)
 			}
+			// The server's post-handshake packets: HANDSHAKE_DONE, NEW_TOKEN,
+			// NEW_CONNECTION_ID.
+			drained(server)
 			initial, idle := window(client), window(server)
 			// RFC 9002 section 7.2 bounds NewReno's initial window for any
 			// datagram size. BBR's Startup also grows its window with the
@@ -197,11 +203,16 @@ func TestConnectionStatisticsCongestionWindow(t *testing.T) {
 			if err := <-sent; err != nil {
 				t.Fatal(err)
 			}
-			// Slow start grows the sender's window; the receiver sent only ACKs.
-			if grown := window(client); grown <= initial {
+			// NewReno's slow start grows the sender's window. (BBR's is bounded
+			// by its estimate of the path, which on loopback can be smaller
+			// than the window it started with.)
+			if grown := window(client); tc.congestion == CongestionControlNewReno && grown <= initial {
 				t.Fatal("sender window did not grow", initial, grown)
 			}
-			if got := window(server); got != idle {
+			// The receiver sent only ACKs and the MAX_STREAMS that released the
+			// stream; NewReno doesn't grow while application limited.
+			drained(server)
+			if got := window(server); tc.congestion == CongestionControlNewReno && got != idle {
 				t.Fatal("receiver window changed", idle, got)
 			}
 			final := client.ConnectionStats().CongestionWindow
