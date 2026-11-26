@@ -225,7 +225,9 @@ func (f *simFlow) step(t *testing.T, link *simLink, now time.Time) time.Time {
 
 // ptoAt is when a probe timeout fires: when bytes are in flight and no ACK
 // is on its way, the smoothed RTT plus four variations after the last send,
-// doubled for each consecutive timeout.
+// doubled for each consecutive timeout. Unlike RFC 9002's PTO, it waits for
+// ACKs already in transit, which the simulator knows will arrive; it exists
+// so a flow whose remaining packets were all dropped doesn't stall.
 func (f *simFlow) ptoAt() time.Time {
 	if f.acks.Len() > 0 || f.sent.BytesInFlight == 0 {
 		return time.Time{}

@@ -22,7 +22,7 @@ type coexistServer struct {
 var (
 	coexistPhotonBBR     = coexistServer{"photon-bbr", true, quic.CongestionControlBBR}
 	coexistPhotonNewReno = coexistServer{"photon-newreno", true, quic.CongestionControlNewReno}
-	coexistQUICGo        = coexistServer{"quic-go", false, 0}
+	coexistQUICGo        = coexistServer{name: "quic-go"} // Cubic; congestion applies only to photon
 )
 
 // BenchmarkServerCoexistWAN measures how two servers' downloads share one
@@ -71,6 +71,7 @@ func runCoexist(b *testing.B, link wanLink, pair [2]coexistServer, join, measure
 	up, down := newWANBottleneck(link), newWANBottleneck(link)
 	windows := echoWindows{stream: 16 << 20, connection: 32 << 20}
 	var received [2]atomic.Uint64
+	ended := make(chan error, len(pair))
 	start := time.Now()
 	for i, server := range pair {
 		clientTLS, serverTLS := tlsConfigs(b)
@@ -95,23 +96,26 @@ func runCoexist(b *testing.B, link wanLink, pair [2]coexistServer, join, measure
 			b.Fatal(err)
 		}
 		defer closeServer()
-		go streamDownload(ctx, peer, accept, &received[i])
+		go func() { ended <- fmt.Errorf("%s: %w", server.name, streamDownload(ctx, peer, accept, &received[i])) }()
 	}
 	time.Sleep(time.Until(start.Add(measureFrom)))
 	a0, c0 := received[0].Load(), received[1].Load()
 	time.Sleep(time.Until(start.Add(end)))
 	a1, c1 := received[0].Load(), received[1].Load()
-	// A flow that failed delivers nothing, which would read as starvation.
-	if a1 == a0 || c1 == c0 {
-		b.Fatalf("a flow delivered nothing in the measurement window: %d and %d bytes", a1-a0, c1-c0)
+	// A download ends only on an error; a starved one just delivers little.
+	select {
+	case err := <-ended:
+		b.Fatal("download ended early:", err)
+	default:
 	}
 	window := (end - measureFrom).Seconds()
 	return float64(a1-a0) * 8 / window, float64(c1-c0) * 8 / window
 }
 
 // streamDownload asks the server for an endless download and counts what
-// arrives in received until ctx ends or the connection closes.
-func streamDownload(ctx context.Context, peer *upstream.Conn, accept func(context.Context) (benchmarkStream, error), received *atomic.Uint64) {
+// arrives in received until ctx ends or the connection fails, returning the
+// error that ended it.
+func streamDownload(ctx context.Context, peer *upstream.Conn, accept func(context.Context) (benchmarkStream, error), received *atomic.Uint64) error {
 	go func() {
 		s, err := accept(ctx)
 		if err != nil {
@@ -126,17 +130,17 @@ func streamDownload(ctx context.Context, peer *upstream.Conn, accept func(contex
 	}()
 	s, err := peer.OpenStreamSync(ctx)
 	if err != nil {
-		return
+		return err
 	}
 	if _, err := s.Write([]byte("get")); err != nil {
-		return
+		return err
 	}
 	buf := make([]byte, 64<<10)
 	for {
 		n, err := s.Read(buf)
 		received.Add(uint64(n))
 		if err != nil {
-			return
+			return err
 		}
 	}
 }
