@@ -94,7 +94,7 @@ func TestMultipathTimeThresholdLoss(t *testing.T) {
 	now := time.Unix(101, 0)
 	app := client.multipath.paths[1].application
 	// NewReno cuts the window on loss; BBR, as draft-07, doesn't.
-	app.congestion = renoController(t)
+	useNewReno(t, client)
 	app.budget.Validate()
 	for i := 0; i < 2; i++ {
 		if err := client.queueFrameOnPath(1, wire.PingFrame{}); err != nil {
