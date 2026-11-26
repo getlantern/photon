@@ -35,21 +35,25 @@ func (r *Sent) CanMarkECN(space Space) bool {
 	return space <= Application && len(r.spaces[space].ecnPending) < r.capacity
 }
 
-// reclaimECN, at capacity, drops the evidence of packets no longer tracked:
-// declared lost, or ACK-only with their metadata evicted. Late ACKs of
-// those are rare, and one that comes then reports more marked packets than
-// it newly acknowledges, which feedback validation allows, so evidence for
-// truly lost packets doesn't fill the ledger and end marking for good.
+// reclaimECN, at capacity, drops the evidence of this path's packets no
+// longer tracked: declared lost, or ACK-only with their metadata evicted.
+// Late ACKs of those are rare, and one that comes then reports more marked
+// packets than it newly acknowledges, which feedback validation allows, so
+// evidence for truly lost packets doesn't fill the ledger and end marking
+// for good. Old-path evidence stays: it keeps the old path's late feedback
+// from being attributed to this one. It scans only once a packet with
+// evidence has left the ledger since the last scan.
 func (r *Sent) reclaimECN(space Space) {
 	if space > Application {
 		return
 	}
 	s := &r.spaces[space]
-	if len(s.ecnPending) < r.capacity {
+	if len(s.ecnPending) < r.capacity || !s.ecnReclaimable {
 		return
 	}
-	for pn := range s.ecnPending {
-		if _, ok := s.packets[pn]; !ok {
+	s.ecnReclaimable = false
+	for pn, evidence := range s.ecnPending {
+		if _, ok := s.packets[pn]; !ok && evidence.currentPath {
 			delete(s.ecnPending, pn)
 		}
 	}

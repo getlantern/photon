@@ -28,7 +28,7 @@ type ecnProbe struct {
 	space  Space
 	number uint64
 	lost   bool
-	acked  bool // acknowledged, by validated feedback or not
+	acked  bool // acknowledged by validated feedback
 	ce     bool // first acknowledged by feedback that reported only CE
 }
 
@@ -79,18 +79,20 @@ func (p *ECNPath) ACK(space Space, frame wire.AckFrame, feedback ECNFeedbackResu
 	if space > Application || p.state == ECNCapable {
 		return
 	}
-	// A probe's outcome comes only from the ACK that first acknowledges it;
-	// one first acknowledged without validated feedback has none.
+	if !feedback.Validated {
+		return
+	}
+	// A probe's outcome comes from the first validated feedback that
+	// acknowledges it. Feedback Check skipped doesn't consume the counts, so
+	// a later validated ACK still reports the probe's marking.
 	acknowledged := false
 	for i := range p.probes[:p.count] {
 		probe := &p.probes[i]
 		if probe.space == space && !probe.acked && frame.Acknowledges(probe.number) {
 			probe.acked = true
-			if feedback.Validated {
-				acknowledged = true
-				// Only CE this path's share reports marks it remarked.
-				probe.ce = feedback.ECT == 0 && feedback.CE > 0
-			}
+			acknowledged = true
+			// Only CE this path's share reports marks it remarked.
+			probe.ce = feedback.ECT == 0 && feedback.CE > 0
 		}
 	}
 	if !acknowledged {
