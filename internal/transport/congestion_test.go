@@ -524,6 +524,10 @@ func useNewReno(t testing.TB, c *Conn) {
 	c.congestion = renoController(t)
 	if c.multipath != nil {
 		useNewRenoPaths(t, c.multipath)
+		// Path zero shares the base path's controller.
+		if s := c.multipath.paths[0]; s != nil && s.application != nil {
+			s.application.congestion = c.congestion
+		}
 	}
 }
 

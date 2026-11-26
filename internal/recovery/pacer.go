@@ -7,8 +7,8 @@ import (
 
 // Pacer implements a bounded token bucket at 1.25*cwnd/smoothed_rtt. Bursts
 // are bounded to ten datagrams (and never more than cwnd), but always hold
-// the largest packet the pacer has been asked to send, so that packet can
-// go. ACK-only packets bypass it; probes can bypass readiness but must
+// the largest packet asked about since a packet that large was last sent,
+// so that packet can go. ACK-only packets bypass it; probes can bypass readiness but must
 // still debit their bytes. Callers serialize access and commit Sent only
 // after packet handoff.
 type Pacer struct {
@@ -74,4 +74,10 @@ func (p *Pacer) delay(now time.Time, rate, burst float64, size int) time.Duratio
 	}
 	return delay
 }
-func (p *Pacer) Sent(size int) { p.tokens -= float64(size) }
+func (p *Pacer) Sent(size int) {
+	p.tokens -= float64(size)
+	// The largest packet has gone; later bursts follow the rate again.
+	if float64(size) >= p.largest {
+		p.largest = 0
+	}
+}
