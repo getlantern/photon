@@ -20,8 +20,9 @@ type ECNFeedbackResult struct {
 	// supplies consistent feedback. It is not a complete path-validation policy.
 	Validated bool
 	Failed    bool
-	// CE is newly reported congestion after successful feedback checks.
-	CE uint64
+	// CE is newly reported congestion after successful feedback checks, and
+	// ECT the packets newly reported still ECT(0) or ECT(1).
+	CE, ECT uint64
 }
 
 // Check runs only after ACK-of-unsent/range validation. sent is the cumulative
@@ -64,5 +65,5 @@ func (e *ECNFeedback) Check(largest uint64, counts *[3]uint64, sent, newly [2]ui
 		return fail()
 	}
 	e.counts = *counts
-	return ECNFeedbackResult{Validated: newly[0] != 0 || newly[1] != 0, CE: delta[2]}
+	return ECNFeedbackResult{Validated: newly[0] != 0 || newly[1] != 0, CE: delta[2], ECT: delta[0] + delta[1]}
 }
