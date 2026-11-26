@@ -79,7 +79,7 @@ func TestPathbenchLocalhost(t *testing.T) {
 	// Another process can take a port between freePort and serve; retry.
 	for range 5 {
 		port = freePort(t)
-		if stop, err = serve(context.Background(), "127.0.0.1", port, cert, &out); err == nil {
+		if stop, _, err = serve(context.Background(), "127.0.0.1", port, cert, &out); err == nil {
 			break
 		}
 	}
@@ -145,5 +145,46 @@ func TestRunClientRejectsBadTiming(t *testing.T) {
 		if _, err := runClient(context.Background(), cfg); err == nil {
 			t.Fatalf("accepted %+v", cfg)
 		}
+	}
+}
+
+// A flow that fails still counts toward the total and the shares, which
+// add up to 100%, and carries its error. The client's base port is one
+// past the server's: its photon-bbr flow reaches a real listener, and its
+// quic-go flow dials the port after the server's last, where none listens.
+func TestPathbenchFailedFlowCounts(t *testing.T) {
+	cert, err := selfSigned()
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := x509.ParseCertificate(cert.Certificate[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(parsed)
+	var out lockedBuffer
+	var port int
+	var stop func()
+	for range 5 {
+		port = freePort(t)
+		if stop, _, err = serve(context.Background(), "127.0.0.1", port, cert, &out); err == nil {
+			break
+		}
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(stop)
+	res, err := runClient(context.Background(), clientConfig{server: "127.0.0.1", port: port + 1, mix: []string{"photon-bbr", "quic-go"}, duration: 3 * time.Second, from: time.Second, stagger: 200 * time.Millisecond, handshakeTimeout: 300 * time.Millisecond, roots: roots})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ok, failed := res.Flows[0], res.Flows[1]
+	if ok.Error != "" || ok.Mbps <= 0 || failed.Error == "" {
+		t.Fatalf("flows %+v, want the first to run and the second to fail", res.Flows)
+	}
+	if sum := ok.SharePercent + failed.SharePercent; sum < 99.9 || sum > 100.1 || res.TotalMbps < ok.Mbps+failed.Mbps-0.001 {
+		t.Fatalf("shares %.1f%% and %.1f%%, total %.1f: want every flow counted", ok.SharePercent, failed.SharePercent, res.TotalMbps)
 	}
 }
