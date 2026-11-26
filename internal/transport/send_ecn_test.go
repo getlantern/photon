@@ -80,13 +80,13 @@ func TestMultipathSerializedECNMatchesRecovery(t *testing.T) {
 	}
 }
 
-// BBR specifies no response to CE, so a BBR connection doesn't mark its
-// packets ECN-capable even where the socket could.
-func TestBBRConnectionDoesNotMarkECN(t *testing.T) {
+// Both controllers answer CE marks, so connections with either mark their
+// packets ECN-capable where the socket can.
+func TestConnectionsMarkECN(t *testing.T) {
 	for _, tc := range []struct {
 		algorithm recovery.Algorithm
 		want      recovery.ECNMark
-	}{{recovery.NewRenoAlgorithm, recovery.ECT0}, {recovery.BBRAlgorithm, recovery.NotECT}} {
+	}{{recovery.NewRenoAlgorithm, recovery.ECT0}, {recovery.BBRAlgorithm, recovery.ECT0}} {
 		c, _ := testPair(t, wire.Version1)
 		c.config.enableECN, c.config.CongestionControl = true, tc.algorithm
 		endpoint, err := NewClientEndpoint(c, netip.MustParseAddrPort("127.0.0.1:443"))

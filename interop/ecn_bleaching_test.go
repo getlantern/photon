@@ -101,7 +101,7 @@ func runECNRelayFallback(t *testing.T, drop bool) {
 				defer func() { socket.Close(); <-done }()
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer cancel()
-				c, err := quic.DialAddr(ctx, socket.LocalAddr().String(), ct, &quic.Config{Versions: []quic.Version{v}, EnableDatagrams: true, CongestionControl: quic.CongestionControlNewReno})
+				c, err := quic.DialAddr(ctx, socket.LocalAddr().String(), ct, &quic.Config{Versions: []quic.Version{v}, EnableDatagrams: true})
 				if err != nil {
 					t.Fatal(err)
 				}

@@ -13,12 +13,11 @@ const (
 	// CongestionControlBBR is BBRv3, as in draft-ietf-ccwg-bbr-07, and the
 	// default. It models the path's bottleneck bandwidth and minimum RTT and
 	// paces at its bandwidth estimate, so random loss affects it far less
-	// than a loss-based controller. The draft specifies no response to
-	// ECN-CE, so a BBR connection doesn't mark its packets ECN-capable.
+	// than a loss-based controller. It answers ECN-CE marks as it answers
+	// loss.
 	CongestionControlBBR CongestionControl = iota
 	// CongestionControlNewReno is RFC 9002's NewReno. It treats each packet
-	// loss as congestion and halves its window, and it marks packets
-	// ECN-capable where the socket supports it.
+	// loss or ECN-CE mark as congestion and halves its window.
 	CongestionControlNewReno
 )
 
