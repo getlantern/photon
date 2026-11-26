@@ -11,8 +11,9 @@ import (
 
 // simLink is one direction of a bottleneck: a link of rate bytes per second
 // with a drop-tail queue holding at most queue of backlog, seeded random
-// loss, and a fixed one-way propagation delay. ACKs return over an
-// uncongested, lossless path with the same delay.
+// loss, an optional token-bucket policer in front of the queue, and a fixed
+// one-way propagation delay. ACKs return over an uncongested, lossless path
+// with the same delay.
 type simLink struct {
 	rate      func(time.Time) float64
 	delay     time.Duration
@@ -20,6 +21,30 @@ type simLink struct {
 	loss      float64
 	rng       *rand.Rand
 	busyUntil time.Time
+	policer   *simPolicer
+}
+
+// simPolicer is a token bucket: it admits a packet if it holds a token for
+// each byte, and drops it otherwise, as a traffic policer does.
+type simPolicer struct {
+	rate   float64 // bytes per second
+	burst  float64 // bucket depth in bytes
+	tokens float64
+	at     time.Time
+}
+
+func (p *simPolicer) admit(now time.Time, size int) bool {
+	if p.at.IsZero() {
+		p.tokens = p.burst
+	} else {
+		p.tokens = min(p.burst, p.tokens+p.rate*now.Sub(p.at).Seconds())
+	}
+	p.at = now
+	if p.tokens < float64(size) {
+		return false
+	}
+	p.tokens -= float64(size)
+	return true
 }
 
 // simACK is an acknowledgment that reaches the sender at at.
@@ -48,87 +73,182 @@ type simResult struct {
 	lost      int    // packets declared lost
 }
 
-// simulate runs a bulk transfer of 1200-byte packets through link for d,
-// driving a real Sent tracker, pacer and controller as the transport does.
-// observe, if set, is called after every ACK.
+// simFlow is one bulk sender on a shared link, driving a real Sent tracker,
+// pacer and controller as the transport does. It starts at start and stops
+// sending at stop (if set).
+type simFlow struct {
+	c           Controller
+	start, stop time.Time
+	extraDelay  time.Duration // added to the link's delay in each direction
+	observe     func(time.Time)
+
+	sent     *Sent
+	pacer    Pacer
+	acks     ackHeap
+	pn       uint64
+	res      simResult
+	lastSend time.Time
+	ptoCount int
+}
+
+const simPacketSize = 1200
+
+// simulate runs one flow's bulk transfer through link for d. observe, if
+// set, is called after every ACK.
 func simulate(t *testing.T, c Controller, link *simLink, d time.Duration, observe func(time.Time)) simResult {
 	t.Helper()
-	const size = 1200
-	sent, _ := NewSent(65536)
-	var pacer Pacer
-	var acks ackHeap
-	var res simResult
-	start := time.Unix(1000, 0)
-	now := start
-	end := start.Add(d)
-	var pn uint64
+	f := &simFlow{c: c, observe: observe}
+	simulateFlows(t, link, d, f)
+	return f.res
+}
+
+// simulateFlows runs flows over one shared link for d from simStart. A flow
+// with no start begins at simStart.
+func simulateFlows(t *testing.T, link *simLink, d time.Duration, flows ...*simFlow) {
+	t.Helper()
+	now := simStart
+	end := simStart.Add(d)
+	for _, f := range flows {
+		f.sent, _ = NewSent(65536)
+		if f.start.IsZero() {
+			f.start = simStart
+		}
+	}
 	for now.Before(end) {
-		// Deliver due ACKs.
-		for acks.Len() > 0 && !acks[0].at.After(now) {
-			a := heap.Pop(&acks).(simACK)
-			events, err := sent.OnACK(Application, wire.AckFrame{Ranges: []wire.AckRange{{Smallest: a.pn, Largest: a.pn}}}, a.at, 0, 0, true)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(events.Lost) > 0 {
-				res.lost += len(events.Lost)
-				c.OnLoss(LossEvent{Lost: events.Lost, TotalLost: sent.LostBytes(), TotalDelivered: sent.DeliveredBytes(), Flight: sent.BytesInFlight, Now: a.at})
-			}
-			c.OnACK(ACKEvent{Acked: events.Acked, Rate: events.Rate, Flight: sent.BytesInFlight, SmoothedRTT: sent.SmoothedRTT(), Now: a.at})
-			if c.ForcesAppLimited() {
-				sent.MarkAppLimited()
-			}
-			if observe != nil {
-				observe(a.at)
-			}
-		}
-		// Time-threshold loss detection.
-		if lt, _, ok := sent.LossTime(); ok && !lt.After(now) {
-			if lost := sent.DetectLoss(Application, now); len(lost) > 0 {
-				res.lost += len(lost)
-				c.OnLoss(LossEvent{Lost: lost, TotalLost: sent.LostBytes(), TotalDelivered: sent.DeliveredBytes(), Flight: sent.BytesInFlight, Now: now})
-			}
-		}
-		// Send what the window and pacer allow: the application always has
-		// data, so only the controller (in ProbeRTT) marks the sender
-		// application limited.
 		next := end
-		for c.CanSend(sent.BytesInFlight, size, true, false) {
-			if wait := pacer.DelayFor(now, c, sent.RTT.Smoothed, size); wait > 0 {
-				next = now.Add(wait)
-				break
+		for _, f := range flows {
+			if now.Before(f.start) {
+				next = minTime(next, f.start)
+				continue
 			}
-			e := SentEvent{Bytes: size, Flight: sent.BytesInFlight, AppLimited: sent.AppLimited(), Now: now}
-			if err := sent.OnSent(Application, Packet{Number: pn, SentAt: now, Bytes: size, AckEliciting: true, InFlight: true}); err != nil {
-				t.Fatal(err)
-			}
-			c.OnPacketSent(e)
-			pacer.Sent(size)
-			res.sent++
-			if at, ok := link.transmit(now, size); ok {
-				heap.Push(&acks, simACK{at: at.Add(link.delay), pn: pn})
-			}
-			pn++
-		}
-		if acks.Len() > 0 && acks[0].at.Before(next) {
-			next = acks[0].at
-		}
-		if lt, _, ok := sent.LossTime(); ok && lt.Before(next) {
-			next = lt
+			next = minTime(next, f.step(t, link, now))
 		}
 		if !next.After(now) {
 			next = now.Add(time.Microsecond)
 		}
 		now = next
 	}
-	res.delivered = sent.rate.delivered
-	return res
+	for _, f := range flows {
+		f.res.delivered = f.sent.rate.delivered
+	}
+}
+
+var simStart = time.Unix(1000, 0)
+
+func minTime(a, b time.Time) time.Time {
+	if b.Before(a) {
+		return b
+	}
+	return a
+}
+
+// step processes f's due ACKs, loss detection and PTO at now, sends what it
+// can, and returns when it next needs to run.
+func (f *simFlow) step(t *testing.T, link *simLink, now time.Time) time.Time {
+	sent, c := f.sent, f.c
+	for f.acks.Len() > 0 && !f.acks[0].at.After(now) {
+		a := heap.Pop(&f.acks).(simACK)
+		events, err := sent.OnACK(Application, wire.AckFrame{Ranges: []wire.AckRange{{Smallest: a.pn, Largest: a.pn}}}, a.at, 0, 0, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(events.Acked) > 0 {
+			f.ptoCount = 0
+		}
+		if len(events.Lost) > 0 {
+			f.res.lost += len(events.Lost)
+			c.OnLoss(LossEvent{Lost: events.Lost, TotalLost: sent.LostBytes(), TotalDelivered: sent.DeliveredBytes(), Flight: sent.BytesInFlight, Now: a.at})
+		}
+		if len(events.Acked) > 0 {
+			c.OnACK(ACKEvent{Acked: events.Acked, Rate: events.Rate, Flight: sent.BytesInFlight, SmoothedRTT: sent.SmoothedRTT(), Now: a.at})
+		}
+		if c.ForcesAppLimited() {
+			sent.MarkAppLimited()
+		}
+		if f.observe != nil {
+			f.observe(a.at)
+		}
+	}
+	// Time-threshold loss detection.
+	if lt, _, ok := sent.LossTime(); ok && !lt.After(now) {
+		if lost := sent.DetectLoss(Application, now); len(lost) > 0 {
+			f.res.lost += len(lost)
+			c.OnLoss(LossEvent{Lost: lost, TotalLost: sent.LostBytes(), TotalDelivered: sent.DeliveredBytes(), Flight: sent.BytesInFlight, Now: now})
+		}
+	}
+	next := time.Time{}
+	if f.stop.IsZero() || now.Before(f.stop) {
+		// A probe timeout: data is in flight but nothing will be
+		// acknowledged, so send one packet outside the window.
+		if pto := f.ptoAt(); !pto.IsZero() && !pto.After(now) {
+			f.send(link, now)
+			f.ptoCount++
+		}
+		// Send what the window and pacer allow: the application always
+		// has data, so only the controller (in ProbeRTT) marks the sender
+		// application limited.
+		for c.CanSend(sent.BytesInFlight, simPacketSize, true, false) {
+			if wait := f.pacer.DelayFor(now, c, sent.RTT.Smoothed, simPacketSize); wait > 0 {
+				next = now.Add(wait)
+				break
+			}
+			f.send(link, now)
+		}
+	}
+	if f.acks.Len() > 0 && (next.IsZero() || f.acks[0].at.Before(next)) {
+		next = f.acks[0].at
+	}
+	if lt, _, ok := sent.LossTime(); ok && (next.IsZero() || lt.Before(next)) {
+		next = lt
+	}
+	if pto := f.ptoAt(); !pto.IsZero() && (next.IsZero() || pto.Before(next)) {
+		next = pto
+	}
+	if next.IsZero() {
+		next = now.Add(time.Millisecond)
+	}
+	return next
+}
+
+// ptoAt is when a probe timeout fires: when bytes are in flight and no ACK
+// is on its way, the smoothed RTT plus four variations after the last send,
+// doubled for each consecutive timeout.
+func (f *simFlow) ptoAt() time.Time {
+	if f.acks.Len() > 0 || f.sent.BytesInFlight == 0 {
+		return time.Time{}
+	}
+	if _, _, ok := f.sent.LossTime(); ok {
+		return time.Time{}
+	}
+	rtt := f.sent.RTT
+	pto := (rtt.Smoothed + max(4*rtt.Variation, time.Millisecond)) << min(f.ptoCount, 6)
+	return f.lastSend.Add(pto)
+}
+
+func (f *simFlow) send(link *simLink, now time.Time) {
+	e := SentEvent{Bytes: simPacketSize, Flight: f.sent.BytesInFlight, AppLimited: f.sent.AppLimited(), Now: now}
+	if err := f.sent.OnSent(Application, Packet{Number: f.pn, SentAt: now, Bytes: simPacketSize, AckEliciting: true, InFlight: true}); err != nil {
+		panic(err)
+	}
+	f.c.OnPacketSent(e)
+	f.pacer.Sent(simPacketSize)
+	f.res.sent++
+	f.lastSend = now
+	// The flow's extra delay is after the bottleneck, so the shared queue
+	// sees packets in the order they are sent.
+	if at, ok := link.transmit(now, simPacketSize); ok {
+		heap.Push(&f.acks, simACK{at: at.Add(link.delay + 2*f.extraDelay), pn: f.pn})
+	}
+	f.pn++
 }
 
 // transmit queues a packet sent at now, returning when it reaches the
 // receiver, or false if it is dropped.
 func (l *simLink) transmit(now time.Time, size int) (time.Time, bool) {
 	if l.loss > 0 && l.rng.Float64() < l.loss {
+		return time.Time{}, false
+	}
+	if l.policer != nil && !l.policer.admit(now, size) {
 		return time.Time{}, false
 	}
 	departure := now
@@ -217,7 +337,7 @@ func TestBBRAdaptsToBandwidthDrop(t *testing.T) {
 	b := NewBBR(1200)
 	b.rng = rand.New(rand.NewPCG(3, 4))
 	link := newLink(100e6, 50*time.Millisecond, 0)
-	drop := time.Unix(1000, 0).Add(4 * time.Second)
+	drop := simStart.Add(4 * time.Second)
 	link.rate = func(now time.Time) float64 {
 		if now.Before(drop) {
 			return 100e6 / 8
