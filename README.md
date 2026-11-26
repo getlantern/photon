@@ -202,11 +202,11 @@ and pacing gate in-flight output;
 persistent-congestion detection uses bounded cross-space history. Linux/macOS
 UDP readers acquire ECN markings for receive feedback in ACKs, preserving counters
 per packet-number space and multipath path. IPv4/IPv6 reception has runtime
-coverage on macOS and Docker Linux arm64; see docs/LINUX_VALIDATION.md. These UDP runtimes also test
-ECN with up to ten ECT(0) packets per network path or three base PTO durations,
-validate peer feedback,
-and apply validated congestion signals to NewReno. BBR connections send
-Not-ECT, since BBR specifies no response to CE. Unsupported ancillary writes
+coverage on macOS and Docker Linux arm64; see docs/LINUX_VALIDATION.md. BBR
+connections, the default, send Not-ECT, since BBR specifies no response to CE.
+For NewReno connections, these UDP runtimes also test ECN with up to ten ECT(0)
+packets per network path or three base PTO durations, validate peer feedback,
+and apply validated congestion signals to NewReno. Unsupported ancillary writes
 fall back locally to Not-ECT with corrected recovery accounting. Migration
 preserves cumulative feedback and starts fresh path testing; failed ECN contexts
 remain disabled. Independent quic-go tests verify continued ECT(0) marking

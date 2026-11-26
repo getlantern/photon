@@ -55,10 +55,12 @@ func newWANBottleneck(link wanLink) *wanBottleneck {
 	return &wanBottleneck{link: link, shape: wanShaper{link: link}}
 }
 
-func (b *wanBottleneck) admit(now time.Time, n int) (time.Time, bool) {
+// admit admits a datagram of n bytes arriving now. It reads the clock under
+// the lock, so relays sharing the bottleneck admit in time order.
+func (b *wanBottleneck) admit(n int) (time.Time, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.shape.admit(now, n)
+	return b.shape.admit(time.Now(), n)
 }
 
 // newSharedWANRelay is a relay for one client over shared bottlenecks. Its
@@ -154,12 +156,11 @@ func (r *wanRelay) direction(index int, bottleneck *wanBottleneck, seed uint64, 
 			if n == 0 {
 				continue
 			}
-			now := time.Now()
 			if link.loss > 0 && rng.Float64() < link.loss {
 				r.dropped[index].Add(1)
 				continue
 			}
-			departure, ok := bottleneck.admit(now, n)
+			departure, ok := bottleneck.admit(n)
 			if !ok {
 				r.dropped[index].Add(1)
 				continue

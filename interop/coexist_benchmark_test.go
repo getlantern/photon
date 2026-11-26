@@ -77,8 +77,9 @@ func runCoexist(b *testing.B, link wanLink, pair [2]coexistServer, join, measure
 		w := windows
 		w.congestion = server.congestion
 		srv := startEchoServer(b, ctx, server.independent, serverTLS, w)
-		b.Cleanup(srv.close)
+		defer srv.close()
 		relay := newSharedWANRelay(b, srv.addr, up, down, uint64(i+1))
+		defer relay.close()
 		if i == 1 {
 			time.Sleep(time.Until(start.Add(join)))
 		}
@@ -88,12 +89,12 @@ func runCoexist(b *testing.B, link wanLink, pair [2]coexistServer, join, measure
 		if err != nil {
 			b.Fatal(err)
 		}
-		b.Cleanup(func() { peer.CloseWithError(0, "") })
+		defer peer.CloseWithError(0, "")
 		accept, closeServer, err := srv.accept()
 		if err != nil {
 			b.Fatal(err)
 		}
-		b.Cleanup(closeServer)
+		defer closeServer()
 		go streamDownload(ctx, peer, accept, &received[i])
 	}
 	time.Sleep(time.Until(start.Add(measureFrom)))
@@ -113,7 +114,7 @@ func streamDownload(ctx context.Context, peer *upstream.Conn, accept func(contex
 			return
 		}
 		chunk := make([]byte, 64<<10)
-		for {
+		for ctx.Err() == nil {
 			if _, err := s.Write(chunk); err != nil {
 				return
 			}
