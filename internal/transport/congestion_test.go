@@ -507,7 +507,7 @@ func TestControllerForcesAppLimited(t *testing.T) {
 
 // renoController is a NewReno controller for size-byte datagrams (1200 if
 // unset), for tests of NewReno's responses to loss and ECN-CE, which BBR
-// doesn't share.
+// answers differently.
 func renoController(t testing.TB, size uint16) recovery.Controller {
 	t.Helper()
 	c, err := recovery.NewController(recovery.NewRenoAlgorithm, max(uint64(size), 1200))
@@ -517,8 +517,8 @@ func renoController(t testing.TB, size uint16) recovery.Controller {
 	return c
 }
 
-// useNewReno switches c to NewReno as if configured with it: its config
-// (which also decides ECN marking), its base path's controller, and its
+// useNewReno switches c to NewReno as if configured with it: its config,
+// its base path's controller, and its
 // multipath paths, existing and future. The new controllers start fresh, so
 // tests call it before sending what they measure.
 func useNewReno(t testing.TB, c *Conn) {

@@ -79,6 +79,9 @@ type LossEvent struct {
 	TotalLost uint64
 	// TotalDelivered is the path's delivered in-flight bytes.
 	TotalDelivered uint64
+	// TotalCE is the path's ECN-CE-marked bytes, which with each packet's
+	// Delivery.CE gives the marks since it was sent.
+	TotalCE uint64
 	// Flight is the bytes in flight once these packets are removed.
 	Flight uint64
 	Now    time.Time
