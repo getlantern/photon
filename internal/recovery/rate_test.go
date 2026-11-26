@@ -302,3 +302,45 @@ func TestDeliveryRateLeavesOldPathCE(t *testing.T) {
 		t.Fatalf("sample %+v: the old path's mark was charged to the new one", events.Rate)
 	}
 }
+
+// After a path change, an old packet's CE reported in counts whose ranges
+// omit it isn't charged to the new path; CE beyond the old path's possible
+// reports is, exactly once.
+func TestDeliveryRateCEBeyondOldPathAllowance(t *testing.T) {
+	r, _ := NewSent(64)
+	r.EnableECN()
+	at := time.Unix(100, 0)
+	send := func(pn uint64) {
+		t.Helper()
+		if err := r.OnSent(Application, Packet{Number: pn, SentAt: at, Bytes: 1200, AckEliciting: true, InFlight: true, ECN: ECT0}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	step := func(i int, lo, hi uint64, counts [3]uint64) RateSample {
+		t.Helper()
+		frame := ack(lo, hi)
+		frame.ECN = &counts
+		events, err := r.OnACK(Application, frame, at.Add(time.Duration(i)*time.Millisecond), 0, 0, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return events.Rate
+	}
+	send(0)
+	r.ResetForPathChange()
+	send(1)
+	send(2)
+	if step(1, 1, 2, [3]uint64{2, 0, 0}); r.ECNState() != ECNCapable {
+		t.Fatal("new path not validated")
+	}
+	send(3)
+	// Old packet 0 marked, counted though the ranges omit it.
+	if rs := step(2, 3, 3, [3]uint64{3, 0, 1}); rs.NewCE != 0 {
+		t.Fatalf("sample %+v: the old packet's omitted CE was charged to the new path", rs)
+	}
+	send(4)
+	// A mark beyond what the old path could account for.
+	if rs := step(3, 4, 4, [3]uint64{3, 0, 2}); rs.NewCE != 1200 || r.CEBytes() != 1200 {
+		t.Fatalf("sample %+v, total %d: want the new path's mark charged once", rs, r.CEBytes())
+	}
+}
