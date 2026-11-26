@@ -82,8 +82,9 @@ func TestPacerUsesControllerRate(t *testing.T) {
 	}
 }
 
-// A packet larger than the burst still goes once its delay has passed: the
-// bucket grows to hold it, rather than capping below its size forever.
+// A packet larger than the burst still goes once its delay has passed: it
+// needs only a full bucket, rather than waiting forever for tokens the
+// bucket can't hold.
 func TestPacerSendsPacketLargerThanBurst(t *testing.T) {
 	now := time.Unix(100, 0)
 	reno, _ := NewCongestion(1200)
@@ -103,8 +104,8 @@ func TestPacerSendsPacketLargerThanBurst(t *testing.T) {
 	}
 }
 
-// Tokens saved toward a large packet survive checks for smaller ones, as the
-// send loop makes between a large packet's checks.
+// Checks for smaller packets that aren't sent don't consume the tokens a
+// large packet is waiting for.
 func TestPacerLargePacketSurvivesSmallChecks(t *testing.T) {
 	now := time.Unix(100, 0)
 	reno, _ := NewCongestion(1200)
@@ -138,5 +139,13 @@ func TestPacerUnsentLargePacketKeepsBurst(t *testing.T) {
 	}
 	if sent != 2 {
 		t.Fatal("burst of", sent, "packets after an unsent 9000-byte check, want 2")
+	}
+}
+
+// A pacer with no window has no rate, so it never sends.
+func TestPacerZeroWindowNeverSends(t *testing.T) {
+	var p Pacer
+	if d := p.Delay(time.Unix(100, 0), 0, 100*time.Millisecond, 1200); d != maxDuration {
+		t.Fatal("zero window delay", d, "want never")
 	}
 }
