@@ -236,3 +236,67 @@ func TestDeliveryRateIgnoresCEBeforeValidation(t *testing.T) {
 		t.Fatalf("sample %+v, state %d: an unvalidated path's mark counted", events.Rate, r.ECNState())
 	}
 }
+
+// Marks reported in the handshake spaces don't count: one marked datagram
+// of coalesced packets would count once per space.
+func TestDeliveryRateCountsOnlyApplicationCE(t *testing.T) {
+	r, _ := NewSent(64)
+	r.EnableECN()
+	start := time.Unix(100, 0)
+	send := func(space Space, pn uint64) {
+		t.Helper()
+		if err := r.OnSent(space, Packet{Number: pn, SentAt: start, Bytes: 1200, AckEliciting: true, InFlight: true, ECN: ECT0}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	send(Application, 0)
+	frame := ack(0, 0)
+	frame.ECN = &[3]uint64{1, 0, 0}
+	if _, err := r.OnACK(Application, frame, start.Add(time.Millisecond), 0, 0, true); err != nil || r.ECNState() != ECNCapable {
+		t.Fatal("path not validated", err)
+	}
+	send(Handshake, 0)
+	frame = ack(0, 0)
+	frame.ECN = &[3]uint64{0, 0, 1}
+	events, err := r.OnACK(Handshake, frame, start.Add(2*time.Millisecond), 0, 0, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if events.Rate.NewCE != 0 {
+		t.Fatalf("sample %+v: a handshake-space mark counted", events.Rate)
+	}
+}
+
+// After a path change, marks an ACK reports alongside newly acknowledged
+// old-path packets are taken to be theirs, not charged to the new path.
+func TestDeliveryRateLeavesOldPathCE(t *testing.T) {
+	r, _ := NewSent(64)
+	r.EnableECN()
+	at := time.Unix(100, 0)
+	send := func(pn uint64) {
+		t.Helper()
+		if err := r.OnSent(Application, Packet{Number: pn, SentAt: at, Bytes: 1200, AckEliciting: true, InFlight: true, ECN: ECT0}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	send(0)
+	r.ResetForPathChange()
+	// Validate the new path with its own probe.
+	send(1)
+	frame := ack(1, 1)
+	frame.ECN = &[3]uint64{1, 0, 0}
+	if _, err := r.OnACK(Application, frame, at.Add(time.Millisecond), 0, 0, true); err != nil || r.ECNState() != ECNCapable {
+		t.Fatal("new path not validated", err)
+	}
+	// The old packet arrives late, marked, acknowledged with a new one.
+	send(2)
+	frame = ack(0, 2)
+	frame.ECN = &[3]uint64{2, 0, 1}
+	events, err := r.OnACK(Application, frame, at.Add(2*time.Millisecond), 0, 0, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if events.Rate.NewCE != 0 {
+		t.Fatalf("sample %+v: the old path's mark was charged to the new one", events.Rate)
+	}
+}
