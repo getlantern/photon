@@ -168,8 +168,9 @@ func (c *Conn) nextPacketOnPathSelection(id, ackPath uint64, now time.Time, allo
 	if s.nextPN >= wire.MaxVarint {
 		return nil, c.exhaustPacketNumbers()
 	}
-	if item != nil && len(s.sent) >= maxSentPackets {
-		return nil, c.fail(ErrSendBuffer)
+	if item != nil && !reclaimSent(s, func(pn uint64) bool { return app.sent.Tracks(recovery.Application, pn) }) {
+		// The ledger is full of packets in flight: wait for ACKs.
+		return nil, nil
 	}
 	f = c.pathWireFrame(f)
 	payload, err := f.Append(c.payloadScratch[:0])

@@ -1352,8 +1352,9 @@ func (c *Conn) nextBaseDatagram(now time.Time) ([]byte, error) {
 			}
 			keys = c.writeKeys(space)
 		}
-		if len(s.sent) >= maxSentPackets && item != nil {
-			return nil, c.fail(ErrSendBuffer)
+		if item != nil && !reclaimSent(s, func(pn uint64) bool { return c.recovery.Tracks(recovery.Space(space), pn) }) {
+			// The ledger is full of packets in flight: wait for ACKs.
+			continue
 		}
 		if s.nextPN >= wire.MaxVarint {
 			return nil, c.exhaustPacketNumbers()
