@@ -442,6 +442,9 @@ func prepareConfig(config *Config) (Config, wire.TransportParameters, error) {
 	if config != nil {
 		cfg = *config
 	}
+	if cfg.CongestionControl > CongestionControlBBR {
+		return Config{}, wire.TransportParameters{}, errors.New("quic: unknown congestion control")
+	}
 	if cfg.HandshakeIdleTimeout < 0 || cfg.HandshakeTimeout < 0 || cfg.MaxIdleTimeout < 0 || cfg.KeepAlivePeriod < 0 {
 		return Config{}, wire.TransportParameters{}, errors.New("quic: negative timeout")
 	}

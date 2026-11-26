@@ -121,3 +121,22 @@ func TestBBRProbeRTTForcesAppLimitedAndRecoveryNeedsData(t *testing.T) {
 		t.Fatal("an in-flight packet sent after the loss didn't end recovery")
 	}
 }
+
+// Persistent congestion restarts recovery, so the window it cuts is restored
+// only once a packet sent after it is acknowledged, not by an earlier one in
+// the same ACK.
+func TestBBRPersistentCongestionRestartsRecovery(t *testing.T) {
+	b := testBBR()
+	start := time.Unix(1, 0)
+	b.OnLoss(LossEvent{Lost: []Packet{{Bytes: 1200, InFlight: true}}, TotalLost: 1200, Now: start})
+	b.cwnd = 100000
+	blackout := start.Add(5 * time.Second)
+	b.OnLoss(LossEvent{Lost: []Packet{{Bytes: 1200, InFlight: true}}, TotalLost: 2400, Flight: 2400, Now: blackout})
+	b.OnPersistentCongestion()
+	cut := b.cwnd
+	// A packet sent between the first loss and persistent congestion.
+	b.OnACK(ACKEvent{Acked: []Packet{{SentAt: start.Add(time.Second), Bytes: 1200, InFlight: true}}, Rate: RateSample{NewlyAcked: 1200, TotalDelivered: 1200}, Flight: 1200, Now: blackout})
+	if !b.inRecovery || b.cwnd > max(cut, b.minPipeCwnd())+1200 {
+		t.Fatalf("recovery ended or window %d restored by a packet sent before persistent congestion (cut to %d)", b.cwnd, cut)
+	}
+}

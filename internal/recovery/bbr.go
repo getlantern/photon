@@ -22,15 +22,8 @@ import (
 //   - A loss event, for the Startup loss exit, is one loss detection.
 //   - As in Linux, the initial pacing rate is recomputed from the first RTT
 //     sample; the draft's 1 ms assumption would leave Startup unpaced.
-//
-// As in draft-07, and unlike earlier BBR versions, recovery doesn't cut the
-// window for each loss or conserve packets: it saves the window on entering
-// recovery and restores it on leaving, and the loss response is the model's
-// (inflight_longterm, bw_shortterm, inflight_shortterm). ProbeRTT starts when
-// the 10 s min_rtt window expires.
-//   - A loss event, for the Startup loss exit, is one loss detection.
-//   - As in Linux, the initial pacing rate is recomputed from the first RTT
-//     sample; the draft's 1 ms assumption would leave Startup unpaced.
+//   - Spurious loss recovery is not undone (the draft's section 5.5.11): the
+//     transport has no signal that a whole recovery episode was spurious.
 //
 // As in draft-07, and unlike earlier BBR versions, recovery doesn't cut the
 // window for each loss or conserve packets: it saves the window on entering
@@ -53,7 +46,6 @@ type BBR struct {
 	idleRestart               bool
 	drainStartRound           uint64
 	delivered, inflight, lost uint64 // the path's C.delivered, C.inflight, C.lost
-	appLimited                bool   // whether the latest ACK found the sender app limited
 	// cwndLimited is C.is_cwnd_limited: whether a send filled the window
 	// in the last packet-timed round trip. cwndLimitedInRound tracks the
 	// current round.
@@ -101,10 +93,6 @@ type BBR struct {
 	probeRTTRoundDone bool
 	probeRTTCwnd      uint64
 	priorCwnd         uint64
-
-	undoState                                   bbrState
-	undoBwShortterm                             float64
-	undoInflightShortterm, undoInflightLongterm uint64
 }
 
 type bbrState uint8
@@ -214,12 +202,13 @@ func (b *BBR) OnPacketSent(e SentEvent) {
 // OnECN does nothing: the draft leaves ECN experimental.
 func (b *BBR) OnECN(sent, now time.Time) {}
 
-// OnPersistentCongestion is the draft's OnEnterRTO: keep the window for an
-// undo, then allow one packet beyond what is in flight.
+// OnPersistentCongestion is the draft's OnEnterRTO: keep the window to
+// restore when recovery ends, then allow one packet beyond what is in
+// flight. Recovery restarts now, so only packets sent from here end it.
 func (b *BBR) OnPersistentCongestion() {
 	b.saveCwnd()
 	b.saveStateUponLoss()
-	b.inRecovery = true
+	b.inRecovery, b.recoveryStart = true, b.now
 	b.cwnd = max(b.inflight+b.smss, b.minPipeCwnd())
 }
 
@@ -265,7 +254,7 @@ func (b *BBR) OnACK(e ACKEvent) {
 		return
 	}
 	b.at(e.Now)
-	b.inflight, b.delivered, b.appLimited = e.Flight, rs.TotalDelivered, e.Limited
+	b.inflight, b.delivered = e.Flight, rs.TotalDelivered
 	if !b.hasSeenRTT && rs.RTT > 0 {
 		// InitPacingRate, now that there is an RTT to pace over.
 		b.hasSeenRTT = true
@@ -349,7 +338,6 @@ func (b *BBR) checkStartupHighLoss(rs RateSample) {
 	if !isInflightTooHigh(rs.Lost, rs.InFlight) {
 		return
 	}
-	b.undoState = bbrStartup
 	b.fullBwReached = true
 	b.inflightLongterm = max(b.bdp, b.inflightLatest)
 }
@@ -683,7 +671,6 @@ func (b *BBR) handleInflightTooHigh(appLimited bool, txInFlight uint64) {
 		b.inflightLongterm = max(txInFlight, uint64(float64(b.targetInflight())*bbrBeta))
 	}
 	if b.state == bbrProbeBWUp {
-		b.undoState = bbrProbeBWUp
 		b.startProbeBWDown()
 	}
 }
@@ -781,12 +768,11 @@ func (b *BBR) resetShortTermModel() {
 
 func (b *BBR) boundBWForModel() { b.bw = min(b.maxBw, b.bwShortterm) }
 
+// saveStateUponLoss saves the window to restore when recovery ends. The
+// draft also saves model state to undo a spurious recovery, which this
+// controller doesn't do (see BBR).
 func (b *BBR) saveStateUponLoss() {
 	b.saveCwnd()
-	b.undoState = bbrNone
-	b.undoBwShortterm = b.bwShortterm
-	b.undoInflightShortterm = b.inflightShortterm
-	b.undoInflightLongterm = b.inflightLongterm
 }
 
 // --- Control parameters (section 5.6) ---

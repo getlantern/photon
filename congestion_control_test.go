@@ -49,3 +49,12 @@ func TestCongestionControlBBRTransfer(t *testing.T) {
 		t.Fatal("transfer", len(got), err)
 	}
 }
+
+// An unknown CongestionControl is rejected rather than silently run as
+// NewReno.
+func TestCongestionControlUnknownRejected(t *testing.T) {
+	_, st := dialTLS(t)
+	if _, err := ListenAddr("127.0.0.1:0", st, &Config{CongestionControl: CongestionControlBBR + 1}); err == nil {
+		t.Fatal("unknown congestion control accepted")
+	}
+}
