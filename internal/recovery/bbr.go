@@ -32,10 +32,15 @@ import (
 //     rate) at once: QUIC can send again before the next ACK.
 //   - Spurious loss recovery is not undone (the draft's section 5.5.11): the
 //     transport has no signal that a whole recovery episode was spurious.
-//
-// The draft specifies no response to ECN-CE, which it requires an
-// ECN-capable sender to treat as congestion, so the transport doesn't mark a
-// BBR connection's packets ECN-capable.
+//   - ECN-CE: the draft requires an ECN-capable sender to treat CE marks as
+//     congestion but specifies no response. Marks are answered as loss, as
+//     RFC 3168 asks, since a classic AQM marks the packets it would
+//     otherwise drop: an ACK reporting new marks is a loss event, marked
+//     bytes count with lost ones toward the 2% threshold for the Startup
+//     exit (which a round with marks reaches without recovery), and a
+//     bandwidth probe checks that threshold on the ACK, as Linux does,
+//     since marks belong to no lost packet. Marks start no recovery epoch,
+//     since nothing needs retransmitting.
 //
 // As in draft-07, and unlike earlier BBR versions, recovery doesn't cut the
 // window for each loss or conserve packets: it saves the window on entering
@@ -219,9 +224,8 @@ func (b *BBR) OnPacketSent(e SentEvent) {
 	}
 }
 
-// OnECN does nothing: the draft specifies no response to CE, so the
-// transport doesn't mark a BBR path's packets ECN-capable, and the
-// bottleneck drops rather than marks.
+// OnECN does nothing: BBR answers CE marks in OnACK, from the rate
+// sample's marked bytes (see BBR).
 func (b *BBR) OnECN(sent, now time.Time) {}
 
 // OnPersistentCongestion stands in for the draft's OnEnterRTO, departing
@@ -289,6 +293,15 @@ func (b *BBR) OnACK(e ACKEvent) {
 	}
 	b.at(e.Now)
 	b.inflight, b.delivered = e.Flight, rs.TotalDelivered
+	if rs.NewCE > 0 {
+		// Marks answered as loss: a loss event, and for a probe, too much
+		// in flight if marks and losses since this packet's send cross the
+		// threshold.
+		b.noteLoss()
+		if congested := rs.Lost + rs.CE; b.checkProbeLoss && isInflightTooHigh(congested, rs.InFlight) {
+			b.handleInflightTooHigh(rs.AppLimited, inflightAtLoss(min(rs.NewCE, congested), rs.InFlight, congested))
+		}
+	}
 	if rtt := e.SmoothedRTT; !b.hasSeenRTT && rtt > 0 {
 		// InitPacingRate, now that there is an RTT to pace over: the smoothed
 		// RTT, which the peer's ACK delay doesn't inflate.
@@ -365,13 +378,13 @@ func (b *BBR) checkFullBWReached(rs RateSample) {
 }
 
 func (b *BBR) checkStartupHighLoss(rs RateSample) {
-	if b.fullBwReached || !b.lossRoundStart || !b.inRecovery {
+	if b.fullBwReached || !b.lossRoundStart || !b.inRecovery && rs.CE == 0 {
 		return
 	}
 	if b.lossEventsInRound < bbrStartupFullLossCnt {
 		return
 	}
-	if !isInflightTooHigh(rs.Lost, rs.InFlight) {
+	if !isInflightTooHigh(rs.Lost+rs.CE, rs.InFlight) {
 		return
 	}
 	b.fullBwReached = true
