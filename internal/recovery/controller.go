@@ -57,7 +57,10 @@ type ACKEvent struct {
 	// SmoothedRTT is the path's smoothed RTT after the ACK, zero before any
 	// RTT sample.
 	SmoothedRTT time.Duration
-	Now         time.Time
+	// Lost is true when this ACK's loss detection declared packets lost,
+	// which the owner reports through OnLoss just before OnACK.
+	Lost bool
+	Now  time.Time
 }
 
 // SentEvent is one in-flight packet as it is sent.
