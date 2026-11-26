@@ -32,14 +32,16 @@ func TestCrossPathReliableACK(t *testing.T) {
 		if _, err := p.receiveReliableACK(f, now.Add(10*time.Millisecond), 3, 0, false, complete); err != nil {
 			t.Fatal(err)
 		}
-		if completed != 1 || bytesReleased != 13 || !item.acked || len(a.space.sent) != 0 || len(b.space.sent) != 0 {
+		// The ACKed path's entry leaves its ledger; the other path's leaves
+		// when its own ACK, loss or reclaim reaches it.
+		acked, other := b, a
+		if ackPath == 0 {
+			acked, other = a, b
+		}
+		if completed != 1 || bytesReleased != 13 || !item.acked || len(acked.space.sent) != 0 {
 			t.Fatal("completion not shared")
 		}
 		// ACK of reliable data does not remove another path's packet from flight.
-		other := a
-		if ackPath == 0 {
-			other = b
-		}
 		if other.sent.BytesInFlight != 1200 {
 			t.Fatal("frame delivery changed other path flight")
 		}
@@ -53,6 +55,9 @@ func TestCrossPathReliableACK(t *testing.T) {
 		}
 		if completed != 1 || a.sent.BytesInFlight != 0 || b.sent.BytesInFlight != 0 {
 			t.Fatal("duplicate completion/accounting")
+		}
+		if len(a.space.sent) != 0 || len(b.space.sent) != 0 || len(a.space.untracked) != 0 || len(b.space.untracked) != 0 {
+			t.Fatal("ledgers not emptied once every path's packet was settled", len(a.space.sent), len(b.space.sent))
 		}
 	}
 }
@@ -133,4 +138,41 @@ func TestAbandonmentTransfersReliableData(t *testing.T) {
 	if len(a.space.sent) != 0 || len(a.space.queue) != 0 {
 		t.Fatal("disposed path retained payloads")
 	}
+}
+
+// Acknowledging one packet costs the same whatever the ledger's size: ACK
+// processing visits the newly acknowledged packets, not every entry.
+func BenchmarkAcknowledgeOneOfMany(b *testing.B) {
+	for _, n := range []int{1000, 30000} {
+		b.Run(itoaBench(n), func(b *testing.B) {
+			s := &numberSpace{sent: make(map[uint64]*sendItem, n)}
+			for pn := uint64(0); pn < uint64(n); pn++ {
+				s.sent[pn] = &sendItem{frame: wire.PingFrame{}}
+			}
+			complete := func(*sendItem) error { return nil }
+			b.ResetTimer()
+			for i := range b.N {
+				pn := uint64(i % n)
+				if _, ok := s.sent[pn]; !ok {
+					s.sent[pn] = &sendItem{frame: wire.PingFrame{}}
+				}
+				ack := wire.AckFrame{Ranges: []wire.AckRange{{Smallest: 0, Largest: uint64(n - 1)}}}
+				if err := acknowledgeItems(s, ack, []recovery.Packet{{Number: pn}}, complete); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+func itoaBench(n int) string {
+	if n >= 1000 {
+		return itoaBench(n/1000) + "k"
+	}
+	b := []byte{}
+	for n > 0 {
+		b = append([]byte{byte('0' + n%10)}, b...)
+		n /= 10
+	}
+	return string(b)
 }

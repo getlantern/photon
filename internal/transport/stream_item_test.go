@@ -38,7 +38,7 @@ func TestSplitSendItemsCompleteOnce(t *testing.T) {
 		}
 		ack := func(n uint64) {
 			t.Helper()
-			if err := acknowledgeItems(s, wire.AckFrame{Ranges: []wire.AckRange{{Smallest: n, Largest: n}}}, complete); err != nil {
+			if err := acknowledgeFrame(s, wire.AckFrame{Ranges: []wire.AckRange{{Smallest: n, Largest: n}}}, complete); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -71,7 +71,7 @@ func TestSplitSendItemsCompleteOnce(t *testing.T) {
 func TestSplitSendItemsCancelAndAdmission(t *testing.T) {
 	c, s, root := splitItemFixture(t)
 	// ACK one child, then cancel through another; later original ACK is inert.
-	if err := acknowledgeItems(s, wire.AckFrame{Ranges: []wire.AckRange{{Smallest: 1, Largest: 1}}}, func(*sendItem) error { t.Fatal("early completion"); return nil }); err != nil {
+	if err := acknowledgeFrame(s, wire.AckFrame{Ranges: []wire.AckRange{{Smallest: 1, Largest: 1}}}, func(*sendItem) error { t.Fatal("early completion"); return nil }); err != nil {
 		t.Fatal(err)
 	}
 	c.retirePathFrames(s, func(f wire.Frame) bool { _, ok := f.(wire.StreamFrame); return ok })
@@ -92,10 +92,10 @@ func TestSplitSendCompletionFailureAtomic(t *testing.T) {
 	_, s, root := splitItemFixture(t)
 	fail := errors.New("failed callback")
 	ack := wire.AckFrame{Ranges: []wire.AckRange{{Smallest: 0, Largest: 0}}}
-	if err := acknowledgeItems(s, ack, func(*sendItem) error { return fail }); !errors.Is(err, fail) || root.acked || root.delivery.ledger.completed {
+	if err := acknowledgeFrame(s, ack, func(*sendItem) error { return fail }); !errors.Is(err, fail) || root.acked || root.delivery.ledger.completed {
 		t.Fatal("failed completion committed")
 	}
-	if err := acknowledgeItems(s, ack, func(*sendItem) error { return nil }); err != nil || !root.acked {
+	if err := acknowledgeFrame(s, ack, func(*sendItem) error { return nil }); err != nil || !root.acked {
 		t.Fatal("retry failed", err)
 	}
 }
@@ -130,7 +130,7 @@ func TestSplitSendItemStreamCompletionBarrier(t *testing.T) {
 	}
 	ack := func(n uint64) {
 		t.Helper()
-		if err := acknowledgeItems(s, wire.AckFrame{Ranges: []wire.AckRange{{Smallest: n, Largest: n}}}, complete); err != nil {
+		if err := acknowledgeFrame(s, wire.AckFrame{Ranges: []wire.AckRange{{Smallest: n, Largest: n}}}, complete); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -230,7 +230,7 @@ func TestSplitPathEvacuationKeepsLateACK(t *testing.T) {
 			t.Fatal("evacuation queued parent")
 		}
 	}
-	if err := acknowledgeItems(s, wire.AckFrame{Ranges: []wire.AckRange{{Smallest: 0, Largest: 0}}}, func(item *sendItem) error { c.queuedBytes -= item.bytes; return nil }); err != nil {
+	if err := acknowledgeFrame(s, wire.AckFrame{Ranges: []wire.AckRange{{Smallest: 0, Largest: 0}}}, func(item *sendItem) error { c.queuedBytes -= item.bytes; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	for _, item := range dest.queue[before:] {

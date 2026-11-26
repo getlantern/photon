@@ -62,18 +62,18 @@ func TestRetainStreamItemPrefixAcrossPaths(t *testing.T) {
 		}
 		ack := wire.AckFrame{Ranges: []wire.AckRange{{Smallest: 10, Largest: 11}}}
 		if oldACK {
-			if err := acknowledgeItems(base, wire.AckFrame{Ranges: []wire.AckRange{{Smallest: 0, Largest: 0}}}, complete); err != nil {
+			if err := acknowledgeFrame(base, wire.AckFrame{Ranges: []wire.AckRange{{Smallest: 0, Largest: 0}}}, complete); err != nil {
 				t.Fatal(err)
 			}
 		} else {
-			if err := acknowledgeItems(second, ack, complete); err != nil {
+			if err := acknowledgeFrame(second, ack, complete); err != nil {
 				t.Fatal(err)
 			}
 		}
-		if err := acknowledgeItems(second, ack, complete); err != nil {
+		if err := acknowledgeFrame(second, ack, complete); err != nil {
 			t.Fatal(err)
 		}
-		if err := acknowledgeItems(base, wire.AckFrame{Ranges: []wire.AckRange{{Smallest: 0, Largest: 3}}}, complete); err != nil {
+		if err := acknowledgeFrame(base, wire.AckFrame{Ranges: []wire.AckRange{{Smallest: 0, Largest: 3}}}, complete); err != nil {
 			t.Fatal(err)
 		}
 		if calls != 1 || c.queuedBytes != 0 {
@@ -93,7 +93,7 @@ func TestRetainStreamItemPrefixReductionAndFailure(t *testing.T) {
 	s := &c.spaces[applicationSpace]
 	calls := 0
 	complete := func(item *sendItem) error { calls++; c.queuedBytes -= item.bytes; return nil }
-	if err := acknowledgeItems(s, wire.AckFrame{Ranges: []wire.AckRange{{Smallest: 1, Largest: 1}}}, complete); err != nil {
+	if err := acknowledgeFrame(s, wire.AckFrame{Ranges: []wire.AckRange{{Smallest: 1, Largest: 1}}}, complete); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.retainStreamItemPrefix(root, 1200, complete); err != nil {
@@ -179,7 +179,7 @@ func TestRetainStreamItemPrefixMaterializesAndSplits(t *testing.T) {
 	if len(s.queue) != 2 || len(s.queue[1].frame.(wire.StreamFrame).Data) != 360 {
 		t.Fatal("reduction after MTU split")
 	}
-	if err := acknowledgeItems(s, wire.AckFrame{Ranges: []wire.AckRange{{Smallest: 1, Largest: 1}}}, complete); err != nil {
+	if err := acknowledgeFrame(s, wire.AckFrame{Ranges: []wire.AckRange{{Smallest: 1, Largest: 1}}}, complete); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 1 || c.queuedBytes != 0 {
@@ -282,7 +282,7 @@ func FuzzRetainStreamItemPrefix(f *testing.F) {
 						covered[j] = true
 					}
 					finSeen = finSeen || frame.Fin
-					if err := acknowledgeItems(s, wire.AckFrame{Ranges: []wire.AckRange{{Smallest: pn, Largest: pn}}}, complete); err != nil {
+					if err := acknowledgeFrame(s, wire.AckFrame{Ranges: []wire.AckRange{{Smallest: pn, Largest: pn}}}, complete); err != nil {
 						t.Fatal(err)
 					}
 				}

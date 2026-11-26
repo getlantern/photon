@@ -235,15 +235,12 @@ func (p *pathCIDs) receiveReliableACK(frame wire.Frame, now time.Time, exponent 
 		ack = f.AckFrame
 	}
 	if state := p.paths[id]; state != nil && state.application != nil {
-		if err := acknowledgeItems(state.application.space, ack, complete); err != nil {
+		if err := acknowledgeItems(state.application.space, ack, events.Acked, complete); err != nil {
 			return events, err
 		}
 	}
-	for _, state := range p.paths {
-		if state.application != nil {
-			pruneAcknowledged(state.application.space)
-		}
-	}
+	// Other paths' entries for items completed here leave their ledgers as
+	// those paths' own ACKs, losses or reclaims reach them.
 	return events, nil
 }
 

@@ -94,7 +94,7 @@ func (c *Conn) rejectEarlyStreams() {
 		c.queuedBytes -= retireSendItem(item)
 	}
 	s.queue = nil
-	s.sent = make(map[uint64]*sendItem)
+	s.sent, s.untracked = make(map[uint64]*sendItem), nil
 	c.recovery.Discard(recovery.Application)
 	c.probeAllowance[applicationSpace] = false
 	c.pendingDatagrams = 0

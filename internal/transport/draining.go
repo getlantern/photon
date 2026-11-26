@@ -52,7 +52,7 @@ func (c *Conn) releaseTransportBuffers() {
 	c.applicationKeys = applicationKeys{}
 	for i := range c.spaces {
 		c.spaces[i].queue = nil
-		c.spaces[i].sent = nil
+		c.spaces[i].sent, c.spaces[i].untracked = nil, nil
 		c.spaces[i].received = nil
 		c.spaces[i].clearACK()
 		c.spaces[i].discarded = true
