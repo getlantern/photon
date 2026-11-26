@@ -95,7 +95,7 @@ type BBR struct {
 	lossRoundStart     bool
 	lossInRound        bool
 	lossEventsInRound  int
-	lossNotedAt        time.Time // the last loss detection's time
+	lossNoted          bool // OnLoss noted a loss event since the last OnACK
 	inRecovery         bool
 	recoveryStart      time.Time
 
@@ -266,7 +266,7 @@ func (b *BBR) OnLoss(e LossEvent) {
 		b.inRecovery, b.recoveryStart = true, e.Now
 	}
 	b.noteLoss()
-	b.lossNotedAt = e.Now
+	b.lossNoted = true
 	state := b.state
 	// Each packet sees the loss as it stood at its turn: the total before
 	// this batch, plus the packets up to and including it.
@@ -290,6 +290,9 @@ func (b *BBR) OnLoss(e LossEvent) {
 // data.
 func (b *BBR) OnACK(e ACKEvent) {
 	rs := e.Rate
+	// A loss this ACK's detection noted makes its marks the same loss event.
+	lossNoted := e.Lost && b.lossNoted
+	b.lossNoted = false
 	if rs.NewlyAcked == 0 && rs.NewCE == 0 {
 		return
 	}
@@ -299,7 +302,7 @@ func (b *BBR) OnACK(e ACKEvent) {
 		// Marks answered as loss: a loss event, unless this ACK's loss
 		// detection already noted one, and for a probe, too much in flight if
 		// marks and losses since this packet's send cross the threshold.
-		if !b.lossNotedAt.Equal(e.Now) {
+		if !lossNoted {
 			b.noteLoss()
 		}
 		if congested := rs.Lost + rs.CE; b.checkProbeLoss && rs.InFlight > 0 && isInflightTooHigh(congested, rs.InFlight) {

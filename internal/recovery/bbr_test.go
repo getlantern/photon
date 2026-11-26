@@ -299,9 +299,15 @@ func TestBBRCountsOneLossEventPerACK(t *testing.T) {
 	now := time.Unix(10, 0)
 	// Delivered past the ACK's packet, so the ACK stays in the loss round.
 	b.OnLoss(LossEvent{Lost: []Packet{{Bytes: 1200, InFlight: true}}, TotalLost: 1200, TotalDelivered: 50000, Now: now})
-	b.OnACK(ACKEvent{Acked: []Packet{{SentAt: now, Bytes: 1200, InFlight: true}}, Rate: RateSample{NewlyAcked: 1200, TotalDelivered: 51200, NewCE: 1200, CE: 1200}, Now: now})
+	b.OnACK(ACKEvent{Acked: []Packet{{SentAt: now, Bytes: 1200, InFlight: true}}, Rate: RateSample{NewlyAcked: 1200, TotalDelivered: 51200, NewCE: 1200, CE: 1200}, Lost: true, Now: now})
 	if b.lossEventsInRound != 1 {
 		t.Fatal("loss and marks on one ACK counted", b.lossEventsInRound, "loss events")
+	}
+	// Another ACK at the same instant, with no loss of its own, reports
+	// marks: a second event.
+	b.OnACK(ACKEvent{Acked: []Packet{{SentAt: now, Bytes: 1200, InFlight: true}}, Rate: RateSample{NewlyAcked: 1200, TotalDelivered: 52400, NewCE: 1200, CE: 2400}, Now: now})
+	if b.lossEventsInRound != 2 {
+		t.Fatal("marks on a second ACK at the same instant counted", b.lossEventsInRound, "loss events in all, want 2")
 	}
 	b = testBBR()
 	b.OnACK(ACKEvent{Rate: RateSample{NewCE: 1200}, Now: now})

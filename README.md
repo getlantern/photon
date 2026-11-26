@@ -205,8 +205,9 @@ per packet-number space and multipath path. IPv4/IPv6 reception has runtime
 coverage on macOS and Docker Linux arm64; see docs/LINUX_VALIDATION.md. These
 UDP runtimes also test ECN with up to ten ECT(0) packets per network path or
 three base PTO durations, validate peer feedback, and apply validated congestion
-signals to the congestion controller: NewReno halves its window, and BBR answers
-CE marks as it answers loss. Unsupported ancillary writes
+signals to the congestion controller: NewReno enters recovery and halves its
+window, and BBR counts CE marks with losses in its loss signals, without entering
+recovery. Unsupported ancillary writes
 fall back locally to Not-ECT with corrected recovery accounting. Migration
 preserves cumulative feedback and starts fresh path testing; failed ECN contexts
 remain disabled. Independent quic-go tests verify continued ECT(0) marking

@@ -52,7 +52,8 @@ type RateSample struct {
 	// CE is the bytes reported ECN-CE-marked since the newest acknowledged
 	// packet was sent, and NewCE those this ACK reported. An ACK reports
 	// how many packets were marked, not which, so marked bytes are the count
-	// times the average size of the packets it newly acknowledged.
+	// times the average size of the in-flight packets it newly acknowledged,
+	// or 1200 bytes each if it acknowledged none.
 	CE, NewCE uint64
 	// NewlyAcked is the in-flight bytes this ACK newly acknowledged.
 	NewlyAcked uint64

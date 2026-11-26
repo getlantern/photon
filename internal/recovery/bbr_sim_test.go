@@ -227,7 +227,7 @@ func (f *simFlow) step(t *testing.T, link *simLink, now time.Time) time.Time {
 			f.res.lost += len(events.Lost)
 			c.OnLoss(LossEvent{Lost: events.Lost, TotalLost: sent.LostBytes(), TotalDelivered: sent.DeliveredBytes(), TotalCE: sent.CEBytes(), Flight: sent.BytesInFlight, Now: a.at})
 		}
-		c.OnACK(ACKEvent{Acked: events.Acked, Rate: events.Rate, Flight: sent.BytesInFlight, SmoothedRTT: sent.SmoothedRTT(), Now: a.at})
+		c.OnACK(ACKEvent{Acked: events.Acked, Rate: events.Rate, Flight: sent.BytesInFlight, SmoothedRTT: sent.SmoothedRTT(), Lost: len(events.Lost) > 0, Now: a.at})
 		if c.ForcesAppLimited() {
 			sent.MarkAppLimited()
 		}
