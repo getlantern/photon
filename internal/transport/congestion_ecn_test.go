@@ -12,6 +12,7 @@ func TestEngineECNCongestion(t *testing.T) {
 	for _, v := range []wire.Version{wire.Version1, wire.Version2} {
 		for _, bad := range []bool{false, true} {
 			c, _ := testPair(t, v)
+			c.congestion = renoController(t)
 			at := time.Unix(100, 0)
 			if err := c.recovery.OnSent(recovery.Initial, recovery.Packet{Number: 0, SentAt: at, Bytes: 1200, InFlight: true, AckEliciting: true, ECN: recovery.ECT0}); err != nil {
 				t.Fatal(err)
@@ -42,6 +43,7 @@ func TestEngineECNCongestion(t *testing.T) {
 
 func TestMultipathECNCongestion(t *testing.T) {
 	p, a, b := pathRecoveryPair(t)
+	a.congestion, b.congestion = renoController(t), renoController(t)
 	at := time.Unix(100, 0)
 	if err := b.recordSent(recovery.Packet{Number: 0, SentAt: at, Bytes: 1200, InFlight: true, AckEliciting: true, ECN: recovery.ECT0}); err != nil {
 		t.Fatal(err)
