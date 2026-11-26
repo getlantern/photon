@@ -37,6 +37,9 @@ func (p *Pacer) DelayFor(now time.Time, c Controller, rtt time.Duration, size in
 }
 
 func (p *Pacer) delay(now time.Time, rate, burst float64, size int) time.Duration {
+	// The bucket must hold at least this packet, or it could never fill
+	// enough to send it.
+	burst = max(burst, float64(size))
 	if !p.initialized {
 		p.tokens = burst
 		p.last = now
