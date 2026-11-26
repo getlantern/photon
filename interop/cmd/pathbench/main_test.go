@@ -181,17 +181,17 @@ func TestPathbenchUnreachableFlowFails(t *testing.T) {
 	var stop func()
 	for range 5 {
 		port = freePort(t)
-		if c, e := net.ListenPacket("udp", net.JoinHostPort("127.0.0.1", itoa(port+3))); e == nil {
-			c.Close()
-		} else {
+		c, e := net.ListenPacket("udp", net.JoinHostPort("127.0.0.1", itoa(port+3)))
+		if e != nil {
 			continue
 		}
+		c.Close()
 		if stop, _, err = serve(context.Background(), "127.0.0.1", port, cert, &out); err == nil {
 			break
 		}
 	}
-	if err != nil {
-		t.Fatal(err)
+	if stop == nil {
+		t.Fatal("no server started", err)
 	}
 	t.Cleanup(stop)
 	res, err := runClient(context.Background(), clientConfig{server: "127.0.0.1", port: port + 1, mix: []string{"photon-bbr", "quic-go"}, duration: 3 * time.Second, from: time.Second, stagger: 200 * time.Millisecond, handshakeTimeout: 5 * time.Second, roots: roots})
@@ -200,5 +200,42 @@ func TestPathbenchUnreachableFlowFails(t *testing.T) {
 	}
 	if ok, failed := res.Flows[0], res.Flows[1]; ok.Error != "" || ok.Mbps <= 0 || failed.Error == "" {
 		t.Fatalf("flows %+v, want the first to run and the second to fail", res.Flows)
+	}
+}
+
+// A flow whose first data arrives after the measurement window opens didn't
+// compete for the whole window, so it is reported failed.
+func TestPathbenchLateFirstDataFails(t *testing.T) {
+	responseDelay = 1500 * time.Millisecond
+	t.Cleanup(func() { responseDelay = 0 })
+	cert, err := selfSigned()
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := x509.ParseCertificate(cert.Certificate[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(parsed)
+	var out lockedBuffer
+	var stop func()
+	var port int
+	for range 5 {
+		port = freePort(t)
+		if stop, _, err = serve(context.Background(), "127.0.0.1", port, cert, &out); err == nil {
+			break
+		}
+	}
+	if stop == nil {
+		t.Fatal("no server started", err)
+	}
+	t.Cleanup(stop)
+	res, err := runClient(context.Background(), clientConfig{server: "127.0.0.1", port: port, mix: []string{"photon-bbr"}, duration: 3 * time.Second, from: time.Second, handshakeTimeout: 5 * time.Second, roots: roots})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f := res.Flows[0]; f.Error == "" || f.Mbps <= 0 {
+		t.Fatalf("flow %+v, want data after the window opened, reported failed", f)
 	}
 }

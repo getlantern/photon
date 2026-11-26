@@ -233,10 +233,14 @@ func acceptUpstream(ctx context.Context, l *upstream.Listener, name string, logS
 	}
 }
 
+// responseDelay holds each response back, for tests of late flows.
+var responseDelay time.Duration
+
 // sendForever reads the client's request, then writes until the stream or
 // connection fails.
 func sendForever(s io.ReadWriteCloser) {
 	io.Copy(io.Discard, s)
+	time.Sleep(responseDelay)
 	chunk := make([]byte, 64<<10)
 	for {
 		if _, err := s.Write(chunk); err != nil {
@@ -400,7 +404,6 @@ func runClient(ctx context.Context, cfg clientConfig) (runResult, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	type flow struct {
 		received atomic.Uint64
-		reading  atomic.Bool // the download has started
 		err      atomic.Pointer[error]
 		conn     atomic.Pointer[upstream.Conn]
 		srtt     []time.Duration
@@ -455,7 +458,6 @@ func runClient(ctx context.Context, cfg clientConfig) (runResult, error) {
 				return
 			}
 			s.Close()
-			f.reading.Store(true)
 			buf := make([]byte, 64<<10)
 			for {
 				n, err := s.Read(buf)
@@ -484,9 +486,10 @@ func runClient(ctx context.Context, cfg clientConfig) (runResult, error) {
 	}
 	t0 := time.Now()
 	base := make([]uint64, len(flows))
-	present := make([]bool, len(flows)) // downloading when the window opened
+	present := make([]bool, len(flows)) // receiving data when the window opened
 	for i, f := range flows {
-		base[i], present[i] = f.received.Load(), f.reading.Load()
+		base[i] = f.received.Load()
+		present[i] = base[i] > 0
 	}
 	for next := cfg.from + time.Second; next < cfg.duration; next += time.Second {
 		if !sleepUntil(start.Add(next)) {
@@ -519,7 +522,7 @@ func runClient(ctx context.Context, cfg clientConfig) (runResult, error) {
 		case errs[i] != nil:
 			samples[i].err = (*errs[i]).Error()
 		case !present[i]:
-			samples[i].err = "not downloading when the measurement window opened"
+			samples[i].err = "no data received before the measurement window opened"
 		}
 	}
 	res := summarize(cfg.server, window, samples)
