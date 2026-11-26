@@ -242,8 +242,9 @@ func (b *BBR) OnPersistentCongestion() {
 	b.inflight = inflight
 	if noted {
 		// The loss that led here is the fresh model's first loss event,
-		// and this ACK's, so its marks aren't a second.
-		b.noteLoss()
+		// and this ACK's, so its marks aren't a second. Recorded directly:
+		// noteLoss would also save the initial window to restore.
+		b.lossInRound, b.lossEventsInRound, b.lossRoundDelivered = true, 1, b.delivered
 		b.lossNoted = true
 	}
 	b.cwnd = b.minPipeCwnd()

@@ -345,6 +345,10 @@ func TestBBRPersistentCongestionResetsModel(t *testing.T) {
 	if b.cwnd > 100000 {
 		t.Fatal("pre-collapse window restored:", b.cwnd)
 	}
+	// It grows from the minimum window, not back to the initial one.
+	if b.cwnd >= b.initialWindow {
+		t.Fatal("window", b.cwnd, "restored to the initial", b.initialWindow, "after persistent congestion")
+	}
 }
 
 // The max_bw filter remembers the current and previous ProbeBW cycles: a

@@ -194,3 +194,64 @@ func TestECNNewPathIgnoresOldPathECT(t *testing.T) {
 		t.Fatal("old-path ECT established the new path's capability")
 	}
 }
+
+// A probe acknowledged with no ECT or CE share of the feedback, as after a
+// path change where the old path's packets take both, isn't remarked: the
+// path doesn't fail on it.
+func TestECNPathAmbiguousProbeNotRemarked(t *testing.T) {
+	p := NewECNPath()
+	for n := uint64(0); n < 10; n++ {
+		p.Sent(Application, n)
+	}
+	p.ACK(Application, ack(0, 0), ECNFeedbackResult{Validated: true})
+	for n := uint64(1); n < 10; n++ {
+		p.Lost(Application, n)
+	}
+	if p.State() == ECNFailed {
+		t.Fatal("an ambiguous probe failed the path as remarked")
+	}
+}
+
+// Evidence for packets lost and never acknowledged doesn't fill the ledger
+// and end marking: at capacity, untracked packets' evidence is reclaimed.
+func TestECNLostEvidenceReclaimed(t *testing.T) {
+	r, _ := NewSent(16)
+	r.EnableECN()
+	at := time.Unix(100, 0)
+	send := func(pn uint64) {
+		t.Helper()
+		if err := r.OnSent(Application, Packet{Number: pn, SentAt: at, Bytes: 1200, AckEliciting: true, InFlight: true, ECN: r.ECNMarkingAt(Application, at)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	send(0)
+	frame := ack(0, 0)
+	frame.ECN = &[3]uint64{1, 0, 0}
+	if _, err := r.OnACK(Application, frame, at.Add(time.Millisecond), 0, 0, true); err != nil || r.ECNState() != ECNCapable {
+		t.Fatal("path not validated", err)
+	}
+	// Rounds of four packets, the last acknowledged: the first is lost.
+	ect := uint64(1)
+	for round := uint64(0); round < 20; round++ {
+		base := 1 + 4*round
+		for pn := base; pn < base+4; pn++ {
+			if r.ECNMarkingAt(Application, at) != ECT0 {
+				t.Fatalf("round %d: marking stopped with lost evidence filling the ledger", round)
+			}
+			send(pn)
+		}
+		ect++
+		frame := ack(base+3, base+3)
+		frame.ECN = &[3]uint64{ect, 0, 0}
+		if _, err := r.OnACK(Application, frame, at.Add(time.Millisecond), 0, 0, true); err != nil {
+			t.Fatal(err)
+		}
+		// The two after the lost one are acknowledged too.
+		ect += 2
+		frame = ack(base+1, base+3)
+		frame.ECN = &[3]uint64{ect, 0, 0}
+		if _, err := r.OnACK(Application, frame, at.Add(2*time.Millisecond), 0, 0, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

@@ -88,7 +88,8 @@ func (p *ECNPath) ACK(space Space, frame wire.AckFrame, feedback ECNFeedbackResu
 			probe.acked = true
 			if feedback.Validated {
 				acknowledged = true
-				probe.ce = feedback.ECT == 0
+				// Only CE this path's share reports marks it remarked.
+				probe.ce = feedback.ECT == 0 && feedback.CE > 0
 			}
 		}
 	}
