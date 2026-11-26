@@ -5,7 +5,10 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/json"
+	"io"
 	"net"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -237,5 +240,37 @@ func TestPathbenchLateFirstDataFails(t *testing.T) {
 	}
 	if f := res.Flows[0]; f.Error == "" || f.Mbps <= 0 {
 		t.Fatalf("flow %+v, want data after the window opened, reported failed", f)
+	}
+}
+
+// A second server started on a running one's ports fails without replacing
+// the certificate the running server's clients use.
+func TestServerKeepsRunningServersCert(t *testing.T) {
+	cert, err := selfSigned()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var port int
+	var stop func()
+	for range 5 {
+		port = freePort(t)
+		if stop, _, err = serve(context.Background(), "127.0.0.1", port, cert, io.Discard); err == nil {
+			break
+		}
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(stop)
+	certFile := filepath.Join(t.TempDir(), "cert.pem")
+	want := []byte("running server's certificate")
+	if err := os.WriteFile(certFile, want, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := serverMain([]string{"-port", strconv.Itoa(port), "-cert-out", certFile}); err == nil {
+		t.Fatal("second server started on busy ports")
+	}
+	if got, err := os.ReadFile(certFile); err != nil || !bytes.Equal(got, want) {
+		t.Fatalf("certificate file replaced: %q, %v", got, err)
 	}
 }
