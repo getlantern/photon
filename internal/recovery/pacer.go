@@ -5,9 +5,11 @@ import (
 	"time"
 )
 
-// Pacer implements a bounded token bucket at 1.25*cwnd/smoothed_rtt. Bursts
-// are bounded to ten datagrams (and never more than cwnd). A packet larger
-// than the bucket goes once the bucket is full, leaving it in debt. ACK-only
+// Pacer implements a bounded token bucket, at 1.25*cwnd/smoothed_rtt with a
+// bucket of min(cwnd, ten datagrams), or at a controller's own rate with a
+// bucket of its send quantum (DelayFor). A packet larger than the bucket goes
+// once the bucket is full, leaving it in debt, so such a packet is the one
+// burst that can exceed the bucket. ACK-only
 // packets bypass it; probes can bypass readiness but must still debit their
 // bytes. Callers serialize access and commit Sent only after packet handoff.
 type Pacer struct {
@@ -51,7 +53,7 @@ func (p *Pacer) delay(now time.Time, rate, burst float64, size int) time.Duratio
 	}
 	// A packet larger than the bucket needs only a full bucket: the bucket
 	// can never hold more, and its debt is repaid at the rate.
-	need := min(float64(size), burst)
+	need := min(float64(size), max(burst, 1))
 	if p.tokens >= need {
 		return 0
 	}
