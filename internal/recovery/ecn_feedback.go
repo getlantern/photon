@@ -23,6 +23,9 @@ type ECNFeedbackResult struct {
 	// CE is newly reported congestion after successful feedback checks, and
 	// ECT the packets newly reported still ECT(0) or ECT(1).
 	CE, ECT uint64
+	// Consumed is true when this ACK's counts became the new baseline, so
+	// every packet they report is accounted for in CE and ECT.
+	Consumed bool
 }
 
 // Check runs only after ACK-of-unsent/range validation. sent is the cumulative
@@ -65,5 +68,5 @@ func (e *ECNFeedback) Check(largest uint64, counts *[3]uint64, sent, newly [2]ui
 		return fail()
 	}
 	e.counts = *counts
-	return ECNFeedbackResult{Validated: newly[0] != 0 || newly[1] != 0, CE: delta[2], ECT: delta[0] + delta[1]}
+	return ECNFeedbackResult{Validated: newly[0] != 0 || newly[1] != 0, CE: delta[2], ECT: delta[0] + delta[1], Consumed: true}
 }
