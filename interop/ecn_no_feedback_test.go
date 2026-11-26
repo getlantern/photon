@@ -99,7 +99,7 @@ func TestECNSenderStopsWithoutPeerFeedback(t *testing.T) {
 					defer transport.Close()
 					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 					defer cancel()
-					config := &quic.Config{Versions: []quic.Version{v}, EnableDatagrams: true}
+					config := &quic.Config{Versions: []quic.Version{v}, EnableDatagrams: true, CongestionControl: quic.CongestionControlNewReno}
 					peerConfig := &upstream.Config{Versions: []upstream.Version{upstream.Version(v)}, EnableDatagrams: true}
 					var c *quic.Conn
 					var peer *upstream.Conn

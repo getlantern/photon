@@ -6,14 +6,32 @@ import "github.com/getlantern/photon/internal/recovery"
 type CongestionControl uint8
 
 const (
-	// CongestionControlNewReno is RFC 9002's NewReno, the default. It
-	// treats each packet loss as congestion and halves its window.
-	CongestionControlNewReno CongestionControl = CongestionControl(recovery.NewRenoAlgorithm)
-	// CongestionControlBBR is BBRv3, as in draft-ietf-ccwg-bbr-07: it
-	// models the path's bottleneck bandwidth and minimum RTT and paces at
-	// its bandwidth estimate, so random loss affects it far less than
-	// NewReno. Experimental: the draft is not yet final, and BBR's
-	// coexistence with loss-based flows on a shared bottleneck is still
-	// studied.
-	CongestionControlBBR CongestionControl = CongestionControl(recovery.BBRAlgorithm)
+	// CongestionControlBBR is BBRv3, as in draft-ietf-ccwg-bbr-07, and the
+	// default. It models the path's bottleneck bandwidth and minimum RTT and
+	// paces at its bandwidth estimate, so random loss affects it far less
+	// than a loss-based controller. The draft specifies no response to
+	// ECN-CE, so a BBR connection doesn't mark its packets ECN-capable.
+	CongestionControlBBR CongestionControl = iota
+	// CongestionControlNewReno is RFC 9002's NewReno. It treats each packet
+	// loss as congestion and halves its window, and it marks packets
+	// ECN-capable where the socket supports it.
+	CongestionControlNewReno
 )
+
+// algorithm returns the internal controller c selects, or false if c is
+// unknown.
+func (c CongestionControl) algorithm() (recovery.Algorithm, bool) {
+	switch c {
+	case CongestionControlBBR:
+		return recovery.BBRAlgorithm, true
+	case CongestionControlNewReno:
+		return recovery.NewRenoAlgorithm, true
+	}
+	return 0, false
+}
+
+// congestionAlgorithm is the internal controller of a validated config.
+func (cfg *Config) congestionAlgorithm() recovery.Algorithm {
+	a, _ := cfg.CongestionControl.algorithm()
+	return a
+}

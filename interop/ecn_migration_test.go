@@ -34,7 +34,7 @@ func TestECNSenderRevalidatesAfterMigrationUpstream(t *testing.T) {
 				}
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer cancel()
-				c, err := quic.DialAddr(ctx, listener.Addr().String(), ct, &quic.Config{Versions: []quic.Version{v}, EnableDatagrams: true, LocalAddr: local})
+				c, err := quic.DialAddr(ctx, listener.Addr().String(), ct, &quic.Config{Versions: []quic.Version{v}, EnableDatagrams: true, CongestionControl: quic.CongestionControlNewReno, LocalAddr: local})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -243,7 +243,7 @@ func TestECNSenderRetestsMigratedPathThatDropsECT(t *testing.T) {
 				}
 				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 				defer cancel()
-				c, err := quic.DialAddr(ctx, relay.front.LocalAddr().String(), ct, &quic.Config{Versions: []quic.Version{v}, EnableDatagrams: true, LocalAddr: local})
+				c, err := quic.DialAddr(ctx, relay.front.LocalAddr().String(), ct, &quic.Config{Versions: []quic.Version{v}, EnableDatagrams: true, CongestionControl: quic.CongestionControlNewReno, LocalAddr: local})
 				if err != nil {
 					t.Fatal(err)
 				}
