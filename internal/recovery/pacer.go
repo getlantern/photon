@@ -6,13 +6,16 @@ import (
 )
 
 // Pacer implements a bounded token bucket at 1.25*cwnd/smoothed_rtt. Bursts
-// are bounded to ten datagrams (and never more than cwnd). ACK-only packets
-// bypass it; probes can bypass readiness but must still debit their bytes.
-// Callers serialize access and commit Sent only after packet handoff.
+// are bounded to ten datagrams (and never more than cwnd), but always hold
+// the largest packet the pacer has been asked to send, so that packet can
+// go. ACK-only packets bypass it; probes can bypass readiness but must
+// still debit their bytes. Callers serialize access and commit Sent only
+// after packet handoff.
 type Pacer struct {
 	last        time.Time
 	tokens      float64
 	initialized bool
+	largest     float64 // the largest packet asked about
 }
 
 func (p *Pacer) Delay(now time.Time, window uint64, rtt time.Duration, size int) time.Duration {
@@ -24,7 +27,8 @@ func (p *Pacer) Delay(now time.Time, window uint64, rtt time.Duration, size int)
 
 // DelayFor paces at the controller's own rate when it sets one, with bursts
 // of its send quantum: 1 ms at that rate, between two minimum-size packets
-// and 64 KB, which is never more than draft-ietf-ccwg-bbr's quantum. Otherwise it paces from the
+// and 64 KB, which is never more than draft-ietf-ccwg-bbr's quantum, or the
+// largest packet asked about if that is more. Otherwise it paces from the
 // controller's window, as Delay does.
 func (p *Pacer) DelayFor(now time.Time, c Controller, rtt time.Duration, size int) time.Duration {
 	bps := c.PacingRate()
@@ -37,9 +41,12 @@ func (p *Pacer) DelayFor(now time.Time, c Controller, rtt time.Duration, size in
 }
 
 func (p *Pacer) delay(now time.Time, rate, burst float64, size int) time.Duration {
-	// The bucket must hold at least this packet, or it could never fill
-	// enough to send it.
-	burst = max(burst, float64(size))
+	// The bucket must hold the largest packet, or it could never fill
+	// enough to send it. The cap uses the largest packet asked about, not
+	// this call's, so a check for a smaller packet between a large packet's
+	// checks doesn't trim the tokens saved for it.
+	p.largest = max(p.largest, float64(size))
+	burst = max(burst, p.largest)
 	if !p.initialized {
 		p.tokens = burst
 		p.last = now

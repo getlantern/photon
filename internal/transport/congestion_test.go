@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -98,7 +99,7 @@ func TestPersistentCongestionRefreshesPathRTT(t *testing.T) {
 	ledger, _ := recovery.NewSent(20)
 	ledger.RTT.Update(10*time.Millisecond, 0, 0, true)
 	client.recovery = ledger
-	client.congestion = renoController(t)
+	useNewReno(t, client)
 	for i := 0; i < 4; i++ {
 		if err := ledger.OnSent(recovery.Application, recovery.Packet{Number: uint64(i), SentAt: now.Add(time.Duration(i) * time.Second), Bytes: 1200, InFlight: true, AckEliciting: true}); err != nil {
 			t.Fatal(err)
@@ -429,20 +430,25 @@ func TestCongestionControlSelectsController(t *testing.T) {
 	if _, ok := client.congestion.(*recovery.BBR); !ok {
 		t.Fatalf("default controller %T, want BBR", client.congestion)
 	}
-	client.config.CongestionControl = recovery.NewRenoAlgorithm
-	p, err := adoptPathZero(client, 3, 3, 4)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := p.issue(1); err != nil {
-		t.Fatal(err)
-	}
-	app, err := p.application(1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := app.congestion.(*recovery.NewReno); !ok {
-		t.Fatalf("multipath path controller %T, want NewReno", app.congestion)
+	for _, c := range []struct {
+		algorithm recovery.Algorithm
+		want      string
+	}{{0, "*recovery.BBR"}, {recovery.NewRenoAlgorithm, "*recovery.NewReno"}} {
+		client.config.CongestionControl = c.algorithm
+		p, err := adoptPathZero(client, 3, 3, 4)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := p.issue(1); err != nil {
+			t.Fatal(err)
+		}
+		app, err := p.application(1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := fmt.Sprintf("%T", app.congestion); got != c.want {
+			t.Fatalf("multipath path controller %s with algorithm %d, want %s", got, c.algorithm, c.want)
+		}
 	}
 }
 
@@ -507,4 +513,27 @@ func renoController(t testing.TB) recovery.Controller {
 		t.Fatal(err)
 	}
 	return c
+}
+
+// useNewReno switches c to NewReno as if configured with it: its config
+// (which also decides ECN marking), its base path's controller, and its
+// multipath paths, existing and future.
+func useNewReno(t testing.TB, c *Conn) {
+	t.Helper()
+	c.config.CongestionControl = recovery.NewRenoAlgorithm
+	c.congestion = renoController(t)
+	if c.multipath != nil {
+		useNewRenoPaths(t, c.multipath)
+	}
+}
+
+// useNewRenoPaths switches p's paths, existing and future, to NewReno.
+func useNewRenoPaths(t testing.TB, p *pathCIDs) {
+	t.Helper()
+	p.congestionControl = recovery.NewRenoAlgorithm
+	for _, s := range p.paths {
+		if s.application != nil {
+			s.application.congestion = renoController(t)
+		}
+	}
 }

@@ -11,7 +11,7 @@ func TestMTUBlackholeRecoveryFeedback(t *testing.T) {
 	for _, version := range []wire.Version{wire.Version1, wire.Version2} {
 		c, _ := sendingPathPair(t, version)
 		a := c.multipath.paths[1].application
-		a.congestion = renoController(t)
+		useNewReno(t, c)
 		a.validation.state = PathValidated
 		if err := c.startPathMTUSearch(1, 1500); err != nil {
 			t.Fatal(err)

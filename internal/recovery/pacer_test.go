@@ -102,3 +102,22 @@ func TestPacerSendsPacketLargerThanBurst(t *testing.T) {
 		t.Fatal("3000-byte packet still blocked after its delay:", d)
 	}
 }
+
+// Tokens saved toward a large packet survive checks for smaller ones, as the
+// send loop makes between a large packet's checks.
+func TestPacerLargePacketSurvivesSmallChecks(t *testing.T) {
+	now := time.Unix(100, 0)
+	reno, _ := NewCongestion(1200)
+	c := rateController{NewReno: reno, rate: 36_000}
+	var p Pacer
+	p.DelayFor(now, c, time.Second, 1200)
+	p.Sent(2400)
+	for i := 0; i < 100; i++ {
+		now = now.Add(20 * time.Millisecond)
+		p.DelayFor(now, c, time.Second, 1200)
+		if p.DelayFor(now, c, time.Second, 3000) == 0 {
+			return
+		}
+	}
+	t.Fatal("3000-byte packet starved by checks for 1200-byte ones")
+}

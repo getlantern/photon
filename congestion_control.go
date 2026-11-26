@@ -1,6 +1,10 @@
 package quic
 
-import "github.com/getlantern/photon/internal/recovery"
+import (
+	"math"
+
+	"github.com/getlantern/photon/internal/recovery"
+)
 
 // CongestionControl selects a connection's congestion controller.
 type CongestionControl uint8
@@ -27,7 +31,7 @@ func (c CongestionControl) algorithm() (recovery.Algorithm, bool) {
 	case CongestionControlNewReno:
 		return recovery.NewRenoAlgorithm, true
 	}
-	return 0, false
+	return recovery.Algorithm(math.MaxUint8), false
 }
 
 // congestionAlgorithm is the internal controller of a config that

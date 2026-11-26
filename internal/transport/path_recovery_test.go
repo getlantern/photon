@@ -36,7 +36,7 @@ func sendPathPacket(t *testing.T, a *pathApplication, now time.Time) {
 func TestPathPacketNumberIsolation(t *testing.T) {
 	p, a, b := pathRecoveryPair(t)
 	// NewReno cuts the window of the path whose packets were lost.
-	a.congestion, b.congestion = renoController(t), renoController(t)
+	useNewRenoPaths(t, p)
 	now := time.Unix(100, 0)
 	for _, app := range []*pathApplication{a, b} {
 		for i := 0; i < 8; i++ {
