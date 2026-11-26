@@ -30,8 +30,12 @@ func (c CongestionControl) algorithm() (recovery.Algorithm, bool) {
 	return 0, false
 }
 
-// congestionAlgorithm is the internal controller of a validated config.
+// congestionAlgorithm is the internal controller of a config that
+// prepareConfig validated.
 func (cfg *Config) congestionAlgorithm() recovery.Algorithm {
-	a, _ := cfg.CongestionControl.algorithm()
+	a, ok := cfg.CongestionControl.algorithm()
+	if !ok {
+		panic("quic: unvalidated congestion control")
+	}
 	return a
 }

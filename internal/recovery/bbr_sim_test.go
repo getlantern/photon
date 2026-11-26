@@ -81,6 +81,11 @@ type simFlow struct {
 	start, stop time.Time
 	extraDelay  time.Duration // added to the link's delay in each direction
 	observe     func(time.Time)
+	// snapshotAt, if set, is when to record the flow's counts in snapshot,
+	// before any event at or after it.
+	snapshotAt time.Time
+	snapshot   simResult
+	snapped    bool
 
 	sent     *Sent
 	pacer    Pacer
@@ -118,6 +123,13 @@ func simulateFlows(t *testing.T, link *simLink, d time.Duration, flows ...*simFl
 	// first when several send at the same instant.
 	for tick := 0; now.Before(end); tick++ {
 		next := end
+		for _, f := range flows {
+			if !f.snapped && !f.snapshotAt.IsZero() && !now.Before(f.snapshotAt) {
+				f.snapped = true
+				f.snapshot = f.res
+				f.snapshot.delivered = f.sent.rate.delivered
+			}
+		}
 		for k := range flows {
 			f := flows[(tick+k)%len(flows)]
 			if now.Before(f.start) {
@@ -202,7 +214,7 @@ func (f *simFlow) step(t *testing.T, link *simLink, now time.Time) time.Time {
 	if lt, _, ok := sent.LossTime(); ok && (next.IsZero() || lt.Before(next)) {
 		next = lt
 	}
-	if pto := f.ptoAt(); !pto.IsZero() && (next.IsZero() || pto.Before(next)) {
+	if pto := f.ptoAt(); !pto.IsZero() && (f.stop.IsZero() || now.Before(f.stop)) && (next.IsZero() || pto.Before(next)) {
 		next = pto
 	}
 	if next.IsZero() {
