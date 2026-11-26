@@ -99,8 +99,12 @@ func NewController(a Algorithm, maxDatagram uint64) (Controller, error) {
 	if maxDatagram < 1200 || maxDatagram > 65527 {
 		return nil, errors.New("quic: invalid congestion datagram size")
 	}
-	if a == BBRAlgorithm {
+	switch a {
+	case BBRAlgorithm:
 		return NewBBR(maxDatagram), nil
+	case NewRenoAlgorithm:
+	default:
+		return nil, errors.New("quic: unknown congestion control algorithm")
 	}
 	c, err := NewCongestion(maxDatagram)
 	if err != nil {
