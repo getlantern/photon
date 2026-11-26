@@ -72,10 +72,15 @@ func TestACKMigrationPreservesFeedbackBaseline(t *testing.T) {
 
 func TestACKOldPathECNIsNotNewPathCongestion(t *testing.T) {
 	r := tracker(t)
+	r.EnableECN()
 	at := time.Unix(100, 0)
-	if err := r.OnSent(Application, Packet{Number: 0, ECN: ECT0, SentAt: at, Bytes: 1200, InFlight: true, AckEliciting: true}); err != nil {
-		t.Fatal(err)
+	send := func(pn uint64, sent time.Time) {
+		t.Helper()
+		if err := r.OnSent(Application, Packet{Number: pn, ECN: ECT0, SentAt: sent, Bytes: 1200, InFlight: true, AckEliciting: true}); err != nil {
+			t.Fatal(err)
+		}
 	}
+	send(0, at)
 	r.ResetForPathChange()
 	frame := ack(0, 0)
 	frame.ECN = &[3]uint64{0, 0, 1}
@@ -83,19 +88,31 @@ func TestACKOldPathECNIsNotNewPathCongestion(t *testing.T) {
 	if err != nil || ev.ECN.CE != 1 || ev.ECNCongestion {
 		t.Fatal("old path CE affected new congestion", ev, err)
 	}
-	if err := r.OnSent(Application, Packet{Number: 1, ECN: ECT0, SentAt: at.Add(2 * time.Millisecond), Bytes: 1200, InFlight: true, AckEliciting: true}); err != nil {
-		t.Fatal(err)
+	// The new path validates on its own ECT reports, beyond the one the old
+	// packet could account for, then its own mark starts a recovery period
+	// from its packet's send time.
+	send(1, at.Add(2*time.Millisecond))
+	send(2, at.Add(2*time.Millisecond))
+	frame = ack(1, 2)
+	frame.ECN = &[3]uint64{2, 0, 1}
+	if _, err := r.OnACK(Application, frame, at.Add(3*time.Millisecond), 0, 0, true); err != nil || r.ECNState() != ECNCapable {
+		t.Fatal("new path not validated", err)
 	}
-	frame = ack(1, 1)
-	frame.ECN = &[3]uint64{0, 0, 2}
-	ev, err = r.OnACK(Application, frame, at.Add(3*time.Millisecond), 0, 0, true)
-	if err != nil || !ev.ECNCongestion || ev.ECNSentAt != at.Add(2*time.Millisecond) {
+	send(3, at.Add(4*time.Millisecond))
+	frame = ack(3, 3)
+	frame.ECN = &[3]uint64{2, 0, 2}
+	ev, err = r.OnACK(Application, frame, at.Add(5*time.Millisecond), 0, 0, true)
+	if err != nil || !ev.ECNCongestion || ev.ECNSentAt != at.Add(4*time.Millisecond) {
 		t.Fatal("new path CE suppressed", ev, err)
 	}
 }
 
 func TestACKCEAfterTimestampEviction(t *testing.T) {
 	r, _ := NewSent(1)
+	r.EnableECN()
+	// The path has passed validation; this tests the send time surviving
+	// metadata eviction.
+	r.ecnPath.state = ECNCapable
 	at := time.Unix(100, 0)
 	if err := r.OnSent(Application, Packet{Number: 0, ECN: ECT0, SentAt: at}); err != nil {
 		t.Fatal(err)
@@ -108,5 +125,36 @@ func TestACKCEAfterTimestampEviction(t *testing.T) {
 	ev, err := r.OnACK(Application, frame, at.Add(2*time.Millisecond), 0, 0, true)
 	if err != nil || len(ev.Acked) != 0 || !ev.ECNCongestion || ev.ECNSentAt != at {
 		t.Fatal("marked timestamp was evicted", ev, err)
+	}
+}
+
+// After a path change, an old packet's CE reported alongside a new packet
+// doesn't start a recovery period on the new path, though the ACK's largest
+// packet is new.
+func TestACKOldPathCEWithNewLargestIsNotCongestion(t *testing.T) {
+	r := tracker(t)
+	r.EnableECN()
+	at := time.Unix(100, 0)
+	send := func(pn uint64) {
+		t.Helper()
+		if err := r.OnSent(Application, Packet{Number: pn, ECN: ECT0, SentAt: at, Bytes: 1200, InFlight: true, AckEliciting: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	send(0)
+	r.ResetForPathChange()
+	send(1)
+	send(2)
+	frame := ack(1, 2)
+	frame.ECN = &[3]uint64{2, 0, 0}
+	if _, err := r.OnACK(Application, frame, at.Add(time.Millisecond), 0, 0, true); err != nil || r.ECNState() != ECNCapable {
+		t.Fatal("new path not validated", err)
+	}
+	send(3)
+	frame = ack(0, 3)
+	frame.ECN = &[3]uint64{3, 0, 1}
+	ev, err := r.OnACK(Application, frame, at.Add(2*time.Millisecond), 0, 0, true)
+	if err != nil || ev.ECNCongestion {
+		t.Fatal("the old packet's CE started recovery on the new path", ev, err)
 	}
 }

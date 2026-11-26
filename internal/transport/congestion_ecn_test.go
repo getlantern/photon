@@ -13,25 +13,35 @@ func TestEngineECNCongestion(t *testing.T) {
 		for _, bad := range []bool{false, true} {
 			c, _ := testPair(t, v)
 			useNewReno(t, c)
+			c.recovery.EnableECN()
 			at := time.Unix(100, 0)
-			if err := c.recovery.OnSent(recovery.Initial, recovery.Packet{Number: 0, SentAt: at, Bytes: 1200, InFlight: true, AckEliciting: true, ECN: recovery.ECT0}); err != nil {
+			send := func(pn uint64, sent time.Time) {
+				t.Helper()
+				if err := c.recovery.OnSent(recovery.Initial, recovery.Packet{Number: pn, SentAt: sent, Bytes: 1200, InFlight: true, AckEliciting: true, ECN: recovery.ECT0}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// Feedback reporting the first packet still ECT validates the path.
+			send(0, at)
+			if err := c.handleAck(initialSpace, wire.AckFrame{Ranges: []wire.AckRange{{Smallest: 0, Largest: 0}}, ECN: &[3]uint64{1, 0, 0}}, at.Add(time.Millisecond)); err != nil {
 				t.Fatal(err)
 			}
-			frame := wire.AckFrame{Ranges: []wire.AckRange{{Smallest: 0, Largest: 0}}, ECN: &[3]uint64{0, 0, 1}}
+			send(1, at.Add(2*time.Millisecond))
+			frame := wire.AckFrame{Ranges: []wire.AckRange{{Smallest: 1, Largest: 1}}, ECN: &[3]uint64{1, 0, 1}}
 			if bad {
-				frame.ECN = &[3]uint64{0, 0, 2}
+				frame.ECN = &[3]uint64{1, 0, 2}
 			}
-			if err := c.handleAck(initialSpace, frame, at.Add(time.Millisecond)); err != nil {
+			if err := c.handleAck(initialSpace, frame, at.Add(3*time.Millisecond)); err != nil {
 				t.Fatal(err)
 			}
-			want := uint64(6000)
+			want := uint64(6600)
 			if bad {
-				want = 13200 // Valid packet ACK still grows the window despite invalid ECN.
+				want = 14400 // Valid packet ACKs still grow the window despite invalid ECN.
 			}
 			if got := c.congestion.Window(); got != want {
 				t.Fatalf("v=%v bad=%v window=%d want=%d", v, bad, got, want)
 			}
-			if err := c.handleAck(initialSpace, frame, at.Add(2*time.Millisecond)); err != nil {
+			if err := c.handleAck(initialSpace, frame, at.Add(4*time.Millisecond)); err != nil {
 				t.Fatal(err)
 			}
 			if c.congestion.Window() != want {
@@ -41,21 +51,51 @@ func TestEngineECNCongestion(t *testing.T) {
 	}
 }
 
+// CE marks before the path has passed ECN validation don't start a
+// recovery period: a path remarking every probe CE fails validation first.
+func TestEngineECNCongestionNeedsValidation(t *testing.T) {
+	c, _ := testPair(t, wire.Version1)
+	useNewReno(t, c)
+	c.recovery.EnableECN()
+	at := time.Unix(100, 0)
+	if err := c.recovery.OnSent(recovery.Initial, recovery.Packet{Number: 0, SentAt: at, Bytes: 1200, InFlight: true, AckEliciting: true, ECN: recovery.ECT0}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.handleAck(initialSpace, wire.AckFrame{Ranges: []wire.AckRange{{Smallest: 0, Largest: 0}}, ECN: &[3]uint64{0, 0, 1}}, at.Add(time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.congestion.Window(); got != 13200 {
+		t.Fatalf("window %d after CE on an unvalidated path, want 13200", got)
+	}
+}
+
 func TestMultipathECNCongestion(t *testing.T) {
 	p, a, b := pathRecoveryPair(t)
 	useNewRenoPaths(t, p)
+	b.sent.EnableECN()
 	at := time.Unix(100, 0)
-	if err := b.recordSent(recovery.Packet{Number: 0, SentAt: at, Bytes: 1200, InFlight: true, AckEliciting: true, ECN: recovery.ECT0}); err != nil {
+	send := func(pn uint64, sent time.Time) {
+		t.Helper()
+		if err := b.recordSent(recovery.Packet{Number: pn, SentAt: sent, Bytes: 1200, InFlight: true, AckEliciting: true, ECN: recovery.ECT0}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ackFrame := func(pn uint64, counts [3]uint64) wire.PathAckFrame {
+		return wire.PathAckFrame{PathID: 1, AckFrame: wire.AckFrame{Ranges: []wire.AckRange{{Smallest: pn, Largest: pn}}, ECN: &counts}}
+	}
+	send(0, at)
+	if _, err := p.receiveACK(ackFrame(0, [3]uint64{1, 0, 0}), at.Add(time.Millisecond), 3, 25*time.Millisecond, true); err != nil {
 		t.Fatal(err)
 	}
-	frame := wire.PathAckFrame{PathID: 1, AckFrame: wire.AckFrame{Ranges: []wire.AckRange{{Smallest: 0, Largest: 0}}, ECN: &[3]uint64{0, 0, 1}}}
-	if _, err := p.receiveACK(frame, at.Add(time.Millisecond), 3, 25*time.Millisecond, true); err != nil {
+	send(1, at.Add(2*time.Millisecond))
+	frame := ackFrame(1, [3]uint64{1, 0, 1})
+	if _, err := p.receiveACK(frame, at.Add(3*time.Millisecond), 3, 25*time.Millisecond, true); err != nil {
 		t.Fatal(err)
 	}
 	if a.congestion.Window() != 12000 || b.congestion.Window() != 6000 {
 		t.Fatal("CE affected wrong path", a.congestion.Window(), b.congestion.Window())
 	}
-	if _, err := p.receiveACK(frame, at.Add(2*time.Millisecond), 3, 25*time.Millisecond, true); err != nil {
+	if _, err := p.receiveACK(frame, at.Add(4*time.Millisecond), 3, 25*time.Millisecond, true); err != nil {
 		t.Fatal(err)
 	}
 	if b.congestion.Window() != 6000 {
