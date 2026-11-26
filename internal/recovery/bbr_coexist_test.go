@@ -265,7 +265,8 @@ func TestECNFlowShareAgainstNonECN(t *testing.T) {
 			// ECN must have been on and answered: marks applied, the path
 			// still validated at the end, and the other flow dropped.
 			if marked == 0 || ecnFlow.sent.ECNState() != ECNCapable || dropped == 0 || total == 0 {
-				t.Errorf("%s, ECN flow first %t: %d marks on the ECN flow, its ECN state %d, %d drops of the other, %.0f bytes delivered; want marks on a validated path, drops and delivery", c.name, ecnFirst, marked, ecnFlow.sent.ECNState(), dropped, total)
+				state := map[ECNPathState]string{ECNDisabled: "disabled", ECNTesting: "testing", ECNUnknown: "unknown", ECNCapable: "capable", ECNFailed: "failed"}[ecnFlow.sent.ECNState()]
+				t.Errorf("%s, ECN flow first %t: %d marks on the ECN flow, its ECN path %s, %d drops of the other, %.0f bytes delivered; want marks on a capable path, drops and delivery", c.name, ecnFirst, marked, state, dropped, total)
 				continue
 			}
 			share := got / total
@@ -285,6 +286,6 @@ func TestECNFlowShareAgainstNonECN(t *testing.T) {
 		}
 	}
 	if bbr, reno := means["BBR"], means["NewReno"]; len(means) == 2 && math.Abs(bbr-reno) > 0.07 {
-		t.Errorf("BBR's ECN flow averages %.0f%%, NewReno's %.0f%%: want within 7 points of the control", 100*bbr, 100*reno)
+		t.Errorf("BBR's ECN flow averages %.1f%%, NewReno's %.1f%%: %.1f points apart, want at most 7", 100*bbr, 100*reno, 100*math.Abs(bbr-reno))
 	}
 }
