@@ -22,6 +22,30 @@ type simLink struct {
 	rng       *rand.Rand
 	busyUntil time.Time
 	policer   *simPolicer
+	red       *simRED
+	// queued and admitted total the queueing delay of the packets the
+	// queue admitted.
+	queued   time.Duration
+	admitted int
+}
+
+// simRED is a RED-style AQM on the queue's delay: below min it leaves
+// packets alone; from min to max it acts on each with a probability rising
+// linearly to maxP; above max, on all. Acting marks an ECN-capable packet
+// CE and drops any other, as RFC 3168 has it.
+type simRED struct {
+	min, max time.Duration
+	maxP     float64
+}
+
+func (r *simRED) acts(delay time.Duration, rng *rand.Rand) bool {
+	switch {
+	case delay < r.min:
+		return false
+	case delay >= r.max:
+		return true
+	}
+	return rng.Float64() < r.maxP*float64(delay-r.min)/float64(r.max-r.min)
 }
 
 // simPolicer is a token bucket: it admits a packet if it holds a token for
@@ -47,10 +71,12 @@ func (p *simPolicer) admit(now time.Time, size int) bool {
 	return true
 }
 
-// simACK is an acknowledgment that reaches the sender at at.
+// simACK is an acknowledgment that reaches the sender at at, for a packet
+// that was sent ECN-capable (ect) and marked CE on the way (ce).
 type simACK struct {
-	at time.Time
-	pn uint64
+	at      time.Time
+	pn      uint64
+	ect, ce bool
 }
 
 type ackHeap []simACK
@@ -72,6 +98,7 @@ type simResult struct {
 	sent      int    // packets sent
 	lost      int    // packets declared lost
 	dropped   int    // packets the link dropped
+	marked    int    // packets the link marked CE
 }
 
 // simFlow is one bulk sender on a shared link, driving a real Sent tracker,
@@ -82,6 +109,10 @@ type simFlow struct {
 	start, stop time.Time
 	extraDelay  time.Duration // added to the link's delay in each direction
 	observe     func(time.Time)
+	// ecn marks the flow's packets ECN-capable, as Sent's ECN state allows,
+	// and has its ACKs report the receiver's cumulative ECN counts.
+	ecn         bool
+	rxECT, rxCE uint64
 	// snapshotAt, if set, is when to record the flow's counts in snapshot,
 	// before any event at or after it.
 	snapshotAt time.Time
@@ -116,6 +147,9 @@ func simulateFlows(t *testing.T, link *simLink, d time.Duration, flows ...*simFl
 	end := simStart.Add(d)
 	for _, f := range flows {
 		f.sent, _ = NewSent(65536)
+		if f.ecn {
+			f.sent.EnableECN()
+		}
 		if f.start.IsZero() {
 			f.start = simStart
 		}
@@ -169,9 +203,22 @@ func (f *simFlow) step(t *testing.T, link *simLink, now time.Time) time.Time {
 	sent, c := f.sent, f.c
 	for f.acks.Len() > 0 && !f.acks[0].at.After(now) {
 		a := heap.Pop(&f.acks).(simACK)
-		events, err := sent.OnACK(Application, wire.AckFrame{Ranges: []wire.AckRange{{Smallest: a.pn, Largest: a.pn}}}, a.at, 0, 0, true)
+		frame := wire.AckFrame{Ranges: []wire.AckRange{{Smallest: a.pn, Largest: a.pn}}}
+		if f.ecn {
+			switch {
+			case a.ce:
+				f.rxCE++
+			case a.ect:
+				f.rxECT++
+			}
+			frame.ECN = &[3]uint64{f.rxECT, 0, f.rxCE}
+		}
+		events, err := sent.OnACK(Application, frame, a.at, 0, 0, true)
 		if err != nil {
 			t.Fatal(err)
+		}
+		if events.ECNCongestion {
+			c.OnECN(events.ECNSentAt, a.at)
 		}
 		if len(events.Acked) > 0 {
 			f.ptoCount = 0
@@ -248,7 +295,11 @@ func (f *simFlow) ptoAt() time.Time {
 
 func (f *simFlow) send(link *simLink, now time.Time) {
 	e := SentEvent{Bytes: simPacketSize, Flight: f.sent.BytesInFlight, AppLimited: f.sent.AppLimited(), Now: now}
-	if err := f.sent.OnSent(Application, Packet{Number: f.pn, SentAt: now, Bytes: simPacketSize, AckEliciting: true, InFlight: true}); err != nil {
+	marking := NotECT
+	if f.ecn {
+		marking = f.sent.ECNMarkingAt(Application, now)
+	}
+	if err := f.sent.OnSent(Application, Packet{Number: f.pn, SentAt: now, Bytes: simPacketSize, AckEliciting: true, InFlight: true, ECN: marking}); err != nil {
 		panic(err)
 	}
 	f.c.OnPacketSent(e)
@@ -257,8 +308,12 @@ func (f *simFlow) send(link *simLink, now time.Time) {
 	f.lastSend = now
 	// The flow's extra delay is after the bottleneck, so the shared queue
 	// sees packets in the order they are sent.
-	if at, ok := link.transmit(now, simPacketSize); ok {
-		heap.Push(&f.acks, simACK{at: at.Add(link.delay + 2*f.extraDelay), pn: f.pn})
+	ect := marking != NotECT
+	if at, ok, ce := link.transmit(now, simPacketSize, ect); ok {
+		heap.Push(&f.acks, simACK{at: at.Add(link.delay + 2*f.extraDelay), pn: f.pn, ect: ect, ce: ce})
+		if ce {
+			f.res.marked++
+		}
 	} else {
 		f.res.dropped++
 	}
@@ -267,22 +322,39 @@ func (f *simFlow) send(link *simLink, now time.Time) {
 
 // transmit queues a packet sent at now, returning when it reaches the
 // receiver, or false if it is dropped.
-func (l *simLink) transmit(now time.Time, size int) (time.Time, bool) {
+func (l *simLink) transmit(now time.Time, size int, ect bool) (at time.Time, ok, ce bool) {
 	if l.loss > 0 && l.rng.Float64() < l.loss {
-		return time.Time{}, false
+		return time.Time{}, false, false
 	}
 	if l.policer != nil && !l.policer.admit(now, size) {
-		return time.Time{}, false
+		return time.Time{}, false, false
 	}
 	departure := now
 	if l.busyUntil.After(now) {
 		departure = l.busyUntil
 	}
-	if departure.Sub(now) > l.queue {
-		return time.Time{}, false
+	delay := departure.Sub(now)
+	if delay > l.queue {
+		return time.Time{}, false, false
 	}
+	if l.red != nil && l.red.acts(delay, l.rng) {
+		if !ect {
+			return time.Time{}, false, false
+		}
+		ce = true
+	}
+	l.queued += delay
+	l.admitted++
 	l.busyUntil = departure.Add(time.Duration(float64(size) / l.rate(now) * float64(time.Second)))
-	return l.busyUntil.Add(l.delay), true
+	return l.busyUntil.Add(l.delay), true, ce
+}
+
+// meanQueueing is the mean queueing delay of the packets the link admitted.
+func (l *simLink) meanQueueing() time.Duration {
+	if l.admitted == 0 {
+		return 0
+	}
+	return l.queued / time.Duration(l.admitted)
 }
 
 func constantRate(bps float64) func(time.Time) float64 {

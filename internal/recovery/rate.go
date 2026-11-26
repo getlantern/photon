@@ -25,6 +25,8 @@ type DeliveryState struct {
 	InFlight uint64
 	// Lost is the path's lost in-flight bytes when the packet was sent.
 	Lost uint64
+	// CE is the path's ECN-CE-marked bytes when the packet was sent.
+	CE uint64
 }
 
 // RateSample is one acknowledgment's measurement of the delivery rate.
@@ -47,6 +49,11 @@ type RateSample struct {
 	// Lost is the in-flight bytes declared lost since the newest
 	// acknowledged packet was sent, this ACK's losses included.
 	Lost uint64
+	// CE is the bytes reported ECN-CE-marked since the newest acknowledged
+	// packet was sent, and NewCE those this ACK reported. An ACK reports
+	// how many packets were marked, not which, so marked bytes are the count
+	// times the average size of the packets it newly acknowledged.
+	CE, NewCE uint64
 	// NewlyAcked is the in-flight bytes this ACK newly acknowledged.
 	NewlyAcked uint64
 	// PriorDelivered is the path's delivered bytes when the newest
@@ -60,6 +67,7 @@ type RateSample struct {
 type deliveryRate struct {
 	delivered       uint64
 	lost            uint64
+	ce              uint64
 	deliveredAt     time.Time
 	firstSentAt     time.Time
 	appLimitedUntil uint64 // delivered count that ends the app-limited phase; 0 if none
@@ -78,6 +86,7 @@ func (d *deliveryRate) stamp(p *Packet, flight uint64) {
 		AppLimited:  d.appLimitedUntil != 0,
 		InFlight:    flight + uint64(p.Bytes),
 		Lost:        d.lost,
+		CE:          d.ce,
 	}
 }
 
@@ -87,6 +96,19 @@ type rateSampler struct {
 	have        bool
 	sendElapsed time.Duration
 	newlyAcked  uint64
+	newCE       uint64
+}
+
+// marked counts packets this ACK newly reported ECN-CE-marked, at the
+// average size of the packets it newly acknowledged (bytes in count
+// packets), or minimum-size packets if it acknowledged none.
+func (d *deliveryRate) marked(s *rateSampler, packets, bytes, count uint64) {
+	size := uint64(1200)
+	if count > 0 {
+		size = bytes / count
+	}
+	s.newCE += packets * size
+	d.ce += packets * size
 }
 
 // acked counts an in-flight packet as delivered and keeps the most recently
@@ -117,13 +139,14 @@ func (d *deliveryRate) sample(s *rateSampler, now time.Time, minRTT time.Duratio
 	if d.appLimitedUntil != 0 && d.delivered > d.appLimitedUntil {
 		d.appLimitedUntil = 0
 	}
-	rs := RateSample{TotalDelivered: d.delivered, NewlyAcked: s.newlyAcked}
+	rs := RateSample{TotalDelivered: d.delivered, NewlyAcked: s.newlyAcked, NewCE: s.newCE}
 	if !s.have {
 		return rs
 	}
 	p := s.newest.Delivery
 	rs.PriorDelivered = p.Delivered
 	rs.Lost = d.lost - p.Lost
+	rs.CE = d.ce - p.CE
 	rs.Delivered = d.delivered - p.Delivered
 	rs.Interval = max(s.sendElapsed, d.deliveredAt.Sub(p.DeliveredAt))
 	rs.AppLimited = p.AppLimited

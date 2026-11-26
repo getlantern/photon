@@ -225,6 +225,57 @@ func TestBBRProbeLossAppliesDownControls(t *testing.T) {
 	}
 }
 
+// An ACK reporting new CE marks is a loss event, noted with that ACK's
+// deliveries, without starting a recovery epoch.
+func TestBBRTreatsCEAsLossEvent(t *testing.T) {
+	b := testBBR()
+	b.OnACK(ACKEvent{Rate: RateSample{NewlyAcked: 1200, TotalDelivered: 50000, NewCE: 1200, CE: 1200}, Now: time.Unix(2, 0)})
+	if !b.lossInRound || b.lossEventsInRound != 1 || b.lossRoundDelivered != 50000 {
+		t.Fatal("CE not a loss event at delivered 50000:", b.lossInRound, b.lossEventsInRound, b.lossRoundDelivered)
+	}
+	if b.inRecovery {
+		t.Fatal("CE started recovery")
+	}
+}
+
+// Startup exits when CE marks, as losses would, exceed the loss threshold
+// over a round with enough loss events, though marks start no recovery.
+func TestBBRStartupExitsOnHighCE(t *testing.T) {
+	b := testBBR()
+	start := time.Unix(1, 0)
+	b.delivered = 100000
+	for i := range bbrStartupFullLossCnt + 1 {
+		prior := uint64(50000)
+		if i == bbrStartupFullLossCnt {
+			// The ACK that starts the next loss round.
+			prior = 100000 + uint64(i)*1200
+		}
+		total := 100000 + uint64(i+1)*1200
+		b.OnACK(ACKEvent{Acked: []Packet{{SentAt: start, Bytes: 1200, InFlight: true}},
+			Rate:   RateSample{NewlyAcked: 1200, PriorDelivered: prior, TotalDelivered: total, NewCE: 1200, CE: uint64(i+1) * 1200, InFlight: 120000, RTT: 50 * time.Millisecond},
+			Flight: 100000, Now: start.Add(time.Duration(i) * time.Millisecond)})
+	}
+	if !b.fullBwReached || b.state == bbrStartup {
+		t.Fatal("Startup didn't exit on high CE, state", b.state)
+	}
+}
+
+// CE marks over the loss threshold end a bandwidth probe, as losses do.
+func TestBBRProbeEndsOnHighCE(t *testing.T) {
+	b := testBBR()
+	b.fullBwReached, b.bw, b.minRTT, b.pacingRate = true, 1e6, 100*time.Millisecond, 1.25e6
+	b.startProbeBWUp(RateSample{})
+	b.checkProbeLoss = true
+	b.cwnd, b.inflightLongterm = 200000, 200000
+	b.OnACK(ACKEvent{Acked: []Packet{{SentAt: time.Unix(10, 0), Bytes: 1200, InFlight: true}},
+		Rate:   RateSample{NewlyAcked: 1200, TotalDelivered: 1200, NewCE: 3600, CE: 3600, InFlight: 120000, RTT: 100 * time.Millisecond},
+		Flight: 100000, Now: time.Unix(10, 0).Add(100 * time.Millisecond)})
+	// The same ACK's cycle update may move on from ProbeBW_DOWN.
+	if b.state == bbrProbeBWUp || b.inflightLongterm >= 200000 {
+		t.Fatal("probe didn't end on 3% CE: state", b.state, "inflight_longterm", b.inflightLongterm)
+	}
+}
+
 // Persistent congestion resets BBR as for a new path, from the minimum
 // window, and a later ACK doesn't restore the pre-collapse window.
 func TestBBRPersistentCongestionResetsModel(t *testing.T) {

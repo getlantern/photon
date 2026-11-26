@@ -132,3 +132,39 @@ func TestDeliveryRateCountsLoss(t *testing.T) {
 		t.Fatalf("sample %+v, want no loss since it was sent", rs)
 	}
 }
+
+// An ACK reporting CE marks counts them, at the average size of the packets
+// it newly acknowledged, as marked since the newest packet was sent and as
+// newly reported; a later packet's sample counts only later marks.
+func TestDeliveryRateCountsCE(t *testing.T) {
+	r, _ := NewSent(64)
+	r.EnableECN()
+	start := time.Unix(100, 0)
+	for i, size := range []int{1000, 1400} {
+		if err := r.OnSent(Application, Packet{Number: uint64(i), SentAt: start, Bytes: size, AckEliciting: true, InFlight: true, ECN: ECT0}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	frame := ack(0, 1)
+	frame.ECN = &[3]uint64{1, 0, 1}
+	events, err := r.OnACK(Application, frame, start.Add(50*time.Millisecond), 0, 0, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !events.ECNCongestion || events.Rate.NewCE != 1200 || events.Rate.CE != 1200 {
+		t.Fatalf("congestion %t, sample %+v, want 1200 marked bytes", events.ECNCongestion, events.Rate)
+	}
+	next := start.Add(60 * time.Millisecond)
+	if err := r.OnSent(Application, Packet{Number: 2, SentAt: next, Bytes: 1200, AckEliciting: true, InFlight: true, ECN: ECT0}); err != nil {
+		t.Fatal(err)
+	}
+	frame = ack(2, 2)
+	frame.ECN = &[3]uint64{2, 0, 1}
+	events, err = r.OnACK(Application, frame, next.Add(50*time.Millisecond), 0, 0, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if events.Rate.NewCE != 0 || events.Rate.CE != 0 {
+		t.Fatalf("sample %+v, want no marks since it was sent", events.Rate)
+	}
+}

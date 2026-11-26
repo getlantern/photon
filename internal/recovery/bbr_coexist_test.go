@@ -14,6 +14,7 @@ type coexistFlow struct {
 	newC       func() Controller
 	start      time.Duration // after the run starts
 	extraDelay time.Duration // one way, on top of the link's
+	ecn        bool          // marks its packets ECN-capable
 }
 
 func newBBRFlow(seed uint64) func() Controller {
@@ -37,7 +38,7 @@ func coexist(t *testing.T, link *simLink, d, measureFrom time.Duration, specs ..
 	flows := make([]*simFlow, len(specs))
 	from := simStart.Add(measureFrom)
 	for i, s := range specs {
-		flows[i] = &simFlow{c: s.newC(), start: simStart.Add(s.start), extraDelay: s.extraDelay, snapshotAt: from}
+		flows[i] = &simFlow{c: s.newC(), start: simStart.Add(s.start), extraDelay: s.extraDelay, ecn: s.ecn, snapshotAt: from}
 	}
 	simulateFlows(t, link, d, flows...)
 	window := (d - measureFrom).Seconds()
@@ -152,5 +153,62 @@ func TestBBRCoexistenceSurvey(t *testing.T) {
 		link.policer = &simPolicer{rate: 10e6 / 8, burst: 64 * 1024}
 		g, l := coexist(t, link, d, from, f)
 		t.Logf("policer 10 Mbit/s %s: %.1f Mbit/s loss %.2f%%", f.name, g[0]/1e6, 100*l[0])
+	}
+}
+
+// ceBlind is BBR as it was before it answered CE marks: its rate samples
+// report none.
+type ceBlind struct{ Controller }
+
+func (c ceBlind) OnACK(e ACKEvent) {
+	e.Rate.CE, e.Rate.NewCE = 0, 0
+	c.Controller.OnACK(e)
+}
+
+func newCEBlindBBRFlow(seed uint64) func() Controller {
+	return func() Controller { return ceBlind{newBBRFlow(seed)()} }
+}
+
+// redLink is a 100 Mbit/s, 50 ms path whose 2 BDP queue runs RED: it acts
+// on packets from 5 ms of queueing delay, with a probability rising to 10%
+// at 25 ms, marking ECN-capable ones and dropping others.
+func redLink() *simLink {
+	l := bufferedLink(100e6, 50*time.Millisecond, 2)
+	l.red = &simRED{min: 5 * time.Millisecond, max: 25 * time.Millisecond, maxP: 0.1}
+	return l
+}
+
+// Behind a RED queue that marks, BBR answers the marks: it keeps the queue
+// to under half the delay that BBR blind to them builds, loses nothing, and
+// still fills most of the link.
+func TestBBRAnswersCEMarks(t *testing.T) {
+	const d, from = 30 * time.Second, 10 * time.Second
+	link := redLink()
+	g, l := coexist(t, link, d, from, coexistFlow{newC: newBBRFlow(3), ecn: true})
+	blindLink := redLink()
+	blind, _ := coexist(t, blindLink, d, from, coexistFlow{newC: newCEBlindBBRFlow(3), ecn: true})
+	t.Logf("BBR %.1f Mbit/s, queueing %v, drops %.2f%%; blind to CE %.1f Mbit/s, queueing %v", g[0]/1e6, link.meanQueueing(), 100*l[0], blind[0]/1e6, blindLink.meanQueueing())
+	if link.meanQueueing() > blindLink.meanQueueing()/2 {
+		t.Fatalf("queueing %v answering CE, %v blind to it", link.meanQueueing(), blindLink.meanQueueing())
+	}
+	if l[0] > 0 || g[0] < 0.85*100e6 {
+		t.Fatalf("BBR %.1f Mbit/s with %.2f%% drops, want at least 85 Mbit/s with none", g[0]/1e6, 100*l[0])
+	}
+}
+
+// Behind a RED queue, BBR answers marks as it answers the drops RED makes
+// of packets that aren't ECN-capable: a NewReno flow keeps at least half
+// the share against BBR with ECN that it keeps when both flows' packets are
+// dropped. BBR blind to marks starves it.
+func TestBBRWithECNSharesAsWithDrops(t *testing.T) {
+	const d, from = 30 * time.Second, 10 * time.Second
+	run := func(bbr func() Controller, ecn bool) float64 {
+		g, _ := coexist(t, redLink(), d, from, coexistFlow{newC: bbr, ecn: ecn}, coexistFlow{newC: newRenoFlow, ecn: ecn, start: 2 * time.Second})
+		return g[1] / (g[0] + g[1])
+	}
+	marked, dropped, blind := run(newBBRFlow(3), true), run(newBBRFlow(3), false), run(newCEBlindBBRFlow(3), true)
+	t.Logf("NewReno's share against BBR: %.0f%% with ECN, %.0f%% with drops, %.0f%% against BBR blind to CE", 100*marked, 100*dropped, 100*blind)
+	if marked < dropped/2 {
+		t.Fatalf("NewReno's share %.0f%% with ECN, %.0f%% with drops", 100*marked, 100*dropped)
 	}
 }
