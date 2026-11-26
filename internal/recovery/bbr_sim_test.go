@@ -71,6 +71,7 @@ type simResult struct {
 	delivered uint64 // bytes acknowledged
 	sent      int    // packets sent
 	lost      int    // packets declared lost
+	dropped   int    // packets the link dropped
 }
 
 // simFlow is one bulk sender on a shared link, driving a real Sent tracker,
@@ -145,6 +146,11 @@ func simulateFlows(t *testing.T, link *simLink, d time.Duration, flows ...*simFl
 	}
 	for _, f := range flows {
 		f.res.delivered = f.sent.rate.delivered
+		// No event reached the snapshot time, so every processed event
+		// precedes it.
+		if !f.snapped && !f.snapshotAt.IsZero() && f.snapshotAt.Before(end) {
+			f.snapped, f.snapshot = true, f.res
+		}
 	}
 }
 
@@ -253,6 +259,8 @@ func (f *simFlow) send(link *simLink, now time.Time) {
 	// sees packets in the order they are sent.
 	if at, ok := link.transmit(now, simPacketSize); ok {
 		heap.Push(&f.acks, simACK{at: at.Add(link.delay + 2*f.extraDelay), pn: f.pn})
+	} else {
+		f.res.dropped++
 	}
 	f.pn++
 }

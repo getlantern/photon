@@ -31,7 +31,7 @@ func newRenoFlow() Controller {
 
 // coexist runs flows over link for d and returns each one's goodput, in
 // bits per second, over the window from measureFrom to the end, and the
-// fraction of its packets lost.
+// fraction of the packets it sent in that window that the link dropped.
 func coexist(t *testing.T, link *simLink, d, measureFrom time.Duration, specs ...coexistFlow) (goodput, loss []float64) {
 	t.Helper()
 	flows := make([]*simFlow, len(specs))
@@ -44,7 +44,7 @@ func coexist(t *testing.T, link *simLink, d, measureFrom time.Duration, specs ..
 	for _, f := range flows {
 		base := f.snapshot
 		goodput = append(goodput, float64(f.res.delivered-base.delivered)*8/window)
-		loss = append(loss, float64(f.res.lost-base.lost)/float64(max(f.res.sent-base.sent, 1)))
+		loss = append(loss, float64(f.res.dropped-base.dropped)/float64(max(f.res.sent-base.sent, 1)))
 	}
 	return goodput, loss
 }
@@ -76,7 +76,7 @@ func TestBBRFlowsShareFairly(t *testing.T) {
 	g, _ := coexist(t, bufferedLink(100e6, 50*time.Millisecond, 2), 40*time.Second, 20*time.Second,
 		coexistFlow{newC: newBBRFlow(3)}, coexistFlow{newC: newBBRFlow(7)})
 	t.Logf("BBR vs BBR: %s", shares(g))
-	if lo, hi := min(g[0], g[1]), max(g[0], g[1]); lo < 0.7*hi {
+	if lo, hi := min(g[0], g[1]), max(g[0], g[1]); lo <= 0 || lo < 0.7*hi {
 		t.Fatalf("BBR flows split %s, want within 30%% of each other", shares(g))
 	}
 }
@@ -89,7 +89,7 @@ func TestBBRLeavesNewRenoAShareInDeepBuffers(t *testing.T) {
 	g, _ := coexist(t, bufferedLink(100e6, 50*time.Millisecond, 2), 40*time.Second, 10*time.Second,
 		coexistFlow{newC: newBBRFlow(3)}, coexistFlow{newC: newRenoFlow, start: 2 * time.Second})
 	t.Logf("BBR vs NewReno: %s", shares(g))
-	if g[1] < 0.3*(g[0]+g[1]) {
+	if g[0] <= 0 || g[1] < 0.3*(g[0]+g[1]) {
 		t.Fatalf("NewReno got %s, want at least 30%%", shares(g))
 	}
 }
