@@ -26,7 +26,7 @@ func TestECNSenderContinuesAfterValidationUpstream(t *testing.T) {
 					trace := &ecnSenderTrace{datagrams: make(chan qlog.ECN, 64)}
 					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 					defer cancel()
-					config := &quic.Config{Versions: []quic.Version{v}, EnableDatagrams: true}
+					config := &quic.Config{Versions: []quic.Version{v}, EnableDatagrams: true, CongestionControl: quic.CongestionControlNewReno}
 					upstreamConfig := &upstream.Config{Versions: []upstream.Version{upstream.Version(v)}, EnableDatagrams: true, Tracer: func(context.Context, bool, upstream.ConnectionID) qlogwriter.Trace { return trace }}
 					var c *quic.Conn
 					var peer *upstream.Conn

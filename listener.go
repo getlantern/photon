@@ -1,8 +1,6 @@
 package quic
 
 import (
-	"github.com/getlantern/photon/internal/recovery"
-
 	"context"
 	"crypto/rand"
 	"crypto/tls"
@@ -125,7 +123,7 @@ type Config struct {
 	// Discovery is supported on concrete-address Linux/macOS sockets up to 1452.
 	DisablePathMTUDiscovery bool
 	// CongestionControl selects the congestion controller for the
-	// connection's paths. The zero value is NewReno (RFC 9002).
+	// connection's paths. The zero value is BBR.
 	CongestionControl CongestionControl
 	// EnableMultipath opts into RFC 10069 multipath, with path IDs 0–3.
 	// Both endpoints must opt in. ListenAddr requires a concrete bind address.
@@ -248,7 +246,7 @@ func makeServerConfig(tlsConfig *tls.Config, cfg Config, params wire.TransportPa
 		return transport.Config{}, nil, err
 	}
 
-	engineConfig := transport.Config{MaxStreamReceiveWindow: cfg.MaxStreamReceiveWindow, MaxConnectionReceiveWindow: cfg.MaxConnectionReceiveWindow, AcceptEarly: early, EnableEarlyData: cfg.Allow0RTT, CompatibleVersions: compatibleVersions(cfg), PreferredAddresses: cfg.PreferredAddresses, AddressTokens: addressTokens, DisablePathMTUDiscovery: cfg.DisablePathMTUDiscovery, CongestionControl: recovery.Algorithm(cfg.CongestionControl), InitialPacketSize: cfg.InitialPacketSize, EnableMigration: true, EnableMultipath: cfg.EnableMultipath, RequireStreamCreditRelease: cfg.RequireStreamCreditRelease, Version: version, TLS: tlsConfig, Parameters: params, HandshakeTimeout: cfg.HandshakeTimeout, HandshakeIdleTimeout: cfg.HandshakeIdleTimeout, KeepAlivePeriod: cfg.KeepAlivePeriod}
+	engineConfig := transport.Config{MaxStreamReceiveWindow: cfg.MaxStreamReceiveWindow, MaxConnectionReceiveWindow: cfg.MaxConnectionReceiveWindow, AcceptEarly: early, EnableEarlyData: cfg.Allow0RTT, CompatibleVersions: compatibleVersions(cfg), PreferredAddresses: cfg.PreferredAddresses, AddressTokens: addressTokens, DisablePathMTUDiscovery: cfg.DisablePathMTUDiscovery, CongestionControl: cfg.congestionAlgorithm(), InitialPacketSize: cfg.InitialPacketSize, EnableMigration: true, EnableMultipath: cfg.EnableMultipath, RequireStreamCreditRelease: cfg.RequireStreamCreditRelease, Version: version, TLS: tlsConfig, Parameters: params, HandshakeTimeout: cfg.HandshakeTimeout, HandshakeIdleTimeout: cfg.HandshakeIdleTimeout, KeepAlivePeriod: cfg.KeepAlivePeriod}
 	engineConfig.AdapterData = acceptedConfig{cfg.EnableDatagrams, cfg.AllowConnectionWindowIncrease}
 	if cfg.GetConfigForClient != nil {
 		engineConfig.ConfigureClient = serverConfigSelector(cfg)
@@ -442,7 +440,7 @@ func prepareConfig(config *Config) (Config, wire.TransportParameters, error) {
 	if config != nil {
 		cfg = *config
 	}
-	if cfg.CongestionControl > CongestionControlBBR {
+	if _, ok := cfg.CongestionControl.algorithm(); !ok {
 		return Config{}, wire.TransportParameters{}, errors.New("quic: unknown congestion control")
 	}
 	if cfg.HandshakeIdleTimeout < 0 || cfg.HandshakeTimeout < 0 || cfg.MaxIdleTimeout < 0 || cfg.KeepAlivePeriod < 0 {

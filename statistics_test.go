@@ -104,17 +104,22 @@ func TestConnectionStatisticsTrafficAndShutdown(t *testing.T) {
 }
 
 func TestConnectionStatisticsCongestionWindow(t *testing.T) {
-	for _, version := range []Version{Version1, Version2} {
-		t.Run(fmt.Sprintf("%x", version), func(t *testing.T) {
+	for _, tc := range []struct {
+		version    Version
+		congestion CongestionControl
+	}{{Version1, CongestionControlBBR}, {Version2, CongestionControlBBR}, {Version1, CongestionControlNewReno}, {Version2, CongestionControlNewReno}} {
+		version := tc.version
+		t.Run(fmt.Sprintf("%x/%d", version, tc.congestion), func(t *testing.T) {
 			clientTLS, serverTLS := dialTLS(t)
-			listener, err := ListenAddr("127.0.0.1:0", serverTLS, &Config{Versions: []Version{version}})
+			config := &Config{Versions: []Version{version}, CongestionControl: tc.congestion}
+			listener, err := ListenAddr("127.0.0.1:0", serverTLS, config)
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer listener.Close()
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			client, err := DialAddr(ctx, listener.Addr().String(), clientTLS, &Config{Versions: []Version{version}})
+			client, err := DialAddr(ctx, listener.Addr().String(), clientTLS, config)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -140,8 +145,14 @@ func TestConnectionStatisticsCongestionWindow(t *testing.T) {
 				return published
 			}
 			initial, idle := window(client), window(server)
-			// RFC 9002 section 7.2 bounds the initial window for any datagram size.
-			if initial < 2*1200 || initial > 10*1452 || idle < 2*1200 || idle > 10*1452 {
+			// RFC 9002 section 7.2 bounds NewReno's initial window for any
+			// datagram size. BBR's Startup also grows its window with the
+			// handshake's acknowledged bytes, but never below its minimum.
+			low, high := uint64(2*1200), uint64(10*1452)
+			if tc.congestion == CongestionControlBBR {
+				low, high = 4*1200, 64*1452
+			}
+			if initial < low || initial > high || idle < low || idle > high {
 				t.Fatal("initial windows", initial, idle)
 			}
 			payload := bytes.Repeat([]byte("statistics"), 20000)

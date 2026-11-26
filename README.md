@@ -157,8 +157,11 @@ Implemented and tested:
   address-validation gating, and encryption-level timer retirement.
 - Bounded token-bucket packet pacing with timer wakeups, ACK bypass, and
   accounted PTO exceptions.
+- BBRv3 congestion control (draft-ietf-ccwg-bbr-07), the default, driven by
+  delivery-rate sampling and paced at its bandwidth estimate.
 - NewReno congestion-window gating, slow start, byte-counted congestion
-  avoidance, recovery-epoch loss reduction, and bounded PTO send exceptions.
+  avoidance, recovery-epoch loss reduction, and bounded PTO send exceptions,
+  selected with `Config.CongestionControl`.
 - A standalone bounded stream receiver with reassembly, FIN/RESET final-size
   validation, and shared connection receive-flow accounting.
 - Stream send-credit/FIN/reset state and constant-memory stream-ID
@@ -194,14 +197,16 @@ checks packet CIDs against transport parameters and distinguishes TLS completion
 from QUIC confirmation. The lower-level TLS adapter cannot perform these packet
 checks on its own. ACK-driven loss detection queues retransmissions automatically;
 the caller services loss/PTO deadlines through the engine's timer API. The
-interop driver uses these deadlines. NewReno and pacing gate in-flight output;
+interop driver uses these deadlines. The congestion controller (BBR, or NewReno)
+and pacing gate in-flight output;
 persistent-congestion detection uses bounded cross-space history. Linux/macOS
 UDP readers acquire ECN markings for receive feedback in ACKs, preserving counters
 per packet-number space and multipath path. IPv4/IPv6 reception has runtime
 coverage on macOS and Docker Linux arm64; see docs/LINUX_VALIDATION.md. These UDP runtimes also test
 ECN with up to ten ECT(0) packets per network path or three base PTO durations,
 validate peer feedback,
-and apply validated congestion signals to NewReno. Unsupported ancillary writes
+and apply validated congestion signals to NewReno. BBR connections send
+Not-ECT, since BBR specifies no response to CE. Unsupported ancillary writes
 fall back locally to Not-ECT with corrected recovery accounting. Migration
 preserves cumulative feedback and starts fresh path testing; failed ECN contexts
 remain disabled. Independent quic-go tests verify continued ECT(0) marking
