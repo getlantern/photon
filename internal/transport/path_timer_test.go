@@ -10,6 +10,8 @@ import (
 func TestMultipathPTOProbe(t *testing.T) {
 	for _, v := range []wire.Version{wire.Version1, wire.Version2} {
 		client, server := sendingPathPair(t, v)
+		// A PTO mustn't cut the window, which only NewReno would otherwise do.
+		useNewReno(t, client)
 		now := time.Unix(101, 0)
 		app := client.multipath.paths[1].application
 		app.budget.Validate()

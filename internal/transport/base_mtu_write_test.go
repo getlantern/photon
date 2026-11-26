@@ -27,6 +27,9 @@ func testBaseLargeWriteFallback(t *testing.T, borrowed bool) {
 				p := streamParameters()
 				p.MaxDatagramFrameSize = 65535
 				c, peer := testPair(t, v, p)
+				// A rejected write mustn't cut the window, which only NewReno
+				// would otherwise do.
+				useNewReno(t, c)
 				c.config.InitialPacketSize = 1452
 				drivePair(t, c, peer, false, false)
 				e, err := NewClientEndpoint(c, netip.MustParseAddrPort("127.0.0.1:443"))
