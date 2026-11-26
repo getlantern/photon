@@ -144,6 +144,23 @@ func TestConnectionStatisticsCongestionWindow(t *testing.T) {
 				}
 				return published
 			}
+			// Wait for the server's post-handshake packets (HANDSHAKE_DONE,
+			// NEW_TOKEN, NEW_CONNECTION_ID) to be acknowledged: BBR's Startup
+			// grows the window with those acknowledgments even though the
+			// server has nothing else to send. After them it sends only ACKs.
+			for {
+				var flight uint64
+				if err := server.server.Do(ctx, func(*transport.ServerEndpoint) error {
+					_, flight = server.raw.CongestionStats()
+					return nil
+				}); err != nil {
+					t.Fatal(err)
+				}
+				if flight == 0 {
+					break
+				}
+				time.Sleep(time.Millisecond)
+			}
 			initial, idle := window(client), window(server)
 			// RFC 9002 section 7.2 bounds NewReno's initial window for any
 			// datagram size. BBR's Startup also grows its window with the

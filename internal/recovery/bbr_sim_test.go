@@ -114,9 +114,12 @@ func simulateFlows(t *testing.T, link *simLink, d time.Duration, flows ...*simFl
 			f.start = simStart
 		}
 	}
-	for now.Before(end) {
+	// Flows step in rotating order, so none always reaches the shared queue
+	// first when several send at the same instant.
+	for tick := 0; now.Before(end); tick++ {
 		next := end
-		for _, f := range flows {
+		for k := range flows {
+			f := flows[(tick+k)%len(flows)]
 			if now.Before(f.start) {
 				next = minTime(next, f.start)
 				continue
@@ -159,9 +162,7 @@ func (f *simFlow) step(t *testing.T, link *simLink, now time.Time) time.Time {
 			f.res.lost += len(events.Lost)
 			c.OnLoss(LossEvent{Lost: events.Lost, TotalLost: sent.LostBytes(), TotalDelivered: sent.DeliveredBytes(), Flight: sent.BytesInFlight, Now: a.at})
 		}
-		if len(events.Acked) > 0 {
-			c.OnACK(ACKEvent{Acked: events.Acked, Rate: events.Rate, Flight: sent.BytesInFlight, SmoothedRTT: sent.SmoothedRTT(), Now: a.at})
-		}
+		c.OnACK(ACKEvent{Acked: events.Acked, Rate: events.Rate, Flight: sent.BytesInFlight, SmoothedRTT: sent.SmoothedRTT(), Now: a.at})
 		if c.ForcesAppLimited() {
 			sent.MarkAppLimited()
 		}
