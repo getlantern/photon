@@ -241,7 +241,7 @@ func (c *Conn) nextPacketOnPathSelection(id, ackPath uint64, now time.Time, allo
 	if err := app.budget.Sent(len(out)); err != nil {
 		return nil, c.fail(err)
 	}
-	if c.config.enableECN {
+	if c.marksECN() {
 		app.sent.EnableECN()
 	}
 	marking := app.sent.ECNMarkingAt(recovery.Application, now)

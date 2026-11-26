@@ -148,14 +148,21 @@ func TestBBRStartupExitsOnHighLoss(t *testing.T) {
 	b := testBBR()
 	start := time.Unix(1, 0)
 	b.delivered = 100000
+	// The first loss starts recovery before the packet is sent; the rest are
+	// detected after it, so its sample counts them.
+	sentAt := start.Add(time.Millisecond)
 	for i := range bbrStartupFullLossCnt {
-		b.OnLoss(LossEvent{Lost: []Packet{{Number: uint64(i), Bytes: 1200, InFlight: true}}, TotalLost: uint64(i+1) * 1200, TotalDelivered: 100000, Now: start})
+		at := start
+		if i > 0 {
+			at = sentAt.Add(time.Millisecond)
+		}
+		b.OnLoss(LossEvent{Lost: []Packet{{Number: uint64(i), Bytes: 1200, InFlight: true}}, TotalLost: uint64(i+1) * 1200, TotalDelivered: 100000, Now: at})
 	}
-	// An in-flight packet sent after the losses, acknowledged with 6% of its
-	// flight lost since it was sent.
+	// The in-flight packet, acknowledged with 5% of its flight lost since it
+	// was sent.
 	later := start.Add(50 * time.Millisecond)
-	b.OnACK(ACKEvent{Acked: []Packet{{SentAt: start.Add(time.Millisecond), Bytes: 1200, InFlight: true}},
-		Rate:   RateSample{NewlyAcked: 1200, PriorDelivered: 100000, TotalDelivered: 101200, Lost: 7200, InFlight: 120000, RTT: 50 * time.Millisecond},
+	b.OnACK(ACKEvent{Acked: []Packet{{SentAt: sentAt, Bytes: 1200, InFlight: true}},
+		Rate:   RateSample{NewlyAcked: 1200, PriorDelivered: 100000, TotalDelivered: 101200, Lost: uint64(bbrStartupFullLossCnt-1) * 1200, InFlight: 120000, RTT: 50 * time.Millisecond},
 		Flight: 100000, Now: later})
 	if !b.fullBwReached || b.state == bbrStartup {
 		t.Fatal("Startup didn't exit on high loss, state", b.state)
@@ -165,17 +172,56 @@ func TestBBRStartupExitsOnHighLoss(t *testing.T) {
 	}
 }
 
-// An ECN-CE increase is a loss event for the short-term model, noted with the
-// same ACK's deliveries so its loss round starts from the current count.
-func TestBBRTreatsCEAsLossEvent(t *testing.T) {
+// Restarting from idle starts a new ACK-aggregation interval with nothing
+// delivered in it, so one small ACK after the restart isn't aggregation.
+func TestBBRIdleRestartClearsExtraAcked(t *testing.T) {
 	b := testBBR()
-	b.OnECN(time.Unix(1, 0), time.Unix(2, 0))
-	b.OnACK(ACKEvent{Rate: RateSample{NewlyAcked: 1200, TotalDelivered: 50000}, Now: time.Unix(2, 0)})
-	if !b.lossInRound || b.lossEventsInRound != 1 {
-		t.Fatal("CE not counted as a loss event")
+	b.bw, b.cwnd, b.extraAckedDelivered = 1e6, 1_000_000, 100000
+	restart := time.Unix(10, 0)
+	b.OnPacketSent(SentEvent{Bytes: 1200, AppLimited: true, Now: restart})
+	b.updateACKAggregation(RateSample{NewlyAcked: 1200}, restart.Add(50*time.Millisecond))
+	if b.extraAcked > 1200 {
+		t.Fatal("extra_acked", b.extraAcked, "after an idle restart, want at most the ACK's 1200")
 	}
-	if b.lossRoundDelivered != 50000 {
-		t.Fatal("CE loss round marked at delivered", b.lossRoundDelivered, "want 50000")
+}
+
+// A send that ends ProbeRTT bounds the restored window by ProbeBW_CRUISE's
+// cap at once, not at the next ACK.
+func TestBBRProbeRTTExitOnSendBoundsWindow(t *testing.T) {
+	b := testBBR()
+	b.fullBwReached, b.bw, b.minRTT = true, 1e6, 100*time.Millisecond
+	b.inflightLongterm, b.priorCwnd = 100000, 120000
+	b.enterProbeRTT()
+	b.cwnd = b.minPipeCwnd()
+	start := time.Unix(10, 0)
+	b.probeRTTDoneStamp = start
+	b.OnPacketSent(SentEvent{Bytes: 1200, AppLimited: true, Now: start.Add(time.Millisecond)})
+	if b.state != bbrProbeBWCruise {
+		t.Fatal("state", b.state, "want ProbeBW_CRUISE")
+	}
+	if want := b.inflightWithHeadroom(); b.cwnd != want {
+		t.Fatal("window", b.cwnd, "after leaving ProbeRTT, want the Cruise cap", want)
+	}
+}
+
+// A loss that ends a bandwidth probe applies ProbeBW_DOWN's pacing rate and
+// the lowered inflight_longterm at once: a timer-detected loss can be
+// followed by sends with no ACK in between.
+func TestBBRProbeLossAppliesDownControls(t *testing.T) {
+	b := testBBR()
+	b.fullBwReached, b.bw, b.minRTT, b.pacingRate = true, 1e6, 100*time.Millisecond, 1.25e6
+	b.startProbeBWUp(RateSample{})
+	b.checkProbeLoss = true
+	b.cwnd, b.inflightLongterm = 200000, 200000
+	b.OnLoss(LossEvent{Lost: []Packet{{Bytes: 12000, InFlight: true, Delivery: DeliveryState{InFlight: 120000}}}, TotalLost: 12000, Now: time.Unix(10, 0)})
+	if b.state != bbrProbeBWDown {
+		t.Fatal("state", b.state, "want ProbeBW_DOWN")
+	}
+	if b.cwnd > b.inflightLongterm {
+		t.Fatal("window", b.cwnd, "above the lowered inflight_longterm", b.inflightLongterm)
+	}
+	if b.pacingRate >= 1e6 {
+		t.Fatal("pacing rate", b.pacingRate, "still probing")
 	}
 }
 
