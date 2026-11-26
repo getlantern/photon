@@ -239,8 +239,13 @@ func (b *BBR) OnPersistentCongestion() {
 	now, inflight, noted := b.now, b.inflight, b.lossNoted
 	b.Reset(b.smss)
 	b.at(now)
-	// The loss that led here is still this ACK's loss event.
-	b.inflight, b.lossNoted = inflight, noted
+	b.inflight = inflight
+	if noted {
+		// The loss that led here is the fresh model's first loss event,
+		// and this ACK's, so its marks aren't a second.
+		b.noteLoss()
+		b.lossNoted = true
+	}
 	b.cwnd = b.minPipeCwnd()
 	b.inRecovery, b.recoveryStart = true, now
 }

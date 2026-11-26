@@ -319,13 +319,12 @@ func TestBBRCountsOneLossEventPerACK(t *testing.T) {
 		t.Fatal("marks after a timer loss counted", b.lossEventsInRound, "loss events in all, want 2")
 	}
 	// Persistent congestion between an ACK's loss and its marks starts the
-	// model over; the marks aren't charged to it as a second event.
+	// model over with that loss as its one event, which the marks join.
 	b = testBBR()
 	b.OnLoss(LossEvent{Lost: []Packet{{Bytes: 1200, InFlight: true}}, TotalLost: 1200, TotalDelivered: 50000, Now: now})
 	b.OnPersistentCongestion()
-	b.OnACK(ACKEvent{Acked: []Packet{{SentAt: now, Bytes: 1200, InFlight: true}}, Rate: RateSample{NewlyAcked: 1200, TotalDelivered: 51200, NewCE: 1200, CE: 1200}, Lost: true, Now: now})
-	if b.lossInRound {
-		t.Fatal("marks charged to the model persistent congestion reset")
+	if !b.lossInRound || b.lossEventsInRound != 1 || !b.lossNoted {
+		t.Fatal("the fresh model lost the loss that reset it:", b.lossInRound, b.lossEventsInRound, b.lossNoted)
 	}
 }
 

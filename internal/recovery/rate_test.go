@@ -196,21 +196,43 @@ func TestDeliveryRateCapsCE(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// One packet arrived still ECT, which validates the path.
 	frame := ack(0, 2)
-	frame.ECN = &[3]uint64{0, 0, 3}
+	frame.ECN = &[3]uint64{1, 0, 2}
 	events, err := r.OnACK(Application, frame, start.Add(50*time.Millisecond), 0, 0, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if events.Rate.NewCE != 1200 {
-		t.Fatalf("sample %+v, want 3 marks capped at the one 1200-byte in-flight packet", events.Rate)
+		t.Fatalf("sample %+v, want 2 marks capped at the one 1200-byte in-flight packet", events.Rate)
 	}
 	frame = ack(0, 3)
-	frame.ECN = &[3]uint64{0, 0, 4}
+	frame.ECN = &[3]uint64{1, 0, 3}
 	if events, err = r.OnACK(Application, frame, start.Add(60*time.Millisecond), 0, 0, true); err != nil {
 		t.Fatal(err)
 	}
 	if events.Rate.NewCE != 0 || r.CEBytes() != 1200 {
 		t.Fatalf("sample %+v, total %d: a mark on an ACK-only packet counted", events.Rate, r.CEBytes())
+	}
+}
+
+// Marks before the path has passed ECN validation don't count, as quic-go
+// has it: a path that remarks every probe CE would otherwise read as
+// congested before validation fails it.
+func TestDeliveryRateIgnoresCEBeforeValidation(t *testing.T) {
+	r, _ := NewSent(64)
+	r.EnableECN()
+	start := time.Unix(100, 0)
+	if err := r.OnSent(Application, Packet{Number: 0, SentAt: start, Bytes: 1200, AckEliciting: true, InFlight: true, ECN: ECT0}); err != nil {
+		t.Fatal(err)
+	}
+	frame := ack(0, 0)
+	frame.ECN = &[3]uint64{0, 0, 1}
+	events, err := r.OnACK(Application, frame, start.Add(50*time.Millisecond), 0, 0, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if events.Rate.NewCE != 0 || r.ECNState() == ECNCapable {
+		t.Fatalf("sample %+v, state %d: an unvalidated path's mark counted", events.Rate, r.ECNState())
 	}
 }

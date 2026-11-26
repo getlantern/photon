@@ -201,9 +201,17 @@ func (r *Sent) OnACK(space Space, f wire.AckFrame, now time.Time, delay, maxDela
 	}
 	largestPacket, largestNew := s.packets[largest]
 	ecnPacket, haveECNPacket := s.ecnPending[largest]
-	events.NewlyECT = s.ackECN(f)
+	var old uint64
+	events.NewlyECT, old = s.ackECN(f)
 	events.ECN = s.ecnFeedback.Check(largest, f.ECN, s.ecnSent, events.NewlyECT)
-	r.ecnPath.ACK(space, f, events.ECN)
+	// This path's share of the feedback: the counts don't say which packets
+	// arrived ECT and which CE, so each takes the worst case, that the
+	// old path's packets were the ECT ones (for capability) and the CE ones
+	// (for congestion).
+	path := events.ECN
+	path.ECT -= min(path.ECT, old)
+	path.CE -= min(path.CE, old)
+	r.ecnPath.ACK(space, f, path)
 	if events.ECN.CE > 0 {
 		if largestNew {
 			events.ECNCongestion = true
@@ -274,12 +282,14 @@ func (r *Sent) OnACK(space Space, f wire.AckFrame, now time.Time, delay, maxDela
 		s.hasAck = true
 	}
 	events.Lost = r.DetectLoss(space, now)
-	// Validated marks, attributed to this ledger's newly acknowledged
-	// ECT-marked, in-flight packets; ECNCongestion additionally needs a send
-	// time for NewReno's recovery epoch. Only application data counts: a
-	// marked datagram of coalesced handshake packets would otherwise count
-	// once per packet number space.
-	if events.ECN.CE > 0 && space == Application {
+	// Validated marks on this path, attributed to this ledger's newly
+	// acknowledged ECT-marked, in-flight packets; ECNCongestion additionally
+	// needs a send time for NewReno's recovery epoch. Only marks on a path
+	// that has passed ECN validation count, as quic-go has it, so a path that
+	// remarks every probe CE fails before its marks reach the controller.
+	// Only application data counts: a marked datagram of coalesced handshake
+	// packets would otherwise count once per packet number space.
+	if path.CE > 0 && space == Application && r.ecnPath.State() == ECNCapable {
 		var marked, bytes uint64
 		for _, p := range events.Acked {
 			if p.InFlight && p.ECN != NotECT {
@@ -287,7 +297,7 @@ func (r *Sent) OnACK(space Space, f wire.AckFrame, now time.Time, delay, maxDela
 				bytes += uint64(p.Bytes)
 			}
 		}
-		r.rate.marked(&sampler, events.ECN.CE, bytes, marked)
+		r.rate.marked(&sampler, path.CE, bytes, marked)
 	}
 	// After loss detection and CE, so the sample counts this ACK's.
 	events.Rate = r.rate.sample(&sampler, now, r.RTT.Minimum, r.RTT.Sampled)
