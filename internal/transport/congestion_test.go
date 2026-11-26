@@ -371,3 +371,18 @@ func TestOversizedDatagramIsNotBorrowable(t *testing.T) {
 		t.Fatal("path 1 did not count a DATAGRAM that fits it")
 	}
 }
+
+// A NEW_CONNECTION_ID held while forwarding is blocked can't be sent, so a
+// queue holding only that doesn't count as data to send.
+func TestHeldCIDAdvertisementIsNotData(t *testing.T) {
+	client, _ := sendingPathPair(t, wire.Version1)
+	app := client.multipath.paths[1].application
+	app.space.queue = append(app.space.queue, &sendItem{frame: wire.NewConnectionIDFrame{Sequence: 9}, queued: true})
+	if !client.pathHasData(1) {
+		t.Fatal("setup: queued NEW_CONNECTION_ID not counted when forwarding is open")
+	}
+	client.forwardingBlocked = true
+	if client.pathHasData(1) {
+		t.Fatal("held NEW_CONNECTION_ID counted as data to send")
+	}
+}
