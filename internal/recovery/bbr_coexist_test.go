@@ -225,3 +225,36 @@ func TestBBRWithECNSharesAsWithDrops(t *testing.T) {
 		t.Fatalf("NewReno's share %.0f%% against BBR blind to CE, %.0f%% against BBR answering it", 100*blind, 100*marked)
 	}
 }
+
+// On the RED queue, an ECN-capable flow neither beats nor loses to the same
+// controller without ECN by much: its share, averaged over both start
+// orders to cancel the first flow's head start, stays near half. Marks get
+// the response drops do, but a marked packet is still delivered, so a
+// controller that measures delivery rate, as BBR does, could gain from ECN;
+// this bounds that, with NewReno as the control.
+func TestECNFlowShareAgainstNonECN(t *testing.T) {
+	const d, from = 40 * time.Second, 13 * time.Second
+	for _, c := range []struct {
+		name       string
+		newA, newB func() Controller
+	}{{"BBR", newBBRFlow(3), newBBRFlow(7)}, {"NewReno", newRenoFlow, newRenoFlow}} {
+		var sum float64
+		var orders []float64
+		for _, ecnFirst := range []bool{true, false} {
+			g, _ := coexist(t, redLink(), d, from,
+				coexistFlow{newC: c.newA, ecn: ecnFirst},
+				coexistFlow{newC: c.newB, ecn: !ecnFirst, start: 2 * time.Second})
+			share := g[0] / (g[0] + g[1])
+			if !ecnFirst {
+				share = g[1] / (g[0] + g[1])
+			}
+			orders = append(orders, share)
+			sum += share
+		}
+		mean := sum / 2
+		t.Logf("%s: the ECN flow's share %.0f%% starting first, %.0f%% starting second, %.0f%% on average", c.name, 100*orders[0], 100*orders[1], 100*mean)
+		if mean < 0.40 || mean > 0.62 {
+			t.Fatalf("%s: the ECN flow's average share %.0f%%, want 40%% to 62%%", c.name, 100*mean)
+		}
+	}
+}
