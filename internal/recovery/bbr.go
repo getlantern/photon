@@ -25,11 +25,17 @@ import (
 //   - Persistent congestion resets the controller as for a new path, from
 //     BBR's minimum window, rather than restoring the pre-collapse window
 //     once recovery ends (RFC 9002 section 7.6.2).
-//
-// The draft requires an ECN-capable sender to treat CE marks as congestion
-// but specifies no response; an ECN-CE increase is handled as a loss event.
+//   - Restarting from idle also clears extra_acked_delivered, as Linux does,
+//     so data delivered before the idle period isn't counted as aggregation.
+//   - Leaving ProbeRTT on a send, or ending a bandwidth probe on a loss,
+//     applies the new state's window bound (and, after a probe, its pacing
+//     rate) at once: QUIC can send again before the next ACK.
 //   - Spurious loss recovery is not undone (the draft's section 5.5.11): the
 //     transport has no signal that a whole recovery episode was spurious.
+//
+// The draft specifies no response to ECN-CE, which it requires an
+// ECN-capable sender to treat as congestion, so the transport doesn't mark a
+// BBR connection's packets ECN-capable.
 //
 // As in draft-07, and unlike earlier BBR versions, recovery doesn't cut the
 // window for each loss or conserve packets: it saves the window on entering
@@ -56,7 +62,6 @@ type BBR struct {
 	// in the last packet-timed round trip. cwndLimitedInRound tracks the
 	// current round.
 	cwndLimited, cwndLimitedInRound bool
-	pendingCE                       bool // an ECN-CE increase to note at the next ACK
 	hasSeenRTT                      bool
 
 	bwHi                [2]float64 // max bandwidth in the current and previous ProbeBW cycles
@@ -202,25 +207,22 @@ func (b *BBR) OnPacketSent(e SentEvent) {
 	}
 	if e.Flight == 0 && e.AppLimited {
 		b.idleRestart = true
-		b.extraAckedStart = e.Now
+		b.extraAckedStart, b.extraAckedDelivered = e.Now, 0
 		if b.inProbeBW() {
 			b.setPacingRateWithGain(1)
 		} else if b.state == bbrProbeRTT {
 			b.checkProbeRTTDone(e.Now)
+			// The ACK that would bound the restored window may not come
+			// before the next send.
+			b.boundCwndForModel()
 		}
 	}
 }
 
-// OnECN records an ECN-CE increase as a loss event for the per-round
-// short-term model (bw_shortterm, inflight_shortterm), without entering
-// recovery: RFC 3168 asks an ECN-capable sender to respond to CE as to loss.
-// The owner reports CE before the same ACK's deliveries, so it is noted at
-// the next OnACK, which marks the loss round from the current delivered
-// count.
-func (b *BBR) OnECN(sent, now time.Time) {
-	b.at(now)
-	b.pendingCE = true
-}
+// OnECN does nothing: the draft specifies no response to CE, so the
+// transport doesn't mark a BBR path's packets ECN-capable, and the
+// bottleneck drops rather than marks.
+func (b *BBR) OnECN(sent, now time.Time) {}
 
 // OnPersistentCongestion stands in for the draft's OnEnterRTO, departing
 // from it: BBR resets as for a new path, from the minimum window, and starts
@@ -259,6 +261,7 @@ func (b *BBR) OnLoss(e LossEvent) {
 		b.inRecovery, b.recoveryStart = true, e.Now
 	}
 	b.noteLoss()
+	state := b.state
 	// Each packet sees the loss as it stood at its turn: the total before
 	// this batch, plus the packets up to and including it.
 	lost := e.TotalLost - batch
@@ -268,6 +271,12 @@ func (b *BBR) OnLoss(e LossEvent) {
 		}
 		lost += uint64(p.Bytes)
 		b.handleLostPacket(p, lost)
+	}
+	if b.state != state {
+		// A probe ended: apply ProbeBW_DOWN's pacing rate and window now,
+		// since a timer-detected loss can be followed by sends with no ACK.
+		b.setPacingRate()
+		b.boundCwndForModel()
 	}
 }
 
@@ -280,10 +289,6 @@ func (b *BBR) OnACK(e ACKEvent) {
 	}
 	b.at(e.Now)
 	b.inflight, b.delivered = e.Flight, rs.TotalDelivered
-	if b.pendingCE {
-		b.pendingCE = false
-		b.noteLoss()
-	}
 	if rtt := e.SmoothedRTT; !b.hasSeenRTT && rtt > 0 {
 		// InitPacingRate, now that there is an RTT to pace over: the smoothed
 		// RTT, which the peer's ACK delay doesn't inflate.

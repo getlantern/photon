@@ -75,6 +75,9 @@ func simulate(t *testing.T, c Controller, link *simLink, d time.Duration, observ
 				c.OnLoss(LossEvent{Lost: events.Lost, TotalLost: sent.LostBytes(), TotalDelivered: sent.DeliveredBytes(), Flight: sent.BytesInFlight, Now: a.at})
 			}
 			c.OnACK(ACKEvent{Acked: events.Acked, Rate: events.Rate, Flight: sent.BytesInFlight, SmoothedRTT: sent.SmoothedRTT(), Now: a.at})
+			if c.ForcesAppLimited() {
+				sent.MarkAppLimited()
+			}
 			if observe != nil {
 				observe(a.at)
 			}
@@ -87,14 +90,15 @@ func simulate(t *testing.T, c Controller, link *simLink, d time.Duration, observ
 			}
 		}
 		// Send what the window and pacer allow: the application always has
-		// data, so the sender is never application limited.
+		// data, so only the controller (in ProbeRTT) marks the sender
+		// application limited.
 		next := end
 		for c.CanSend(sent.BytesInFlight, size, true, false) {
 			if wait := pacer.DelayFor(now, c, sent.RTT.Smoothed, size); wait > 0 {
 				next = now.Add(wait)
 				break
 			}
-			e := SentEvent{Bytes: size, Flight: sent.BytesInFlight, Now: now}
+			e := SentEvent{Bytes: size, Flight: sent.BytesInFlight, AppLimited: sent.AppLimited(), Now: now}
 			if err := sent.OnSent(Application, Packet{Number: pn, SentAt: now, Bytes: size, AckEliciting: true, InFlight: true}); err != nil {
 				t.Fatal(err)
 			}
