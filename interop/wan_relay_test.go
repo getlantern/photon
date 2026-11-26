@@ -137,8 +137,9 @@ func (s *wanShaper) admit(now time.Time, n int) (time.Time, bool) {
 
 // direction reads datagrams, applies the link, and delivers them in order from
 // a second goroutine once their time comes. Departure times never decrease,
-// even on a shared bottleneck, and the delay is fixed, so delivery order is
-// arrival order.
+// even on a shared bottleneck, and the delay is fixed, so each direction
+// delivers in arrival order. Relays sharing a bottleneck deliver from their
+// own goroutines, so their packets aren't ordered with each other's.
 func (r *wanRelay) direction(index int, bottleneck *wanBottleneck, seed uint64, read func([]byte) (int, error), write func([]byte)) {
 	link := bottleneck.link
 	ready := make(chan wanPacket, 1<<14)

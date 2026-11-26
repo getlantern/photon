@@ -62,8 +62,8 @@ func BenchmarkServerCoexistWAN(b *testing.B) {
 }
 
 // runCoexist runs pair's downloads over one shared link, the second joining
-// after join, and returns each one's goodput in bits per second from
-// measureFrom to end.
+// join after the first starts, and returns each one's goodput in bits per
+// second from measureFrom to end, both also from the first's start.
 func runCoexist(b *testing.B, link wanLink, pair [2]coexistServer, join, measureFrom, end time.Duration) (float64, float64) {
 	b.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -72,7 +72,7 @@ func runCoexist(b *testing.B, link wanLink, pair [2]coexistServer, join, measure
 	windows := echoWindows{stream: 16 << 20, connection: 32 << 20}
 	var received [2]atomic.Uint64
 	ended := make(chan error, len(pair))
-	start := time.Now()
+	var start time.Time
 	for i, server := range pair {
 		clientTLS, serverTLS := tlsConfigs(b)
 		w := windows
@@ -97,10 +97,17 @@ func runCoexist(b *testing.B, link wanLink, pair [2]coexistServer, join, measure
 		}
 		defer closeServer()
 		go func() { ended <- fmt.Errorf("%s: %w", server.name, streamDownload(ctx, peer, accept, &received[i])) }()
+		if i == 0 {
+			start = time.Now()
+		}
 	}
+	// Each pair of loads is nanoseconds apart; the window is the time
+	// actually elapsed between them, in case the benchmark wakes late.
 	time.Sleep(time.Until(start.Add(measureFrom)))
+	t0 := time.Now()
 	a0, c0 := received[0].Load(), received[1].Load()
 	time.Sleep(time.Until(start.Add(end)))
+	t1 := time.Now()
 	a1, c1 := received[0].Load(), received[1].Load()
 	// A download ends only on an error; a starved one just delivers little.
 	select {
@@ -108,7 +115,7 @@ func runCoexist(b *testing.B, link wanLink, pair [2]coexistServer, join, measure
 		b.Fatal("download ended early:", err)
 	default:
 	}
-	window := (end - measureFrom).Seconds()
+	window := t1.Sub(t0).Seconds()
 	return float64(a1-a0) * 8 / window, float64(c1-c0) * 8 / window
 }
 
