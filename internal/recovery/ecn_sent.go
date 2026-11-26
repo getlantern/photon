@@ -55,6 +55,9 @@ func (r *Sent) reclaimECN(space Space) {
 	for pn, evidence := range s.ecnPending {
 		if _, ok := s.packets[pn]; !ok && evidence.currentPath {
 			delete(s.ecnPending, pn)
+			// A late ACK may still report it, after a path change as the
+			// old path's.
+			s.ecnReclaimed++
 		}
 	}
 }
