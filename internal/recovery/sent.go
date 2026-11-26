@@ -50,10 +50,14 @@ type Events struct {
 	Rate RateSample
 }
 type packetSpace struct {
-	ecnFeedback       ECNFeedback
-	ecnSent           [2]uint64
-	ecnPending        map[uint64]ecnTransmission
-	ecnReclaimable    bool // a packet with ECN evidence left the ledger since the last reclaim
+	ecnFeedback    ECNFeedback
+	ecnSent        [2]uint64
+	ecnPending     map[uint64]ecnTransmission
+	ecnReclaimable bool // a packet with ECN evidence left the ledger since the last reclaim
+	// ecnOldUnreported counts old-path marked packets newly acknowledged by
+	// ACKs whose counts weren't consumed, such as reordered ones: the next
+	// consumed counts report them.
+	ecnOldUnreported  uint64
 	ackOnly           ackOnlyOrder
 	ackNodes          map[uint64]*ackOnlyNode
 	packets           map[uint64]Packet
@@ -208,6 +212,14 @@ func (r *Sent) OnACK(space Space, f wire.AckFrame, now time.Time, delay, maxDela
 	var old uint64
 	events.NewlyECT, old = s.ackECN(f)
 	events.ECN = s.ecnFeedback.Check(largest, f.ECN, s.ecnSent, events.NewlyECT)
+	// Old-path packets an unconsumed ACK acknowledged are reported by the
+	// next consumed counts, so they stay attributed to the old path until
+	// then.
+	s.ecnOldUnreported += old
+	old = 0
+	if events.ECN.Consumed {
+		old, s.ecnOldUnreported = s.ecnOldUnreported, 0
+	}
 	// This path's share of the feedback: the counts don't say which packets
 	// arrived ECT and which CE, so each takes the worst case, that the
 	// old path's packets were the ECT ones (for capability) and the CE ones
@@ -435,6 +447,7 @@ func (r *Sent) ResetForPathChange() [3][]Packet {
 	var ecnFeedback [3]ECNFeedback
 	var ecnSent [3][2]uint64
 	var ecnPending [3]map[uint64]ecnTransmission
+	var ecnOldUnreported [3]uint64
 	for i := range r.spaces {
 		for pn, evidence := range r.spaces[i].ecnPending {
 			evidence.currentPath = false
@@ -442,12 +455,14 @@ func (r *Sent) ResetForPathChange() [3][]Packet {
 		}
 		ecnFeedback[i] = r.spaces[i].ecnFeedback
 		ecnSent[i], ecnPending[i] = r.spaces[i].ecnSent, r.spaces[i].ecnPending
+		ecnOldUnreported[i] = r.spaces[i].ecnOldUnreported
 		outstanding[i] = r.Abandon(Space(i))
 	}
 	r.ResetForRetry()
 	for i := range r.spaces {
 		r.spaces[i].ecnFeedback = ecnFeedback[i]
 		r.spaces[i].ecnSent, r.spaces[i].ecnPending = ecnSent[i], ecnPending[i]
+		r.spaces[i].ecnOldUnreported = ecnOldUnreported[i]
 	}
 	return outstanding
 }
