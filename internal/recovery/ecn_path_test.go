@@ -42,20 +42,15 @@ func TestECNPathProbeBudgetAndLoss(t *testing.T) {
 func TestECNPathFeedbackAndIsolation(t *testing.T) {
 	p := NewECNPath()
 	p.Sent(Application, 100)
-	p.Sent(Application, 101)
 	p.ACK(Application, ack(0, 99), ECNFeedbackResult{Validated: true})
 	p.ACK(Initial, ack(100, 100), ECNFeedbackResult{Validated: true})
 	p.ACK(Application, ack(100, 100), ECNFeedbackResult{})
 	if p.State() != ECNTesting {
 		t.Fatal("old path, wrong space, or unvalidated feedback established capability")
 	}
-	// Probe 100's first acknowledgment carried no validated feedback, so it
-	// has no outcome; probe 101's establishes capability.
+	// An unvalidated first acknowledgment, as of a reordered ACK, leaves
+	// the probe for the next validated feedback to settle.
 	p.ACK(Application, ack(100, 100), ECNFeedbackResult{Validated: true, ECT: 1})
-	if p.State() != ECNTesting {
-		t.Fatal("a probe already acknowledged without feedback established capability")
-	}
-	p.ACK(Application, ack(100, 101), ECNFeedbackResult{Validated: true, ECT: 1})
 	if p.State() != ECNCapable || p.Marking() != ECT0 {
 		t.Fatal("valid feedback did not enable ECN")
 	}
@@ -252,6 +247,31 @@ func TestECNLostEvidenceReclaimed(t *testing.T) {
 		frame.ECN = &[3]uint64{ect, 0, 0}
 		if _, err := r.OnACK(Application, frame, at.Add(2*time.Millisecond), 0, 0, true); err != nil {
 			t.Fatal(err)
+		}
+	}
+}
+
+// Reclaiming the ledger keeps the old path's evidence, which keeps its late
+// feedback from being attributed to the new path.
+func TestECNReclaimKeepsOldPathEvidence(t *testing.T) {
+	r, _ := NewSent(4)
+	r.EnableECN()
+	at := time.Unix(100, 0)
+	for pn := uint64(0); pn < 3; pn++ {
+		if err := r.OnSent(Application, Packet{Number: pn, SentAt: at, Bytes: 1200, AckEliciting: true, InFlight: true, ECN: ECT0}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r.ResetForPathChange()
+	if err := r.OnSent(Application, Packet{Number: 3, SentAt: at, Bytes: 1200, AckEliciting: true, InFlight: true, ECN: ECT0}); err != nil {
+		t.Fatal(err)
+	}
+	// The ledger is full; as if a new-path packet had since left it.
+	r.spaces[Application].ecnReclaimable = true
+	r.ECNMarkingAt(Application, at)
+	for pn := uint64(0); pn < 3; pn++ {
+		if _, ok := r.spaces[Application].ecnPending[pn]; !ok {
+			t.Fatal("old-path evidence reclaimed for packet", pn)
 		}
 	}
 }

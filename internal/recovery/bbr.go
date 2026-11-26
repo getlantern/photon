@@ -236,17 +236,12 @@ func (b *BBR) OnPersistentCongestion() {
 	// The path stopped delivering for long enough that its model can't be
 	// trusted: start over as on a new path, from the minimum window, and
 	// don't restore the old one (RFC 9002 section 7.6.2).
-	now, inflight, noted := b.now, b.inflight, b.lossNoted
+	// The reset forgets the loss events so far, the one that led here
+	// included, so any marks on the same ACK count as the fresh model's.
+	now, inflight := b.now, b.inflight
 	b.Reset(b.smss)
 	b.at(now)
 	b.inflight = inflight
-	if noted {
-		// The loss that led here is the fresh model's first loss event,
-		// and this ACK's, so its marks aren't a second. Recorded directly:
-		// noteLoss would also save the initial window to restore.
-		b.lossInRound, b.lossEventsInRound, b.lossRoundDelivered = true, 1, b.delivered
-		b.lossNoted = true
-	}
 	b.cwnd = b.minPipeCwnd()
 	b.inRecovery, b.recoveryStart = true, now
 }

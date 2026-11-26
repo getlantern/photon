@@ -53,6 +53,7 @@ type packetSpace struct {
 	ecnFeedback       ECNFeedback
 	ecnSent           [2]uint64
 	ecnPending        map[uint64]ecnTransmission
+	ecnReclaimable    bool // a packet with ECN evidence left the ledger since the last reclaim
 	ackOnly           ackOnlyOrder
 	ackNodes          map[uint64]*ackOnlyNode
 	packets           map[uint64]Packet
@@ -172,6 +173,9 @@ func order(p []Packet) {
 }
 func (r *Sent) remove(s *packetSpace, p Packet) {
 	delete(s.packets, p.Number)
+	if _, ok := s.ecnPending[p.Number]; ok {
+		s.ecnReclaimable = true
+	}
 	if node := s.ackNodes[p.Number]; node != nil {
 		s.ackOnly.Remove(node)
 		delete(s.ackNodes, p.Number)
