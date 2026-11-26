@@ -54,6 +54,7 @@ type BBR struct {
 	// in the last packet-timed round trip. cwndLimitedInRound tracks the
 	// current round.
 	cwndLimited, cwndLimitedInRound bool
+	pendingCE                       bool // an ECN-CE increase to note at the next ACK
 	hasSeenRTT                      bool
 
 	bwHi                [2]float64 // max bandwidth in the current and previous ProbeBW cycles
@@ -166,7 +167,13 @@ func (b *BBR) PacingRate() uint64 { return uint64(b.pacingRate) }
 // CanSend allows a packet within the window. Packets not in flight, and
 // probes, are always allowed.
 func (b *BBR) CanSend(flight uint64, size int, inFlight, probe bool) bool {
-	return !inFlight || probe || flight+uint64(size) <= b.cwnd
+	if size < 0 {
+		return false
+	}
+	if !inFlight || probe {
+		return true
+	}
+	return flight <= b.cwnd && uint64(size) <= b.cwnd-flight
 }
 
 // at records an event's time. Reset has no clock, so the draft's OnInit
@@ -202,18 +209,20 @@ func (b *BBR) OnPacketSent(e SentEvent) {
 	}
 }
 
-// OnECN does nothing: the draft leaves ECN experimental.
+// OnECN records an ECN-CE increase as a loss event for the per-round
+// short-term model (bw_shortterm, inflight_shortterm), without entering
+// recovery: RFC 3168 asks an ECN-capable sender to respond to CE as to loss.
+// The owner reports CE before the same ACK's deliveries, so it is noted at
+// the next OnACK, which marks the loss round from the current delivered
+// count.
 func (b *BBR) OnECN(sent, now time.Time) {
-	// RFC 3168 asks an ECN-capable sender to respond to CE as to loss. A
-	// CE increase is a loss event for the per-round short-term model
-	// (bw_shortterm, inflight_shortterm), without entering recovery.
 	b.at(now)
-	b.noteLoss()
+	b.pendingCE = true
 }
 
-// OnPersistentCongestion is the draft's OnEnterRTO: keep the window to
-// restore when recovery ends, then allow one packet beyond what is in
-// flight. Recovery restarts now, so only packets sent from here end it.
+// OnPersistentCongestion stands in for the draft's OnEnterRTO, departing
+// from it: BBR resets as for a new path, from the minimum window, and starts
+// a recovery epoch that only packets sent from now on end.
 func (b *BBR) OnPersistentCongestion() {
 	// The path stopped delivering for long enough that its model can't be
 	// trusted: start over as on a new path, from the minimum window, and
@@ -269,10 +278,15 @@ func (b *BBR) OnACK(e ACKEvent) {
 	}
 	b.at(e.Now)
 	b.inflight, b.delivered = e.Flight, rs.TotalDelivered
-	if !b.hasSeenRTT && rs.RTT > 0 {
-		// InitPacingRate, now that there is an RTT to pace over.
+	if b.pendingCE {
+		b.pendingCE = false
+		b.noteLoss()
+	}
+	if rtt := e.SmoothedRTT; !b.hasSeenRTT && rtt > 0 {
+		// InitPacingRate, now that there is an RTT to pace over: the smoothed
+		// RTT, which the peer's ACK delay doesn't inflate.
 		b.hasSeenRTT = true
-		b.pacingRate = bbrStartupPacingGain * float64(b.initialWindow) / rs.RTT.Seconds()
+		b.pacingRate = bbrStartupPacingGain * float64(b.initialWindow) / rtt.Seconds()
 	}
 	// UpdateModelAndState.
 	b.updateLatestDeliverySignals(rs)
@@ -364,6 +378,8 @@ func (b *BBR) enterDrain() {
 	b.drainStartRound = b.roundCount
 }
 
+// checkDrainDone also leaves Drain after three rounds, as the draft's
+// CheckDrainDone does, in case Startup overestimated the bandwidth.
 func (b *BBR) checkDrainDone() {
 	if b.state == bbrDrain && (b.inflight <= b.inflightGain(1) || b.roundCount > b.drainStartRound+3) {
 		b.enterProbeBW()
@@ -648,6 +664,7 @@ func (b *BBR) updateRound(rs RateSample) {
 func (b *BBR) advanceMaxBwFilter() {
 	b.cycleCount++
 	b.bwHi[1], b.bwHi[0] = b.bwHi[0], 0
+	b.maxBw = max(b.bwHi[0], b.bwHi[1])
 }
 
 func (b *BBR) updateMaxBw(rs RateSample) {

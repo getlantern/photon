@@ -38,11 +38,12 @@ func TestBBRIgnoresLostMTUProbe(t *testing.T) {
 	}
 }
 
-// The first RTT sample replaces the initial pacing rate, which assumed a 1 ms
-// RTT, with the initial window over that RTT.
+// The first smoothed RTT replaces the initial pacing rate, which assumed a
+// 1 ms RTT, with the initial window over that RTT; the raw sample, inflated
+// by the peer's ACK delay, isn't used.
 func TestBBRPacingRateFromFirstRTT(t *testing.T) {
 	b := testBBR()
-	b.OnACK(ACKEvent{Rate: RateSample{NewlyAcked: 1200, RTT: 100 * time.Millisecond, TotalDelivered: 1200}, Now: time.Unix(1, 0)})
+	b.OnACK(ACKEvent{Rate: RateSample{NewlyAcked: 1200, RTT: 125 * time.Millisecond, TotalDelivered: 1200}, SmoothedRTT: 100 * time.Millisecond, Now: time.Unix(1, 0)})
 	if want := uint64(bbrStartupPacingGain * float64(b.initialWindow) / 0.1); b.PacingRate() != want {
 		t.Fatalf("pacing rate %d after a 100ms RTT, want %d", b.PacingRate(), want)
 	}
@@ -164,12 +165,17 @@ func TestBBRStartupExitsOnHighLoss(t *testing.T) {
 	}
 }
 
-// An ECN-CE increase is a loss event for the short-term model.
+// An ECN-CE increase is a loss event for the short-term model, noted with the
+// same ACK's deliveries so its loss round starts from the current count.
 func TestBBRTreatsCEAsLossEvent(t *testing.T) {
 	b := testBBR()
 	b.OnECN(time.Unix(1, 0), time.Unix(2, 0))
+	b.OnACK(ACKEvent{Rate: RateSample{NewlyAcked: 1200, TotalDelivered: 50000}, Now: time.Unix(2, 0)})
 	if !b.lossInRound || b.lossEventsInRound != 1 {
 		t.Fatal("CE not counted as a loss event")
+	}
+	if b.lossRoundDelivered != 50000 {
+		t.Fatal("CE loss round marked at delivered", b.lossRoundDelivered, "want 50000")
 	}
 }
 
