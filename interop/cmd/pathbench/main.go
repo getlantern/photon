@@ -88,6 +88,9 @@ func serverMain(args []string) error {
 	port := fs.Int("port", 4433, "base UDP port: photon-bbr, then photon-newreno, then quic-go")
 	certOut := fs.String("cert-out", "pathbench-cert.pem", "where to write the server's certificate, for clients' -cert")
 	fs.Parse(args)
+	if *port < 1 || *port > 65535-len(senders)+1 {
+		return fmt.Errorf("-port %d leaves no room for %d consecutive ports", *port, len(senders))
+	}
 	cert, err := selfSigned()
 	if err != nil {
 		return err
@@ -97,9 +100,6 @@ func serverMain(args []string) error {
 	}
 	if _, err := serve(context.Background(), *addr, *port, cert, os.Stdout); err != nil {
 		return err
-	}
-	for i, name := range senders {
-		log.Printf("%s on %s", name, net.JoinHostPort(*addr, strconv.Itoa(*port+i)))
 	}
 	select {} // until killed
 }
@@ -131,6 +131,7 @@ func serve(ctx context.Context, addr string, port int, cert tls.Certificate, out
 				return nil, err
 			}
 			closers = append(closers, func() { l.Close() })
+			log.Printf("%s on %s", name, l.Addr())
 			go acceptUpstream(ctx, l, name, logStats)
 			continue
 		}
@@ -144,6 +145,7 @@ func serve(ctx context.Context, addr string, port int, cert tls.Certificate, out
 			return nil, err
 		}
 		closers = append(closers, func() { l.Close() })
+		log.Printf("%s on %s", name, l.Addr())
 		go acceptPhoton(ctx, l, name, logStats)
 	}
 	return stop, nil
@@ -159,8 +161,8 @@ type connStats struct {
 	BytesLost   uint64  `json:"bytes_lost"`
 	PacketsLost uint64  `json:"packets_lost"`
 	LossPercent float64 `json:"loss_percent"`
-	MinRTTms    float64 `json:"min_rtt_ms"`
-	SRTTms      float64 `json:"srtt_ms"`
+	MinRTTms    float64 `json:"min_rtt_ms,omitempty"` // left out if not sampled
+	SRTTms      float64 `json:"srtt_ms,omitempty"`    // left out if not sampled
 	CwndBytes   *uint64 `json:"cwnd_bytes,omitempty"` // nil where the sender doesn't expose it
 }
 
@@ -261,8 +263,8 @@ type flowResult struct {
 	StartSeconds float64 `json:"start_seconds"`
 	Mbps         float64 `json:"mbps"`
 	SharePercent float64 `json:"share_percent"`
-	MinRTTms     float64 `json:"min_rtt_ms,omitempty"`   // 0 if not sampled
-	MeanSRTTms   float64 `json:"mean_srtt_ms,omitempty"` // 0 if not sampled
+	MinRTTms     float64 `json:"min_rtt_ms,omitempty"`   // left out if not sampled
+	MeanSRTTms   float64 `json:"mean_srtt_ms,omitempty"` // left out if not sampled
 	Error        string  `json:"error,omitempty"`
 }
 
@@ -315,8 +317,23 @@ func clientMain(args []string) error {
 	if err != nil {
 		return err
 	}
+	failed := 0
+	for _, f := range res.Flows {
+		if f.Error != "" {
+			failed++
+		}
+	}
+	// A flow that failed competed for only part of the window, so the
+	// shares don't describe the path: report them, but fail the run.
+	var runErr error
+	if failed > 0 {
+		runErr = fmt.Errorf("%d of %d flows failed; the run isn't a valid measurement", failed, len(res.Flows))
+	}
 	if *asJSON {
-		return json.NewEncoder(os.Stdout).Encode(res)
+		if err := json.NewEncoder(os.Stdout).Encode(res); err != nil {
+			return err
+		}
+		return runErr
 	}
 	fmt.Printf("%-4s %-15s %7s %9s %7s %8s %9s\n", "flow", "sender", "start", "Mbit/s", "share", "minRTT", "meanSRTT")
 	for _, f := range res.Flows {
@@ -327,7 +344,7 @@ func clientMain(args []string) error {
 		fmt.Printf("%-4d %-15s %6.0fs %9.1f %6.0f%% %8s %9s\n", f.Flow, f.Sender, f.StartSeconds, f.Mbps, f.SharePercent, msOrDash(f.MinRTTms), msOrDash(f.MeanSRTTms))
 	}
 	fmt.Printf("total %.1f Mbit/s over %.0fs\n", res.TotalMbps, res.WindowSeconds)
-	return nil
+	return runErr
 }
 
 // parseFlows turns "photon-bbr:2,quic-go:1" into one sender per flow.
@@ -479,22 +496,19 @@ func runClient(ctx context.Context, cfg clientConfig) (runResult, error) {
 	}
 	window := time.Since(t0).Seconds()
 	res := runResult{Server: cfg.server, WindowSeconds: window}
-	// A failed flow's bytes cover only part of the window, so it is left out
-	// of the total and the shares.
 	var total float64
 	for i, f := range flows {
 		mbps := float64(f.received.Load()-base[i]) * 8 / window / 1e6
 		r := flowResult{Flow: i + 1, Sender: cfg.mix[i], StartSeconds: (time.Duration(i) * cfg.stagger).Seconds(), Mbps: mbps, MinRTTms: ms(f.minRTT), MeanSRTTms: ms(mean(f.srtt))}
 		if err := f.err.Load(); err != nil {
 			r.Error = (*err).Error()
-		} else {
-			total += mbps
 		}
 		res.Flows = append(res.Flows, r)
+		total += mbps
 	}
 	res.TotalMbps = total
 	for i := range res.Flows {
-		if total > 0 && res.Flows[i].Error == "" {
+		if total > 0 {
 			res.Flows[i].SharePercent = 100 * res.Flows[i].Mbps / total
 		}
 	}
