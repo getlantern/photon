@@ -98,15 +98,19 @@ func serverMain(args []string) error {
 	if err := os.WriteFile(*certOut, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Certificate[0]}), 0o644); err != nil {
 		return err
 	}
-	if _, err := serve(context.Background(), *addr, *port, cert, os.Stdout); err != nil {
+	_, addrs, err := serve(context.Background(), *addr, *port, cert, os.Stdout)
+	if err != nil {
 		return err
+	}
+	for _, a := range addrs {
+		log.Print(a)
 	}
 	select {} // until killed
 }
 
 // serve starts the three senders' listeners and returns a function that
 // stops them. Each closed connection's statistics go to out as a JSON line.
-func serve(ctx context.Context, addr string, port int, cert tls.Certificate, out io.Writer) (func(), error) {
+func serve(ctx context.Context, addr string, port int, cert tls.Certificate, out io.Writer) (stop func(), addrs []string, err error) {
 	tlsConfig := &tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: []string{alpn}}
 	var mu sync.Mutex
 	logStats := func(v any) {
@@ -116,7 +120,7 @@ func serve(ctx context.Context, addr string, port int, cert tls.Certificate, out
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	var closers []func()
-	stop := func() {
+	stop = func() {
 		cancel()
 		for _, c := range closers {
 			c()
@@ -128,10 +132,10 @@ func serve(ctx context.Context, addr string, port int, cert tls.Certificate, out
 			l, err := upstream.ListenAddr(listenAddr, tlsConfig, &upstream.Config{MaxIdleTimeout: 30 * time.Second})
 			if err != nil {
 				stop()
-				return nil, err
+				return nil, nil, err
 			}
 			closers = append(closers, func() { l.Close() })
-			log.Printf("%s on %s", name, l.Addr())
+			addrs = append(addrs, name+" on "+l.Addr().String())
 			go acceptUpstream(ctx, l, name, logStats)
 			continue
 		}
@@ -142,13 +146,13 @@ func serve(ctx context.Context, addr string, port int, cert tls.Certificate, out
 		l, err := quic.ListenAddr(listenAddr, tlsConfig, &quic.Config{MaxIdleTimeout: 30 * time.Second, CongestionControl: congestion})
 		if err != nil {
 			stop()
-			return nil, err
+			return nil, nil, err
 		}
 		closers = append(closers, func() { l.Close() })
-		log.Printf("%s on %s", name, l.Addr())
+		addrs = append(addrs, name+" on "+l.Addr().String())
 		go acceptPhoton(ctx, l, name, logStats)
 	}
-	return stop, nil
+	return stop, addrs, nil
 }
 
 // connStats is the line the server logs for each connection.
@@ -161,8 +165,8 @@ type connStats struct {
 	BytesLost   uint64  `json:"bytes_lost"`
 	PacketsLost uint64  `json:"packets_lost"`
 	LossPercent float64 `json:"loss_percent"`
-	MinRTTms    float64 `json:"min_rtt_ms,omitempty"` // left out if not sampled
-	SRTTms      float64 `json:"srtt_ms,omitempty"`    // left out if not sampled
+	MinRTTms    float64 `json:"min_rtt_ms"`
+	SRTTms      float64 `json:"srtt_ms"`
 	CwndBytes   *uint64 `json:"cwnd_bytes,omitempty"` // nil where the sender doesn't expose it
 }
 
@@ -301,6 +305,9 @@ func clientMain(args []string) error {
 	if *server == "" {
 		return errors.New("-server is required")
 	}
+	if *port < 1 || *port > 65535-len(senders)+1 {
+		return fmt.Errorf("-port %d leaves no room for %d consecutive ports", *port, len(senders))
+	}
 	mix, err := parseFlows(*flows)
 	if err != nil {
 		return err
@@ -337,11 +344,11 @@ func clientMain(args []string) error {
 	}
 	fmt.Printf("%-4s %-15s %7s %9s %7s %8s %9s\n", "flow", "sender", "start", "Mbit/s", "share", "minRTT", "meanSRTT")
 	for _, f := range res.Flows {
+		fmt.Printf("%-4d %-15s %6.0fs %9.1f %6.0f%% %8s %9s", f.Flow, f.Sender, f.StartSeconds, f.Mbps, f.SharePercent, msOrDash(f.MinRTTms), msOrDash(f.MeanSRTTms))
 		if f.Error != "" {
-			fmt.Printf("%-4d %-15s %6.0fs  error: %s\n", f.Flow, f.Sender, f.StartSeconds, f.Error)
-			continue
+			fmt.Printf("  failed: %s", f.Error)
 		}
-		fmt.Printf("%-4d %-15s %6.0fs %9.1f %6.0f%% %8s %9s\n", f.Flow, f.Sender, f.StartSeconds, f.Mbps, f.SharePercent, msOrDash(f.MinRTTms), msOrDash(f.MeanSRTTms))
+		fmt.Println()
 	}
 	fmt.Printf("total %.1f Mbit/s over %.0fs\n", res.TotalMbps, res.WindowSeconds)
 	return runErr
@@ -494,13 +501,20 @@ func runClient(ctx context.Context, cfg clientConfig) (runResult, error) {
 	if !sleepUntil(start.Add(cfg.duration)) {
 		return runResult{}, ctx.Err()
 	}
+	// Each flow's bytes and fate as the window closes: a flow that fails
+	// after it, as the run tears down, completed the window.
 	window := time.Since(t0).Seconds()
+	ends := make([]uint64, len(flows))
+	errs := make([]*error, len(flows))
+	for i, f := range flows {
+		ends[i], errs[i] = f.received.Load(), f.err.Load()
+	}
 	res := runResult{Server: cfg.server, WindowSeconds: window}
 	var total float64
 	for i, f := range flows {
-		mbps := float64(f.received.Load()-base[i]) * 8 / window / 1e6
+		mbps := float64(ends[i]-base[i]) * 8 / window / 1e6
 		r := flowResult{Flow: i + 1, Sender: cfg.mix[i], StartSeconds: (time.Duration(i) * cfg.stagger).Seconds(), Mbps: mbps, MinRTTms: ms(f.minRTT), MeanSRTTms: ms(mean(f.srtt))}
-		if err := f.err.Load(); err != nil {
+		if err := errs[i]; err != nil {
 			r.Error = (*err).Error()
 		}
 		res.Flows = append(res.Flows, r)
