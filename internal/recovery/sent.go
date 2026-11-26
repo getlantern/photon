@@ -276,11 +276,6 @@ func (r *Sent) OnACK(space Space, f wire.AckFrame, now time.Time, delay, maxDela
 	events.Lost = r.DetectLoss(space, now)
 	// After loss detection, so the sample counts this ACK's losses.
 	events.Rate = r.rate.sample(&sampler, now, r.RTT.Minimum, r.RTT.Sampled)
-	for _, p := range events.Lost {
-		if p.InFlight && !p.MTUProbe {
-			events.Rate.NewlyLost += uint64(p.Bytes)
-		}
-	}
 	if !lookup {
 		order(events.Acked)
 	}

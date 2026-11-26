@@ -33,8 +33,8 @@ func TestBBRIgnoresLostMTUProbe(t *testing.T) {
 		}
 	}
 	events := rateACK(t, r, 1, 4, start.Add(50*time.Millisecond))
-	if len(events.Lost) != 1 || r.LostBytes() != 0 || events.Rate.NewlyLost != 0 {
-		t.Fatal("lost MTU probe counted in the loss total", r.LostBytes(), events.Rate.NewlyLost)
+	if len(events.Lost) != 1 || r.LostBytes() != 0 || events.Rate.Lost != 0 {
+		t.Fatal("lost MTU probe counted in the loss total", r.LostBytes(), events.Rate.Lost)
 	}
 }
 
@@ -138,5 +138,73 @@ func TestBBRPersistentCongestionRestartsRecovery(t *testing.T) {
 	b.OnACK(ACKEvent{Acked: []Packet{{SentAt: start.Add(time.Second), Bytes: 1200, InFlight: true}}, Rate: RateSample{NewlyAcked: 1200, TotalDelivered: 1200}, Flight: 1200, Now: blackout})
 	if !b.inRecovery || b.cwnd > max(cut, b.minPipeCwnd())+1200 {
 		t.Fatalf("recovery ended or window %d restored by a packet sent before persistent congestion (cut to %d)", b.cwnd, cut)
+	}
+}
+
+// The ACK that starts a loss round in Startup can exit Startup on high loss,
+// even though the same ACK ends recovery.
+func TestBBRStartupExitsOnHighLoss(t *testing.T) {
+	b := testBBR()
+	start := time.Unix(1, 0)
+	b.delivered = 100000
+	for i := range bbrStartupFullLossCnt {
+		b.OnLoss(LossEvent{Lost: []Packet{{Number: uint64(i), Bytes: 1200, InFlight: true}}, TotalLost: uint64(i+1) * 1200, TotalDelivered: 100000, Now: start})
+	}
+	// An in-flight packet sent after the losses, acknowledged with 6% of its
+	// flight lost since it was sent.
+	later := start.Add(50 * time.Millisecond)
+	b.OnACK(ACKEvent{Acked: []Packet{{SentAt: start.Add(time.Millisecond), Bytes: 1200, InFlight: true}},
+		Rate:   RateSample{NewlyAcked: 1200, PriorDelivered: 100000, TotalDelivered: 101200, Lost: 7200, InFlight: 120000, RTT: 50 * time.Millisecond},
+		Flight: 100000, Now: later})
+	if !b.fullBwReached || b.state == bbrStartup {
+		t.Fatal("Startup didn't exit on high loss, state", b.state)
+	}
+	if b.inRecovery {
+		t.Fatal("the ACK didn't also end recovery")
+	}
+}
+
+// An ECN-CE increase is a loss event for the short-term model.
+func TestBBRTreatsCEAsLossEvent(t *testing.T) {
+	b := testBBR()
+	b.OnECN(time.Unix(1, 0), time.Unix(2, 0))
+	if !b.lossInRound || b.lossEventsInRound != 1 {
+		t.Fatal("CE not counted as a loss event")
+	}
+}
+
+// Persistent congestion resets BBR as for a new path, from the minimum
+// window, and a later ACK doesn't restore the pre-collapse window.
+func TestBBRPersistentCongestionResetsModel(t *testing.T) {
+	b := testBBR()
+	start := time.Unix(1, 0)
+	b.maxBw, b.bw, b.fullBwReached, b.cwnd = 12.5e6, 12.5e6, true, 1_000_000
+	b.state = bbrProbeBWCruise
+	b.OnLoss(LossEvent{Lost: []Packet{{Bytes: 1200, InFlight: true}}, TotalLost: 1200, Flight: 0, Now: start})
+	b.OnPersistentCongestion()
+	if b.state != bbrStartup || b.fullBwReached || b.maxBw != 0 || b.cwnd != b.minPipeCwnd() {
+		t.Fatalf("after persistent congestion: state %d, full bw %t, max bw %v, cwnd %d", b.state, b.fullBwReached, b.maxBw, b.cwnd)
+	}
+	later := start.Add(time.Second)
+	b.OnACK(ACKEvent{Acked: []Packet{{SentAt: later, Bytes: 1200, InFlight: true}}, Rate: RateSample{NewlyAcked: 1200, TotalDelivered: 1200, RTT: 50 * time.Millisecond}, Flight: 0, Now: later.Add(50 * time.Millisecond)})
+	if b.cwnd > 100000 {
+		t.Fatal("pre-collapse window restored:", b.cwnd)
+	}
+}
+
+// The max_bw filter remembers the current and previous ProbeBW cycles: a
+// sample is gone once two cycles have passed without a higher one.
+func TestBBRMaxBwFilterHoldsTwoCycles(t *testing.T) {
+	b := testBBR()
+	b.updateMaxBw(RateSample{Valid: true, Rate: 1000})
+	b.advanceMaxBwFilter()
+	b.updateMaxBw(RateSample{Valid: true, Rate: 400})
+	if b.maxBw != 1000 {
+		t.Fatal("previous cycle's max forgotten after one cycle:", b.maxBw)
+	}
+	b.advanceMaxBwFilter()
+	b.updateMaxBw(RateSample{Valid: true, Rate: 300})
+	if b.maxBw != 400 {
+		t.Fatal("max", b.maxBw, "after two cycles, want the previous cycle's 400")
 	}
 }

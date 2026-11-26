@@ -60,7 +60,8 @@ func (c rateController) PacingRate() uint64 { return c.rate }
 func TestPacerUsesControllerRate(t *testing.T) {
 	now := time.Unix(100, 0)
 	reno, _ := NewCongestion(1200)
-	// 1.2 MB/s: the send quantum is 1 ms, 1200 bytes, raised to two packets.
+	// 1.2 MB/s: the send quantum is 1 ms, 1200 bytes, raised to two packets
+	// of 1200 bytes.
 	c := rateController{NewReno: reno, rate: 1_200_000}
 	var p Pacer
 	if d := p.DelayFor(now, c, 100*time.Millisecond, 1200); d != 0 {
@@ -69,10 +70,10 @@ func TestPacerUsesControllerRate(t *testing.T) {
 	p.Sent(1200)
 	p.Sent(1200)
 	p.Sent(1200)
-	// The bucket held 2904 bytes; 3600 sent leaves it 696 short, plus 1200
-	// for the next packet: 1896 bytes at 1.2 MB/s.
-	if d := p.DelayFor(now, c, 100*time.Millisecond, 1200); d < 1580*time.Microsecond || d > 1581*time.Microsecond {
-		t.Fatal("paced delay", d, "want 1.58ms")
+	// The bucket held 2400 bytes; 3600 sent leaves it 1200 short, plus 1200
+	// for the next packet: 2400 bytes at 1.2 MB/s.
+	if d := p.DelayFor(now, c, 100*time.Millisecond, 1200); d < 2*time.Millisecond || d > 2001*time.Microsecond {
+		t.Fatal("paced delay", d, "want 2ms")
 	}
 	var window Pacer
 	c.rate = 0

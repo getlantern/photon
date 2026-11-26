@@ -18,10 +18,14 @@ import (
 //     recovery; there is no separate RTO recovery. Persistent congestion
 //     (RFC 9002 section 7.6) stands in for the draft's RTO.
 //   - QUIC acknowledgments are selective, so C.has_selective_acks is true.
-//   - ECN is not used, as the draft leaves it experimental.
 //   - A loss event, for the Startup loss exit, is one loss detection.
 //   - As in Linux, the initial pacing rate is recomputed from the first RTT
 //     sample; the draft's 1 ms assumption would leave Startup unpaced.
+//   - An ECN-CE increase is a loss event for the short-term model, as RFC
+//     3168 asks of an ECN-capable sender; the draft leaves ECN experimental.
+//   - Persistent congestion resets the controller as for a new path, from
+//     the minimum window, rather than restoring the pre-collapse window once
+//     recovery ends (RFC 9002 section 7.6.2).
 //   - Spurious loss recovery is not undone (the draft's section 5.5.11): the
 //     transport has no signal that a whole recovery episode was spurious.
 //
@@ -38,21 +42,21 @@ type BBR struct {
 	pacingRate    float64 // bytes per second
 	rng           *rand.Rand
 
-	state                     bbrState
-	pacingGain, cwndGain      float64
-	roundCount                uint64
-	roundStart                bool
-	nextRoundDelivered        uint64
-	idleRestart               bool
-	drainStartRound           uint64
-	delivered, inflight, lost uint64 // the path's C.delivered, C.inflight, C.lost
+	state                bbrState
+	pacingGain, cwndGain float64
+	roundCount           uint64
+	roundStart           bool
+	nextRoundDelivered   uint64
+	idleRestart          bool
+	drainStartRound      uint64
+	delivered, inflight  uint64 // the path's C.delivered and C.inflight
 	// cwndLimited is C.is_cwnd_limited: whether a send filled the window
 	// in the last packet-timed round trip. cwndLimitedInRound tracks the
 	// current round.
 	cwndLimited, cwndLimitedInRound bool
 	hasSeenRTT                      bool
 
-	maxBwFilter         maxFilter
+	bwHi                [2]float64 // max bandwidth in the current and previous ProbeBW cycles
 	cycleCount          uint64
 	maxBw, bw           float64
 	bwShortterm         float64
@@ -118,7 +122,6 @@ const (
 	bbrLossThresh          = 0.02
 	bbrBeta                = 0.7
 	bbrHeadroom            = 0.15
-	bbrMaxBwFilterLen      = 2  // ProbeBW cycles
 	bbrExtraAckedFilterLen = 10 // round trips
 	bbrMinRTTFilterLen     = 10 * time.Second
 	bbrProbeRTTCwndGain    = 0.5
@@ -200,16 +203,27 @@ func (b *BBR) OnPacketSent(e SentEvent) {
 }
 
 // OnECN does nothing: the draft leaves ECN experimental.
-func (b *BBR) OnECN(sent, now time.Time) {}
+func (b *BBR) OnECN(sent, now time.Time) {
+	// RFC 3168 asks an ECN-capable sender to respond to CE as to loss. A
+	// CE increase is a loss event for the per-round short-term model
+	// (bw_shortterm, inflight_shortterm), without entering recovery.
+	b.at(now)
+	b.noteLoss()
+}
 
 // OnPersistentCongestion is the draft's OnEnterRTO: keep the window to
 // restore when recovery ends, then allow one packet beyond what is in
 // flight. Recovery restarts now, so only packets sent from here end it.
 func (b *BBR) OnPersistentCongestion() {
-	b.saveCwnd()
-	b.saveStateUponLoss()
-	b.inRecovery, b.recoveryStart = true, b.now
-	b.cwnd = max(b.inflight+b.smss, b.minPipeCwnd())
+	// The path stopped delivering for long enough that its model can't be
+	// trusted: start over as on a new path, from the minimum window, and
+	// don't restore the old one (RFC 9002 section 7.6.2).
+	now, inflight := b.now, b.inflight
+	b.Reset(b.smss)
+	b.at(now)
+	b.inflight = inflight
+	b.cwnd = b.minPipeCwnd()
+	b.inRecovery, b.recoveryStart = true, now
 }
 
 // OnLoss runs HandleLostPacket for each lost in-flight packet, entering Fast
@@ -217,7 +231,7 @@ func (b *BBR) OnPersistentCongestion() {
 // are skipped: their loss is not congestion.
 func (b *BBR) OnLoss(e LossEvent) {
 	b.at(e.Now)
-	b.inflight, b.lost, b.delivered = e.Flight, e.TotalLost, e.TotalDelivered
+	b.inflight, b.delivered = e.Flight, e.TotalDelivered
 	var batch uint64
 	for _, p := range e.Lost {
 		if p.InFlight && !p.MTUProbe {
@@ -260,17 +274,6 @@ func (b *BBR) OnACK(e ACKEvent) {
 		b.hasSeenRTT = true
 		b.pacingRate = bbrStartupPacingGain * float64(b.initialWindow) / rs.RTT.Seconds()
 	}
-	if b.inRecovery {
-		for _, p := range e.Acked {
-			if p.InFlight && p.SentAt.After(b.recoveryStart) {
-				// Recovery is repaired: restore the last known good window,
-				// which the model bounds below.
-				b.inRecovery = false
-				b.restoreCwnd()
-				break
-			}
-		}
-	}
 	// UpdateModelAndState.
 	b.updateLatestDeliverySignals(rs)
 	b.updateCongestionSignals(rs)
@@ -283,6 +286,18 @@ func (b *BBR) OnACK(e ACKEvent) {
 	b.checkProbeRTT(rs, e.Now)
 	b.advanceLatestDeliverySignals(rs)
 	b.boundBWForModel()
+	// Leaving recovery comes after the model update, which checks whether
+	// the ACK arrived in recovery (the Startup loss exit), and before the
+	// window is set, which bounds the restored window by the model.
+	if b.inRecovery {
+		for _, p := range e.Acked {
+			if p.InFlight && p.SentAt.After(b.recoveryStart) {
+				b.inRecovery = false
+				b.restoreCwnd()
+				break
+			}
+		}
+	}
 	// UpdateControlParameters.
 	b.setPacingRate()
 	b.setCwnd(rs)
@@ -517,7 +532,7 @@ func (b *BBR) adaptLongTermModel(rs RateSample) bool {
 		b.checkProbeLoss = false
 		b.bwProbeStopping = false
 		if b.inProbeBW() && !rs.AppLimited {
-			b.cycleCount++ // AdvanceMaxBwFilter
+			b.advanceMaxBwFilter()
 		}
 		if b.inProbeBW() && b.prevProbePrecautionary && !b.prevProbeTooHigh {
 			b.startProbeBWRefill()
@@ -628,6 +643,13 @@ func (b *BBR) updateRound(rs RateSample) {
 	}
 }
 
+// advanceMaxBwFilter starts a new ProbeBW cycle in the max_bw filter, which
+// holds the current and previous cycles' maxima.
+func (b *BBR) advanceMaxBwFilter() {
+	b.cycleCount++
+	b.bwHi[1], b.bwHi[0] = b.bwHi[0], 0
+}
+
 func (b *BBR) updateMaxBw(rs RateSample) {
 	b.updateRound(rs)
 	if !rs.Valid || rs.Rate == 0 {
@@ -635,7 +657,8 @@ func (b *BBR) updateMaxBw(rs RateSample) {
 	}
 	rate := float64(rs.Rate)
 	if rate >= b.maxBw || !rs.AppLimited {
-		b.maxBw = b.maxBwFilter.update(rate, b.cycleCount, bbrMaxBwFilterLen)
+		b.bwHi[0] = max(b.bwHi[0], rate)
+		b.maxBw = max(b.bwHi[0], b.bwHi[1])
 	}
 }
 

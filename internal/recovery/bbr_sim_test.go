@@ -72,7 +72,7 @@ func simulate(t *testing.T, c Controller, link *simLink, d time.Duration, observ
 			}
 			if len(events.Lost) > 0 {
 				res.lost += len(events.Lost)
-				c.OnLoss(LossEvent{Lost: events.Lost, TotalLost: sent.LostBytes(), Flight: sent.BytesInFlight, Now: a.at})
+				c.OnLoss(LossEvent{Lost: events.Lost, TotalLost: sent.LostBytes(), TotalDelivered: sent.DeliveredBytes(), Flight: sent.BytesInFlight, Now: a.at})
 			}
 			c.OnACK(ACKEvent{Acked: events.Acked, Rate: events.Rate, Flight: sent.BytesInFlight, Now: a.at})
 			if observe != nil {
@@ -83,7 +83,7 @@ func simulate(t *testing.T, c Controller, link *simLink, d time.Duration, observ
 		if lt, _, ok := sent.LossTime(); ok && !lt.After(now) {
 			if lost := sent.DetectLoss(Application, now); len(lost) > 0 {
 				res.lost += len(lost)
-				c.OnLoss(LossEvent{Lost: lost, TotalLost: sent.LostBytes(), Flight: sent.BytesInFlight, Now: now})
+				c.OnLoss(LossEvent{Lost: lost, TotalLost: sent.LostBytes(), TotalDelivered: sent.DeliveredBytes(), Flight: sent.BytesInFlight, Now: now})
 			}
 		}
 		// Send what the window and pacer allow: the application always has
