@@ -173,7 +173,7 @@ func (c *Conn) pathHasData(id uint64) bool {
 		return false
 	}
 	for _, item := range own.space.queue {
-		if !item.acked {
+		if c.sendable(item) {
 			return true
 		}
 	}
