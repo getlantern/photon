@@ -116,13 +116,27 @@ func TestPacerLargePacketSurvivesSmallChecks(t *testing.T) {
 		now = now.Add(20 * time.Millisecond)
 		p.DelayFor(now, c, time.Second, 1200)
 		if p.DelayFor(now, c, time.Second, 3000) == 0 {
-			// Once it goes, bursts follow the rate again.
-			p.Sent(3000)
-			if p.largest != 0 {
-				t.Fatal("burst floor kept after the large packet went:", p.largest)
-			}
 			return
 		}
 	}
 	t.Fatal("3000-byte packet starved by checks for 1200-byte ones")
+}
+
+// A large packet checked and never sent leaves no trace: later small
+// packets still burst only as the rate allows.
+func TestPacerUnsentLargePacketKeepsBurst(t *testing.T) {
+	now := time.Unix(100, 0)
+	reno, _ := NewCongestion(1200)
+	c := rateController{NewReno: reno, rate: 36_000}
+	var p Pacer
+	p.DelayFor(now, c, time.Second, 9000)
+	now = now.Add(time.Second)
+	sent := 0
+	for p.DelayFor(now, c, time.Second, 1200) == 0 {
+		p.Sent(1200)
+		sent++
+	}
+	if sent != 2 {
+		t.Fatal("burst of", sent, "packets after an unsent 9000-byte check, want 2")
+	}
 }
