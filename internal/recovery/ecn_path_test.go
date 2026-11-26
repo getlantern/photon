@@ -3,6 +3,8 @@ package recovery
 import (
 	"testing"
 	"time"
+
+	"github.com/getlantern/photon/internal/wire"
 )
 
 func TestECNPathProbeBudgetAndLoss(t *testing.T) {
@@ -326,5 +328,76 @@ func TestECNPathPartialCENotRemarked(t *testing.T) {
 	}
 	if p.State() == ECNFailed {
 		t.Fatal("two probes with one CE between them failed the path as remarked")
+	}
+}
+
+// A reordered ACK before a path change leaves a packet's counts unconsumed;
+// the first consumed counts after the change report it as the old path's,
+// so its ECT can't validate a new path that remarks everything.
+func TestECNReorderedACKBeforePathChange(t *testing.T) {
+	r := tracker(t)
+	r.EnableECN()
+	at := time.Unix(100, 0)
+	send := func(pn uint64, marking ECNMark) {
+		t.Helper()
+		if err := r.OnSent(Application, Packet{Number: pn, SentAt: at, Bytes: 1200, AckEliciting: true, InFlight: true, ECN: marking}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	send(0, ECT0)
+	send(1, ECT0)
+	step := func(i int, frame wire.AckFrame, counts [3]uint64) {
+		t.Helper()
+		frame.ECN = &counts
+		if _, err := r.OnACK(Application, frame, at.Add(time.Duration(i)*time.Millisecond), 0, 0, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	step(1, ack(1, 1), [3]uint64{1, 0, 0})
+	step(2, ack(0, 1), [3]uint64{2, 0, 0}) // reordered: packet 0, not consumed
+	r.ResetForPathChange()
+	send(2, r.ECNMarkingAt(Application, at))
+	step(3, ack(0, 2), [3]uint64{2, 0, 1}) // the new path's probe, remarked
+	if r.ECNState() == ECNCapable {
+		t.Fatal("a pre-change packet's deferred ECT validated a remarking new path")
+	}
+}
+
+// A packet whose evidence was reclaimed before a path change can still be
+// reported late; it counts as the old path's, so its ECT can't validate a
+// new path that remarks everything.
+func TestECNReclaimedEvidenceAcrossPathChange(t *testing.T) {
+	r, _ := NewSent(4)
+	r.EnableECN()
+	at := time.Unix(100, 0)
+	send := func(pn uint64, marking ECNMark) {
+		t.Helper()
+		if err := r.OnSent(Application, Packet{Number: pn, SentAt: at, Bytes: 1200, AckEliciting: true, InFlight: true, ECN: marking}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for pn := uint64(0); pn < 4; pn++ {
+		send(pn, ECT0)
+	}
+	frame := ack(3, 3)
+	frame.ECN = &[3]uint64{1, 0, 0}
+	if _, err := r.OnACK(Application, frame, at.Add(time.Millisecond), 0, 0, true); err != nil {
+		t.Fatal(err)
+	}
+	send(4, ECT0)
+	r.ECNMarkingAt(Application, at) // full: reclaims lost packet 0
+	if _, ok := r.spaces[Application].ecnPending[0]; ok {
+		t.Fatal("setup: packet 0's evidence wasn't reclaimed")
+	}
+	r.ResetForPathChange()
+	send(5, r.ECNMarkingAt(Application, at))
+	// Packet 0 arrives late, ECT, with the new path's probe, remarked.
+	frame = wire.AckFrame{Ranges: []wire.AckRange{{Smallest: 5, Largest: 5}, {Smallest: 0, Largest: 0}}}
+	frame.ECN = &[3]uint64{2, 0, 1}
+	if _, err := r.OnACK(Application, frame, at.Add(2*time.Millisecond), 0, 0, true); err != nil {
+		t.Fatal(err)
+	}
+	if r.ECNState() == ECNCapable {
+		t.Fatal("a reclaimed pre-change packet's ECT validated a remarking new path")
 	}
 }

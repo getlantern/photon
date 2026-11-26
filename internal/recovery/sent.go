@@ -54,10 +54,18 @@ type packetSpace struct {
 	ecnSent        [2]uint64
 	ecnPending     map[uint64]ecnTransmission
 	ecnReclaimable bool // a packet with ECN evidence left the ledger since the last reclaim
-	// ecnOldUnreported counts old-path marked packets newly acknowledged by
-	// ACKs whose counts weren't consumed, such as reordered ones: the next
-	// consumed counts report them.
+	// ecnOldUnreported counts marked packets from before a path change whose
+	// feedback consumed counts have yet to report: old-path packets newly
+	// acknowledged by ACKs whose counts weren't consumed, such as reordered
+	// ones, and, from before the change, this path's packets acknowledged
+	// that way (ecnUnreported, until counts are consumed) or whose evidence
+	// was reclaimed (ecnReclaimed). Consumed counts take the old path's
+	// share from it, up to the packets they report, so a report of an old
+	// packet is never taken as the new path's; at worst the new path's own
+	// first reports are, which can leave it without ECN, the safe outcome.
 	ecnOldUnreported  uint64
+	ecnUnreported     uint64
+	ecnReclaimed      uint64
 	ackOnly           ackOnlyOrder
 	ackNodes          map[uint64]*ackOnlyNode
 	packets           map[uint64]Packet
@@ -212,13 +220,17 @@ func (r *Sent) OnACK(space Space, f wire.AckFrame, now time.Time, delay, maxDela
 	var old uint64
 	events.NewlyECT, old = s.ackECN(f)
 	events.ECN = s.ecnFeedback.Check(largest, f.ECN, s.ecnSent, events.NewlyECT)
-	// Old-path packets an unconsumed ACK acknowledged are reported by the
-	// next consumed counts, so they stay attributed to the old path until
-	// then.
+	// Old-path packets stay attributed to the old path until consumed
+	// counts report them (see ecnOldUnreported).
 	s.ecnOldUnreported += old
-	old = 0
 	if events.ECN.Consumed {
-		old, s.ecnOldUnreported = s.ecnOldUnreported, 0
+		old = min(s.ecnOldUnreported, events.ECN.ECT+events.ECN.CE)
+		s.ecnOldUnreported -= old
+		s.ecnUnreported = 0
+	} else {
+		// This path's, should the path change before counts are consumed.
+		s.ecnUnreported += events.NewlyECT[0] + events.NewlyECT[1] - old
+		old = 0
 	}
 	// This path's share of the feedback: the counts don't say which packets
 	// arrived ECT and which CE, so each takes the worst case, that the
@@ -455,7 +467,8 @@ func (r *Sent) ResetForPathChange() [3][]Packet {
 		}
 		ecnFeedback[i] = r.spaces[i].ecnFeedback
 		ecnSent[i], ecnPending[i] = r.spaces[i].ecnSent, r.spaces[i].ecnPending
-		ecnOldUnreported[i] = r.spaces[i].ecnOldUnreported
+		// This path's unreported packets are the old path's now.
+		ecnOldUnreported[i] = r.spaces[i].ecnOldUnreported + r.spaces[i].ecnUnreported + r.spaces[i].ecnReclaimed
 		outstanding[i] = r.Abandon(Space(i))
 	}
 	r.ResetForRetry()
