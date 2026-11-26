@@ -221,7 +221,11 @@ func (r *Sent) OnACK(space Space, f wire.AckFrame, now time.Time, delay, maxDela
 	events.ECN = s.ecnFeedback.Check(largest, f.ECN, s.ecnSent, events.NewlyECT)
 	path := s.pathECN(events.ECN)
 	r.ecnPath.ACK(space, f, path)
-	if events.ECN.CE > 0 {
+	// Congestion for NewReno's recovery epoch, under the gates BBR's marks
+	// have: only this path's share, and only once the path has passed
+	// validation, so a path remarking every probe CE fails before it halves
+	// the window.
+	if path.CE > 0 && r.ecnPath.State() == ECNCapable {
 		if largestNew {
 			events.ECNCongestion = true
 			events.ECNSentAt = largestPacket.SentAt
