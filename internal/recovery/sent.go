@@ -54,18 +54,18 @@ type packetSpace struct {
 	ecnSent        [2]uint64
 	ecnPending     map[uint64]ecnTransmission
 	ecnReclaimable bool // a packet with ECN evidence left the ledger since the last reclaim
-	// ecnOldUnreported counts marked packets from before a path change whose
-	// feedback consumed counts have yet to report: old-path packets newly
-	// acknowledged by ACKs whose counts weren't consumed, such as reordered
-	// ones, and, from before the change, this path's packets acknowledged
-	// that way (ecnUnreported, until counts are consumed) or whose evidence
-	// was reclaimed (ecnReclaimed). Consumed counts take the old path's
-	// share from it, up to the packets they report, so a report of an old
-	// packet is never taken as the new path's; at worst the new path's own
-	// first reports are, which can leave it without ECN, the safe outcome.
-	ecnOldUnreported  uint64
-	ecnUnreported     uint64
-	ecnReclaimed      uint64
+	// ECN feedback attributed to the current network path. At a path
+	// change, ecnBase records the cumulative counts reported so far and
+	// ecnOld the marked packets sent before it that no count has reported
+	// yet. Any later report, ECT or CE, may be one of those, whatever ACK
+	// ranges, reordering or reclaimed evidence say, so the path is credited
+	// only with ECT and CE beyond ecnOld since the change; ecnCredited is
+	// what it has been credited so far. At worst the new path's own first
+	// reports go uncredited, which can leave it without ECN, the safe
+	// outcome. Before any path change all feedback is the path's.
+	ecnBase           [3]uint64
+	ecnOld            uint64
+	ecnCredited       [2]uint64 // ECT, CE
 	ackOnly           ackOnlyOrder
 	ackNodes          map[uint64]*ackOnlyNode
 	packets           map[uint64]Packet
@@ -217,28 +217,9 @@ func (r *Sent) OnACK(space Space, f wire.AckFrame, now time.Time, delay, maxDela
 	}
 	largestPacket, largestNew := s.packets[largest]
 	ecnPacket, haveECNPacket := s.ecnPending[largest]
-	var old uint64
-	events.NewlyECT, old = s.ackECN(f)
+	events.NewlyECT = s.ackECN(f)
 	events.ECN = s.ecnFeedback.Check(largest, f.ECN, s.ecnSent, events.NewlyECT)
-	// Old-path packets stay attributed to the old path until consumed
-	// counts report them (see ecnOldUnreported).
-	s.ecnOldUnreported += old
-	if events.ECN.Consumed {
-		old = min(s.ecnOldUnreported, events.ECN.ECT+events.ECN.CE)
-		s.ecnOldUnreported -= old
-		s.ecnUnreported = 0
-	} else {
-		// This path's, should the path change before counts are consumed.
-		s.ecnUnreported += events.NewlyECT[0] + events.NewlyECT[1] - old
-		old = 0
-	}
-	// This path's share of the feedback: the counts don't say which packets
-	// arrived ECT and which CE, so each takes the worst case, that the
-	// old path's packets were the ECT ones (for capability) and the CE ones
-	// (for congestion).
-	path := events.ECN
-	path.ECT -= min(path.ECT, old)
-	path.CE -= min(path.CE, old)
+	path := s.pathECN(events.ECN)
 	r.ecnPath.ACK(space, f, path)
 	if events.ECN.CE > 0 {
 		if largestNew {
@@ -459,23 +440,23 @@ func (r *Sent) ResetForPathChange() [3][]Packet {
 	var ecnFeedback [3]ECNFeedback
 	var ecnSent [3][2]uint64
 	var ecnPending [3]map[uint64]ecnTransmission
-	var ecnOldUnreported [3]uint64
+	var ecnAttribution [3]packetSpace
 	for i := range r.spaces {
+		r.spaces[i].changePathECN()
 		for pn, evidence := range r.spaces[i].ecnPending {
 			evidence.currentPath = false
 			r.spaces[i].ecnPending[pn] = evidence
 		}
 		ecnFeedback[i] = r.spaces[i].ecnFeedback
 		ecnSent[i], ecnPending[i] = r.spaces[i].ecnSent, r.spaces[i].ecnPending
-		// This path's unreported packets are the old path's now.
-		ecnOldUnreported[i] = r.spaces[i].ecnOldUnreported + r.spaces[i].ecnUnreported + r.spaces[i].ecnReclaimed
+		ecnAttribution[i] = packetSpace{ecnBase: r.spaces[i].ecnBase, ecnOld: r.spaces[i].ecnOld}
 		outstanding[i] = r.Abandon(Space(i))
 	}
 	r.ResetForRetry()
 	for i := range r.spaces {
 		r.spaces[i].ecnFeedback = ecnFeedback[i]
 		r.spaces[i].ecnSent, r.spaces[i].ecnPending = ecnSent[i], ecnPending[i]
-		r.spaces[i].ecnOldUnreported = ecnOldUnreported[i]
+		r.spaces[i].ecnBase, r.spaces[i].ecnOld = ecnAttribution[i].ecnBase, ecnAttribution[i].ecnOld
 	}
 	return outstanding
 }
@@ -526,4 +507,26 @@ func (r *Sent) rejectLocalPacket(number uint64, probe, requireLarge bool) bool {
 	// The newest packet cannot contribute to lossTime: no larger packet has
 	// been acknowledged before this synchronous send-result callback.
 	return true
+}
+
+// pathECN is the current path's share of feedback: the ECT and CE reported
+// since the last path change beyond the packets sent before it that could
+// account for them (see ecnBase).
+func (s *packetSpace) pathECN(feedback ECNFeedbackResult) ECNFeedbackResult {
+	counts := s.ecnFeedback.counts
+	ect := counts[0] + counts[1] - s.ecnBase[0] - s.ecnBase[1]
+	ce := counts[2] - s.ecnBase[2]
+	ect, ce = ect-min(ect, s.ecnOld), ce-min(ce, s.ecnOld)
+	feedback.ECT, feedback.CE = ect-s.ecnCredited[0], ce-s.ecnCredited[1]
+	s.ecnCredited = [2]uint64{ect, ce}
+	return feedback
+}
+
+// changePathECN starts attributing feedback to a new path (see ecnBase).
+func (s *packetSpace) changePathECN() {
+	counts := s.ecnFeedback.counts
+	reported := counts[0] + counts[1] + counts[2]
+	s.ecnBase = counts
+	s.ecnOld = s.ecnSent[0] + s.ecnSent[1] - min(s.ecnSent[0]+s.ecnSent[1], reported)
+	s.ecnCredited = [2]uint64{}
 }
