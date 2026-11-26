@@ -386,3 +386,27 @@ func TestHeldCIDAdvertisementIsNotData(t *testing.T) {
 		t.Fatal("held NEW_CONNECTION_ID counted as data to send")
 	}
 }
+
+// A path whose own queue holds only a held CID advertisement can't borrow:
+// the scheduler doesn't borrow onto a non-empty queue, and the advertisement
+// stays until forwarding resumes. Another path's data then doesn't count.
+func TestHeldAdvertisementBlocksBorrowing(t *testing.T) {
+	client, _ := sendingPathPair(t, wire.Version1)
+	app := client.multipath.paths[1].application
+	app.validation.state = PathValidated
+	id, err := client.OpenStream(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.queueFrameOnPath(0, wire.StreamFrame{StreamID: id, Data: make([]byte, 1000)}); err != nil {
+		t.Fatal(err)
+	}
+	if !client.pathHasData(1) {
+		t.Fatal("setup: path 1 can't borrow path 0's data")
+	}
+	app.space.queue = append(app.space.queue, &sendItem{frame: wire.NewConnectionIDFrame{Sequence: 9}, queued: true})
+	client.forwardingBlocked = true
+	if client.pathHasData(1) {
+		t.Fatal("path 1 counted data it can't borrow past a held advertisement")
+	}
+}
