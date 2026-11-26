@@ -164,9 +164,10 @@ func TestConnectionStatisticsCongestionWindow(t *testing.T) {
 					time.Sleep(time.Millisecond)
 				}
 			}
-			// The server's post-handshake packets: HANDSHAKE_DONE, NEW_TOKEN,
-			// NEW_CONNECTION_ID.
+			// The server's post-handshake packets (HANDSHAKE_DONE, NEW_TOKEN,
+			// NEW_CONNECTION_ID) and the client's last handshake packets.
 			drained(server)
+			drained(client)
 			initial, idle := window(client), window(server)
 			// RFC 9002 section 7.2 bounds NewReno's initial window for any
 			// datagram size. BBR's Startup also grows its window with the
@@ -206,8 +207,12 @@ func TestConnectionStatisticsCongestionWindow(t *testing.T) {
 			// NewReno's slow start grows the sender's window. (BBR's is bounded
 			// by its estimate of the path, which on loopback can be smaller
 			// than the window it started with.)
-			if grown := window(client); tc.congestion == CongestionControlNewReno && grown <= initial {
+			grown := window(client)
+			if tc.congestion == CongestionControlNewReno && grown <= initial {
 				t.Fatal("sender window did not grow", initial, grown)
+			}
+			if grown < low {
+				t.Fatal("sender window below the minimum", grown)
 			}
 			// The receiver sent only ACKs and the MAX_STREAMS that released the
 			// stream; NewReno doesn't grow while application limited.
