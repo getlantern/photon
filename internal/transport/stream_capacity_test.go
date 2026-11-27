@@ -36,7 +36,13 @@ func TestNegotiatedStreamConcurrency(t *testing.T) {
 							t.Fatalf("open %d: %v", i, err)
 						}
 						x.ids = append(x.ids, id)
-						if n, err := x.sender.WriteStream(id, []byte{byte(i)}, true); err != nil || n != 1 {
+						n, err := x.sender.WriteStream(id, []byte{byte(i)}, true)
+						if errors.Is(err, stream.ErrWouldBlock) {
+							// A full send queue waits for packets to leave.
+							drivePair(t, client, server, false, false)
+							n, err = x.sender.WriteStream(id, []byte{byte(i)}, true)
+						}
+						if err != nil || n != 1 {
 							t.Fatalf("write: %d %v", n, err)
 						}
 					}

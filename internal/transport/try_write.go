@@ -34,6 +34,11 @@ func (c *Conn) TryWriteStreamAll(id uint64, data []byte) error {
 	if len(data)+frames*32+reserve > available {
 		return stream.ErrWouldBlock
 	}
+	// All or nothing: the slice waits for room for all its frames. Within
+	// the send buffer, a slice needs fewer than maxQueuedFrames.
+	if c.queuedFrames()+frames > maxQueuedFrames {
+		return stream.ErrWouldBlock
+	}
 	if c.multipath != nil && c.confirmed {
 		if _, ok := c.survivingPath(^uint64(0)); !ok {
 			return c.fail(&TransportError{Code: 0x10, Reason: "no viable path for application output"})

@@ -27,6 +27,30 @@ func (c *Conn) streamPriority(id uint64) streamPriority {
 	return streamPriority{3, true}
 }
 
+// maxQueuedFrames bounds the application frames waiting to be sent before
+// new stream data waits too. Choosing each packet's stream scans the queue,
+// so its length is the per-packet cost: about 5 ns a frame, so 1024 cost
+// about 5 µs. A write of one byte is one frame, so without the bound tiny
+// writes could queue tens of thousands. Priority orders only what is
+// queued, so the bound is no tighter than the 1 MiB of stream data, in
+// frames of about a packet each, that the send buffer has queued.
+const maxQueuedFrames = 1024
+
+// queuedFrames is how many application frames wait to be sent, on every
+// path.
+func (c *Conn) queuedFrames() int {
+	if c.multipath == nil {
+		return len(c.spaces[applicationSpace].queue)
+	}
+	n := 0
+	for _, state := range c.multipath.paths {
+		if state.application != nil {
+			n += len(state.application.space.queue)
+		}
+	}
+	return n
+}
+
 // prioritizeStreams moves one selected item to the queue head. Non-STREAM slots
 // retain their positions, preserving control and DATAGRAM service. Within STREAM work, retransmitted
 // bytes precede fresh bytes, then urgency determines precedence. Incremental
