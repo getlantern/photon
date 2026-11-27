@@ -134,12 +134,13 @@ func (s *wanShaper) admit(now time.Time, n int) (time.Time, bool) {
 	if s.link.stepAfter > 0 && now.Sub(s.first) >= s.link.stepAfter {
 		rate = s.link.stepRate
 	}
-	if rate <= 0 {
-		return now, true
-	}
 	departure := now
 	if s.busyUntil.After(now) {
 		departure = s.busyUntil
+	}
+	if rate <= 0 {
+		// Unlimited, but after any backlog from a finite rate before a step.
+		return departure, true
 	}
 	if departure.Sub(now) > s.link.queue {
 		return time.Time{}, false
@@ -310,6 +311,16 @@ func TestWANShaperStep(t *testing.T) {
 	later := start.Add(time.Second)
 	if at, _ := s.admit(later, 1000); at.Sub(later) != 100*time.Millisecond {
 		t.Fatal("after the step:", at.Sub(later))
+	}
+	// A step to an unlimited rate still departs after the backlog.
+	u := wanShaper{link: wanLink{rate: 100_000, queue: time.Second, stepAfter: time.Second}}
+	u.admit(start, 1000)
+	for range 5 {
+		u.admit(start.Add(999*time.Millisecond), 1000)
+	}
+	backlog := u.busyUntil
+	if at, _ := u.admit(start.Add(time.Second), 1000); at.Before(backlog) {
+		t.Fatal("unlimited after a step departed", backlog.Sub(at), "before the backlog")
 	}
 }
 
