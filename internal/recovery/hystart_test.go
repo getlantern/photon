@@ -111,6 +111,27 @@ func TestHyStartLossDuringCSS(t *testing.T) {
 	}
 }
 
+// The spurious-rise check needs only the current round's samples: a CSS
+// round with no RTT samples doesn't keep the next from resuming slow start.
+func TestHyStartSpuriousAfterUnsampledRound(t *testing.T) {
+	d := newHystartDriver(t)
+	for range 3 {
+		d.round(100 * time.Millisecond)
+	}
+	d.round(130 * time.Millisecond)
+	if !d.c.hystart.css {
+		t.Fatal("rising RTT did not enter CSS")
+	}
+	d.round(0) // ACKs with no RTT sample
+	if !d.c.hystart.css {
+		t.Fatal("unsampled round left CSS")
+	}
+	d.round(100 * time.Millisecond)
+	if d.c.hystart.css || !d.inSlowStart() {
+		t.Fatal("RTT fell back after an unsampled round, but CSS continued")
+	}
+}
+
 // HyStart++ covers only the first slow start: after a loss, a later slow
 // start, toward the halved threshold, ignores the RTT.
 func TestHyStartOnlyInitialSlowStart(t *testing.T) {

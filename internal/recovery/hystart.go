@@ -63,10 +63,15 @@ func (h *hystart) onACK(e ACKEvent) bool {
 		}
 		h.samples++
 	}
-	if h.samples < hystartRTTSamples || h.currentMin == 0 || h.lastMin == 0 {
+	// RFC 9406 checks both a rise and a spurious one only in rounds with
+	// enough samples; only a rise needs the last round's minimum.
+	if h.samples < hystartRTTSamples || h.currentMin == 0 {
 		return false
 	}
 	if !h.css {
+		if h.lastMin == 0 {
+			return false
+		}
 		thresh := min(max(h.lastMin/hystartMinRTTDivisor, hystartMinRTTThresh), hystartMaxRTTThresh)
 		if h.currentMin >= h.lastMin+thresh {
 			h.css, h.cssBaseline, h.cssRoundsDone = true, h.currentMin, 0
