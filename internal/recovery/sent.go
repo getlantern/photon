@@ -180,6 +180,12 @@ func (r *Sent) OnSent(space Space, p Packet) error {
 		r.ecnPath.Sent(space, p.Number)
 	}
 	r.history.sent(space, p, r.RTT.Sampled)
+	if _, tracked := s.packets[p.Number]; !tracked {
+		// A pure ACK sent while the ledger is full of packets in flight:
+		// nothing will ACK or lose it, so settle its record now, as when
+		// one is evicted.
+		r.history.resolve(space, p.Number)
+	}
 	s.next++
 	if p.AckEliciting {
 		s.previousEliciting = s.lastEliciting
@@ -387,7 +393,9 @@ func (r *Sent) OnACK(space Space, f wire.AckFrame, now time.Time, delay, maxDela
 // It visits packets oldest first and stops at the first one not lost: every
 // later one is both nearer the largest acknowledged and sent no earlier, so
 // neither threshold can declare it lost either, and the first one's deadline
-// is the earliest.
+// is the earliest. Send times come from the owner's clock and don't go back;
+// if they did, a later packet's time-threshold loss would wait, at most by
+// the regression, for the earlier packet's deadline.
 func (r *Sent) DetectLoss(space Space, now time.Time) []Packet {
 	if space > Application {
 		return nil

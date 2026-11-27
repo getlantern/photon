@@ -155,3 +155,31 @@ func TestACKAccountingModel(t *testing.T) {
 		}
 	}
 }
+
+// A pure ACK sent while the ledger is full of packets in flight isn't
+// tracked, so no ACK reaches it through recovery; its history record is
+// settled when it is sent, and the acknowledged history trims.
+func TestUntrackedPureACKHistorySettles(t *testing.T) {
+	r, err := NewSent(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(100, 0)
+	for pn := range uint64(2) {
+		if err := r.OnSent(Application, Packet{Number: pn, SentAt: now, Bytes: 1200, AckEliciting: true, InFlight: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := r.OnSent(Application, Packet{Number: 2, SentAt: now, Bytes: 50}); err != nil {
+		t.Fatal(err)
+	}
+	if _, tracked := r.spaces[Application].packets[2]; tracked {
+		t.Fatal("fixture must leave the pure ACK untracked")
+	}
+	if _, err := r.OnACK(Application, ack(0, 2), now.Add(time.Millisecond), 0, 0, true); err != nil {
+		t.Fatal(err)
+	}
+	if n := r.history.order.Len(); n != 0 {
+		t.Fatal("acknowledged history not trimmed", n)
+	}
+}
