@@ -51,11 +51,17 @@ type Events struct {
 	Rate RateSample
 }
 type packetSpace struct {
-	ecnFeedback    ECNFeedback
-	ecnSent        [2]uint64
-	ecnPending     map[uint64]ecnTransmission
-	ecnUntracked   numberSet // ecnPending's numbers whose packets recovery doesn't track
-	ecnReclaimable bool      // a packet with ECN evidence left the ledger since the last reclaim
+	ecnFeedback ECNFeedback
+	ecnSent     [2]uint64
+	ecnPending  map[uint64]ecnTransmission
+	// ecnPending's numbers whose packets recovery no longer tracks, in two
+	// sets because each fills in ascending order: ecnLost, marks of packets
+	// declared lost (oldest first) or abandoned at a path change (all older
+	// than any sent after); ecnDropped, marks of pure ACKs evicted from a full
+	// ledger (oldest first) or never tracked, which happens only while it
+	// holds no pure ACK, so after every earlier eviction.
+	ecnLost, ecnDropped numberSet
+	ecnReclaimable      bool // a packet with ECN evidence left the ledger since the last reclaim
 	// ECN feedback attributed to the current network path. At a path
 	// change, ecnBase records the cumulative counts reported so far and
 	// ecnOld the marked packets sent before it that no count has reported
@@ -147,6 +153,9 @@ func (r *Sent) OnSent(space Space, p Packet) error {
 	if !r.CanTrack(space) && s.ackOnly.Len() > 0 {
 		old := s.ackOnly.Front().number
 		r.remove(s, s.packets[old])
+		if _, ok := s.ecnPending[old]; ok {
+			s.ecnDropped.add(old)
+		}
 		r.history.resolve(space, old)
 	}
 	if p.InFlight {
@@ -169,7 +178,7 @@ func (r *Sent) OnSent(space Space, p Packet) error {
 		}
 		s.ecnPending[p.Number] = ecnTransmission{marking: p.ECN, sentAt: p.SentAt, currentPath: true}
 		if _, tracked := s.packets[p.Number]; !tracked {
-			s.ecnUntracked.add(p.Number)
+			s.ecnDropped.add(p.Number)
 		}
 		s.ecnSent[p.ECN.index()]++
 	}
@@ -281,7 +290,6 @@ func (r *Sent) remove(s *packetSpace, p Packet) {
 		s.eliciting--
 	}
 	if _, ok := s.ecnPending[p.Number]; ok {
-		s.ecnUntracked.add(p.Number)
 		s.ecnReclaimable = true
 	}
 	if node := s.ackNodes[p.Number]; node != nil {
@@ -417,6 +425,9 @@ func (r *Sent) DetectLoss(space Space, now time.Time) []Packet {
 		}
 		lost = append(lost, p)
 		r.remove(s, p)
+		if _, ok := s.ecnPending[p.Number]; ok {
+			s.ecnLost.add(p.Number)
+		}
 		node = next
 	}
 	for _, p := range lost {
@@ -452,7 +463,8 @@ func (r *Sent) Discard(space Space) {
 	// Drop the marking evidence first: removing each packet would otherwise
 	// file its mark as untracked, in map order, only to discard it.
 	s.ecnPending = nil
-	s.ecnUntracked.clear()
+	s.ecnLost.clear()
+	s.ecnDropped.clear()
 	for _, p := range s.packets {
 		r.remove(s, p)
 	}
@@ -540,7 +552,7 @@ func (r *Sent) ResetForPathChange() [3][]Packet {
 		r.spaces[i].ecnSent, r.spaces[i].ecnPending = ecnSent[i], ecnPending[i]
 		// Every retained mark is now of a packet recovery no longer tracks.
 		for _, pn := range slices.Sorted(maps.Keys(ecnPending[i])) {
-			r.spaces[i].ecnUntracked.add(pn)
+			r.spaces[i].ecnLost.add(pn)
 		}
 		r.spaces[i].ecnBase, r.spaces[i].ecnOld = ecnAttribution[i].ecnBase, ecnAttribution[i].ecnOld
 	}

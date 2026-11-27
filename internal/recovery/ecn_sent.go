@@ -55,7 +55,8 @@ func (r *Sent) reclaimECN(space Space) {
 	for pn, evidence := range s.ecnPending {
 		if _, ok := s.packets[pn]; !ok && evidence.currentPath {
 			delete(s.ecnPending, pn)
-			s.ecnUntracked.remove(pn)
+			s.ecnLost.remove(pn)
+			s.ecnDropped.remove(pn)
 		}
 	}
 }
@@ -109,7 +110,8 @@ func (r *Sent) RejectECNMarking(space Space, number uint64) bool {
 	}
 	s.ecnSent[evidence.marking.index()]--
 	delete(s.ecnPending, number)
-	s.ecnUntracked.remove(number)
+	s.ecnLost.remove(number)
+	s.ecnDropped.remove(number)
 	if packet, ok := s.packets[number]; ok {
 		packet.ECN = NotECT
 		s.packets[number] = packet
@@ -131,7 +133,7 @@ func (r *Sent) ECNMarkingAt(space Space, now time.Time) ECNMark {
 
 // ackECN is called only after ACK range/unsent validation. acked are the
 // packets f newly acknowledges that recovery still tracks; marks of packets it
-// no longer tracks are found through ecnUntracked by f's ranges. Neither
+// no longer tracks are found through ecnLost and ecnDropped by f's ranges. Neither
 // enumerates a peer-supplied range or scans the retained evidence.
 func (s *packetSpace) ackECN(frame wire.AckFrame, acked []Packet) (newly [2]uint64) {
 	if len(s.ecnPending) == 0 {
@@ -147,6 +149,7 @@ func (s *packetSpace) ackECN(frame wire.AckFrame, acked []Packet) (newly [2]uint
 	for _, p := range acked {
 		count(p.Number)
 	}
-	s.ecnUntracked.covered(frame, count)
+	s.ecnLost.covered(frame, count)
+	s.ecnDropped.covered(frame, count)
 	return
 }

@@ -281,3 +281,58 @@ func BenchmarkNumberSetCoveredAfterRecovery(b *testing.B) {
 		s.covered(f, func(uint64) bool { return false })
 	}
 }
+
+// Marks of untracked pure ACKs enter their set before older marked data is
+// declared lost, as with a ledger full of data in flight; each set still
+// fills in order, with no rebuilding insert,
+// and every mark is counted once an ACK covers it.
+func TestMixedUntrackedECNEvidenceStaysOrdered(t *testing.T) {
+	const capacity = 512
+	r, err := NewSent(capacity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(100, 0)
+	var next uint64
+	marked := 0
+	for range capacity {
+		p := Packet{Number: next, SentAt: now, Bytes: 1200, AckEliciting: true, InFlight: true}
+		if next%2 == 0 {
+			p.ECN = ECT0
+			marked++
+		}
+		if err := r.OnSent(Application, p); err != nil {
+			t.Fatal(err)
+		}
+		next++
+	}
+	firstACK := next
+	for r.CanMarkECN(Application) {
+		if err := r.OnSent(Application, Packet{Number: next, SentAt: now, Bytes: 50, ECN: ECT0}); err != nil {
+			t.Fatal(err)
+		}
+		marked++
+		next++
+	}
+	s := &r.spaces[Application]
+	if n := s.ecnLost.Len() + s.ecnDropped.Len(); n != int(next-firstACK) {
+		t.Fatal("fixture must leave the pure ACKs untracked", n)
+	}
+	at := now.Add(time.Millisecond)
+	// The newest data packet's ACK declares the older data lost while the
+	// pure ACKs' marks still wait, above it, in their set.
+	first, err := r.OnACK(Application, ack(firstACK-1, firstACK-1), at, 0, 0, true)
+	if err != nil || len(first.Lost) != capacity-3 {
+		t.Fatal("data not declared lost", len(first.Lost), err)
+	}
+	all, err := r.OnACK(Application, ack(0, next-1), at, 0, 0, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := first.NewlyECT[0] + all.NewlyECT[0]; got != uint64(marked) || len(s.ecnPending) != 0 {
+		t.Fatal("marks counted", got, "want", marked, "pending", len(s.ecnPending))
+	}
+	if s.ecnLost.reordered != 0 || s.ecnDropped.reordered != 0 {
+		t.Fatal("out-of-order inserts", s.ecnLost.reordered, s.ecnDropped.reordered)
+	}
+}

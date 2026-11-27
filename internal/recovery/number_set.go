@@ -21,6 +21,10 @@ type numberSet struct {
 	// next[len(nums)] is a sentinel.
 	next []int
 	dead int
+	// reordered counts insertions below the largest member, each of which
+	// costs a rebuild. Recovery's sets fill in ascending order, so it stays
+	// zero; tests check that.
+	reordered int
 }
 
 func (s *numberSet) Len() int { return len(s.nums) - s.dead }
@@ -52,6 +56,7 @@ func (s *numberSet) add(pn uint64) {
 	if found && s.live(i) == i {
 		return
 	}
+	s.reordered++
 	s.compact(true)
 	if i, found = slices.BinarySearch(s.nums, pn); !found {
 		s.nums = slices.Insert(s.nums, i, pn)
