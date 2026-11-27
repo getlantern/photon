@@ -21,6 +21,11 @@ type wanLink struct {
 	loss  float64
 	rate  float64
 	queue time.Duration
+	// stepAfter, if set, is how long after the link's first datagram its
+	// rate changes to stepRate. A datagram is charged at the rate when it
+	// arrives, so a backlog queued before the step drains at the old one.
+	stepAfter time.Duration
+	stepRate  float64
 }
 
 type wanPacket struct {
@@ -116,12 +121,20 @@ func (r *wanRelay) close() {
 type wanShaper struct {
 	link      wanLink
 	busyUntil time.Time
+	first     time.Time
 }
 
 // admit returns when a datagram of n bytes arriving at now finishes
 // transmission, or false if the queue drops it.
 func (s *wanShaper) admit(now time.Time, n int) (time.Time, bool) {
-	if s.link.rate <= 0 {
+	if s.first.IsZero() {
+		s.first = now
+	}
+	rate := s.link.rate
+	if s.link.stepAfter > 0 && now.Sub(s.first) >= s.link.stepAfter {
+		rate = s.link.stepRate
+	}
+	if rate <= 0 {
 		return now, true
 	}
 	departure := now
@@ -131,7 +144,7 @@ func (s *wanShaper) admit(now time.Time, n int) (time.Time, bool) {
 	if departure.Sub(now) > s.link.queue {
 		return time.Time{}, false
 	}
-	s.busyUntil = departure.Add(time.Duration(float64(n) / s.link.rate * float64(time.Second)))
+	s.busyUntil = departure.Add(time.Duration(float64(n) / rate * float64(time.Second)))
 	return s.busyUntil, true
 }
 
@@ -283,6 +296,20 @@ func TestWANRelaySeededLoss(t *testing.T) {
 	}
 	if !slices.Equal(runs[0], runs[1]) {
 		t.Fatal("same seed, different losses")
+	}
+}
+
+// A link with a step serves at its first rate until stepAfter from its
+// first datagram, then at stepRate.
+func TestWANShaperStep(t *testing.T) {
+	s := wanShaper{link: wanLink{rate: 100_000, queue: time.Second, stepAfter: time.Second, stepRate: 10_000}}
+	start := time.Unix(0, 0)
+	if at, _ := s.admit(start, 1000); at.Sub(start) != 10*time.Millisecond {
+		t.Fatal("before the step:", at.Sub(start))
+	}
+	later := start.Add(time.Second)
+	if at, _ := s.admit(later, 1000); at.Sub(later) != 100*time.Millisecond {
+		t.Fatal("after the step:", at.Sub(later))
 	}
 }
 
