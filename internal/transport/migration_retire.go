@@ -49,14 +49,13 @@ func (c *Conn) retireMigrationReservations(id uint64, keep *migrationCandidate) 
 	if len(items) > c.availableSendBytes()/32 {
 		return ErrSendBuffer
 	}
-	// A peer can drive these too, replacing or expiring candidates whose
-	// probes went out: they share the bound on unacknowledged RETIREs.
-	trigger := uint64(0x18)
-	if id != 0 {
-		trigger = wire.FramePathNewConnectionID
-	}
-	if err := c.checkRetirements(id, len(items), trigger); err != nil {
-		return c.fail(err)
+	// These share the bound on unacknowledged RETIREs, but a local action
+	// (cancelling or expiring a migration) can reach here too, so past the
+	// bound they wait, as when the queue is full, rather than failing the
+	// connection. A spent reservation keeps its ID active meanwhile, so
+	// active_connection_id_limit still bounds what a peer can drive.
+	if c.checkRetirements(id, len(items), 0) != nil {
+		return ErrSendBuffer
 	}
 	dest, ok := c.survivingPath(^uint64(0))
 	if !ok {
