@@ -368,8 +368,15 @@ func TestMigrationRetirementsBounded(t *testing.T) {
 		client.countRetire(held[i])
 	}
 	queued := len(zero.queue)
-	if err := client.retireMigrationReservations(1, nil); !errors.Is(err, ErrSendBuffer) || client.Err() != nil {
-		t.Fatal("migration retirement past the bound", err, client.Err())
+	// Cleanup retries before every packet: the count is taken exactly once
+	// and stands until a retirement is counted or acknowledged.
+	for range 10 {
+		if err := client.retireMigrationReservations(1, nil); !errors.Is(err, ErrSendBuffer) || client.Err() != nil {
+			t.Fatal("migration retirement past the bound", err, client.Err())
+		}
+	}
+	if client.retireRecounts != 1 {
+		t.Fatal("exact counts taken", client.retireRecounts)
 	}
 	if _, active := peers.active[seq]; !active || len(zero.queue) != queued {
 		t.Fatal("waiting retirement changed state")
