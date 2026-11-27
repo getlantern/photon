@@ -91,7 +91,7 @@ func drain(t testing.TB, c *Conn, now time.Time) [][]byte {
 	t.Fatal("output did not quiesce")
 	return nil
 }
-func drivePair(t *testing.T, client, server *Conn, reverse, loss bool) {
+func drivePair(t testing.TB, client, server *Conn, reverse, loss bool) {
 	t.Helper()
 	now := time.Unix(100, 0)
 	dropped := map[wire.PacketType]bool{}

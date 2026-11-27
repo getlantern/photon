@@ -205,6 +205,9 @@ func (c *Conn) writeStream(id uint64, data []byte, fin bool, limiter func(int) i
 		if streamBlocked || connectionBlocked {
 			return 0, stream.ErrWouldBlock
 		}
+		if c.queuedFrames() >= maxQueuedFrames {
+			return 0, stream.ErrWouldBlock
+		}
 	}
 	payloadLimit := portableStreamPayload
 	if c.complete && c.multipath == nil {
