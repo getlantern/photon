@@ -77,11 +77,16 @@ func BenchmarkTinyWritesNextDatagram(b *testing.B) {
 	p := streamParameters()
 	p.InitialMaxData = 64 << 20
 	p.InitialMaxStreamDataBidiLocal, p.InitialMaxStreamDataBidiRemote = 16<<20, 16<<20
-	var client *Conn
+	var client, server *Conn
 	var id uint64
 	var sent, queued int
 	fresh := func() {
-		var server *Conn
+		// Release the replaced pair's buffers now; testPair's cleanup
+		// would otherwise hold them until the benchmark ends.
+		if client != nil {
+			client.Close()
+			server.Close()
+		}
 		client, server = testPair(b, wire.Version1, p)
 		drivePair(b, client, server, false, false)
 		client.congestion = openController{client.congestion}
