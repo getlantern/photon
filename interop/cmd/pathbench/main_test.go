@@ -34,7 +34,7 @@ func (b *lockedBuffer) String() string {
 	return b.buf.String()
 }
 
-// freePort finds a base port with the three following UDP ports free.
+// freePort finds a base port with one UDP port free for each sender.
 func freePort(t *testing.T) int {
 	t.Helper()
 	for range 20 {
@@ -90,7 +90,7 @@ func TestPathbenchLocalhost(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(stop)
-	mix, err := parseFlows("photon-bbr:1,photon-newreno:1,quic-go:1")
+	mix, err := parseFlows("photon-bbr:1,photon-newreno:1,quic-go:1,hysteria-bbr:1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,8 +166,9 @@ func TestSummarizeCountsFailedFlows(t *testing.T) {
 
 // A flow that never connects is reported failed, though it moved nothing.
 // The client's base port is one past the server's: its photon-bbr flow
-// reaches the server's photon-newreno listener, and its quic-go flow dials
-// the port after the server's last, where none listens.
+// reaches the server's photon-newreno listener, and its hysteria-bbr flow,
+// the last sender, dials the port after the server's last, where none
+// listens.
 func TestPathbenchUnreachableFlowFails(t *testing.T) {
 	cert, err := selfSigned()
 	if err != nil {
@@ -184,7 +185,7 @@ func TestPathbenchUnreachableFlowFails(t *testing.T) {
 	var stop func()
 	for range 5 {
 		port = freePort(t)
-		c, e := net.ListenPacket("udp", net.JoinHostPort("127.0.0.1", itoa(port+3)))
+		c, e := net.ListenPacket("udp", net.JoinHostPort("127.0.0.1", itoa(port+len(senders))))
 		if e != nil {
 			continue
 		}
@@ -197,7 +198,7 @@ func TestPathbenchUnreachableFlowFails(t *testing.T) {
 		t.Fatal("no server started", err)
 	}
 	t.Cleanup(stop)
-	res, err := runClient(context.Background(), clientConfig{server: "127.0.0.1", port: port + 1, mix: []string{"photon-bbr", "quic-go"}, duration: 3 * time.Second, from: time.Second, stagger: 200 * time.Millisecond, handshakeTimeout: 5 * time.Second, roots: roots})
+	res, err := runClient(context.Background(), clientConfig{server: "127.0.0.1", port: port + 1, mix: []string{"photon-bbr", "hysteria-bbr"}, duration: 3 * time.Second, from: time.Second, stagger: 200 * time.Millisecond, handshakeTimeout: 5 * time.Second, roots: roots})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,8 +1,9 @@
 // Command pathbench measures how QUIC senders share a real network path.
 //
-// A server listens on three UDP ports, one per sender: photon with BBR,
-// photon with NewReno, and quic-go (whose v0.65.0 sender is Reno, though
-// built by its Cubic code). A client runs a mix of
+// A server listens on four UDP ports, one per sender: photon with BBR,
+// photon with NewReno, quic-go (whose v0.65.0 sender is Reno, though built
+// by its Cubic code), and Hysteria2's BBR on its fork of quic-go, set on
+// each connection as Hysteria's server does. A client runs a mix of
 // concurrent downloads from them over one path, each its own connection,
 // and reports each flow's goodput, share and RTT over a measurement window.
 // The server logs each connection's sender-side statistics when it closes.
@@ -46,12 +47,16 @@ import (
 
 	quic "github.com/getlantern/photon"
 	upstream "github.com/quic-go/quic-go"
+
+	hquic "github.com/apernet/quic-go"
+
+	"github.com/getlantern/photon/interop/internal/hysteria/bbr"
 )
 
 const alpn = "pathbench"
 
 // senders are the server's senders, in port order from the base port.
-var senders = []string{"photon-bbr", "photon-newreno", "quic-go"}
+var senders = []string{"photon-bbr", "photon-newreno", "quic-go", "hysteria-bbr"}
 
 // The client's receive windows, large enough not to limit a long, fast path
 // (64 MiB covers 1 Gbit/s at 500 ms). Each flow is one stream on its own
@@ -86,7 +91,7 @@ func main() {
 func serverMain(args []string) error {
 	fs := flag.NewFlagSet("server", flag.ExitOnError)
 	addr := fs.String("addr", "127.0.0.1", "address to listen on; 0.0.0.0 to serve remote clients")
-	port := fs.Int("port", 4433, "base UDP port: photon-bbr, then photon-newreno, then quic-go")
+	port := fs.Int("port", 4433, "base UDP port: photon-bbr, then photon-newreno, quic-go and hysteria-bbr")
 	certOut := fs.String("cert-out", "pathbench-cert.pem", "where to write the server's certificate, for clients' -cert")
 	fs.Parse(args)
 	if *port < 1 || *port > 65535-len(senders)+1 {
@@ -132,6 +137,17 @@ func serve(ctx context.Context, addr string, port int, cert tls.Certificate, out
 	}
 	for i, name := range senders {
 		listenAddr := net.JoinHostPort(addr, strconv.Itoa(port+i))
+		if name == "hysteria-bbr" {
+			l, err := hquic.ListenAddr(listenAddr, tlsConfig, &hquic.Config{MaxIdleTimeout: 30 * time.Second})
+			if err != nil {
+				stop()
+				return nil, nil, err
+			}
+			closers = append(closers, func() { l.Close() })
+			addrs = append(addrs, name+" on "+l.Addr().String())
+			go acceptHysteria(ctx, l, name, logStats)
+			continue
+		}
 		if name == "quic-go" {
 			l, err := upstream.ListenAddr(listenAddr, tlsConfig, &upstream.Config{MaxIdleTimeout: 30 * time.Second})
 			if err != nil {
@@ -234,6 +250,29 @@ func acceptUpstream(ctx context.Context, l *upstream.Listener, name string, logS
 			st := c.ConnectionStats()
 			cwnd := st.CongestionWindow
 			logStats(newConnStats(name, c.RemoteAddr(), start, st.BytesSent, st.PacketsSent, st.BytesLost, st.PacketsLost, st.MinRTT, st.SmoothedRTT, &cwnd))
+		}()
+	}
+}
+
+// acceptHysteria serves Hysteria2's congestion control: its BBR, set on each
+// connection as Hysteria's server does (core/internal/congestion.UseBBR),
+// over its fork of quic-go.
+func acceptHysteria(ctx context.Context, l *hquic.Listener, name string, logStats func(any)) {
+	for {
+		c, err := l.Accept(ctx)
+		if err != nil {
+			return
+		}
+		go func() {
+			start := time.Now()
+			c.SetCongestionControl(bbr.NewBbrSender(bbr.DefaultClock{}, min(c.InitialPacketSize(), bbr.GetInitialPacketSize(c.RemoteAddr())), bbr.ProfileStandard))
+			// One download per connection.
+			if s, err := c.AcceptStream(c.Context()); err == nil {
+				go sendForever(s)
+			}
+			<-c.Context().Done()
+			st := c.ConnectionStats()
+			logStats(newConnStats(name, c.RemoteAddr(), start, st.BytesSent, st.PacketsSent, st.BytesLost, st.PacketsLost, st.MinRTT, st.SmoothedRTT, nil))
 		}()
 	}
 }
