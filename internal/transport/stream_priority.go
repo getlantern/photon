@@ -36,6 +36,62 @@ func (c *Conn) streamPriority(id uint64) streamPriority {
 // frames of about a packet each, that the send buffer has queued.
 const maxQueuedFrames = 1024
 
+type retirement struct{ path, sequence uint64 }
+
+// newRetirements returns the retirements, of path's connection IDs, that
+// aren't already waiting to be sent: RFC 9000 Section 19.15 sends one per
+// sequence number, so a repeated NEW_CONNECTION_ID doesn't queue another. It
+// fails with CONNECTION_ID_LIMIT_ERROR if they would leave more than twice
+// our active_connection_id_limit waiting, the bound Section 5.1.2 allows: a
+// peer retiring every earlier ID with each new one, and not acknowledging the
+// RETIREs, would otherwise queue one per frame it sends.
+func (c *Conn) newRetirements(path uint64, sequences []uint64, frameType uint64) ([]uint64, error) {
+	if len(sequences) == 0 {
+		return nil, nil
+	}
+	waiting := map[retirement]bool{}
+	note := func(queue []*sendItem) {
+		for _, item := range queue {
+			if item.acked {
+				continue
+			}
+			switch f := item.frame.(type) {
+			case wire.RetireConnectionIDFrame:
+				waiting[retirement{0, f.Sequence}] = true
+			case wire.PathRetireConnectionIDFrame:
+				waiting[retirement{f.PathID, f.Sequence}] = true
+			}
+		}
+	}
+	if c.multipath == nil {
+		note(c.spaces[applicationSpace].queue)
+	} else {
+		for _, state := range c.multipath.paths {
+			if state.application != nil {
+				note(state.application.space.queue)
+			}
+		}
+	}
+	var fresh []uint64
+	for _, seq := range sequences {
+		if key := (retirement{path, seq}); !waiting[key] {
+			waiting[key] = true
+			fresh = append(fresh, seq)
+		}
+	}
+	// Each path has its own connection IDs, so its own bound.
+	onPath := 0
+	for key := range waiting {
+		if key.path == path {
+			onPath++
+		}
+	}
+	if onPath > 2*int(max(c.config.Parameters.ActiveConnectionIDLimit, 2)) {
+		return nil, &TransportError{Code: 9, FrameType: frameType, Reason: "too many connection IDs awaiting retirement"}
+	}
+	return fresh, nil
+}
+
 // queuedFrames is how many application frames wait to be sent, on every
 // path.
 func (c *Conn) queuedFrames() int {

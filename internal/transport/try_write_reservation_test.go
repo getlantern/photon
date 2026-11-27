@@ -55,7 +55,7 @@ func TestTryWriteAllResetReservation(t *testing.T) {
 					frameCharge := len(data) + 3*32
 					need := frameCharge + partialResetControlCharge
 					originalCharge := c.queuedBytes
-					c.queuedBytes = maxSendBytes - need + 1
+					c.queuedBytes = c.streamSendLimit() - need + 1
 					before := c.queuedBytes
 					if err := c.TryWriteStreamAll(id, data); !errors.Is(err, stream.ErrWouldBlock) {
 						t.Fatal("missing reservation rejection", err)
@@ -68,7 +68,7 @@ func TestTryWriteAllResetReservation(t *testing.T) {
 					if err := c.TryWriteStreamAll(id, data); err != nil {
 						t.Fatal("exact budget", err)
 					}
-					if c.availableSendBytes() != 0 || c.reservedResetBytes != partialResetControlCharge || !st.resetReserved || st.outstandingData != 3 {
+					if c.availableStreamBytes() != 0 || c.reservedResetBytes != partialResetControlCharge || !st.resetReserved || st.outstandingData != 3 {
 						t.Fatal("reservation accounting")
 					}
 					// Existing reservations must not be charged a second time on this stream.
@@ -76,7 +76,7 @@ func TestTryWriteAllResetReservation(t *testing.T) {
 					if err := c.TryWriteStreamAll(id, []byte{38}); err != nil {
 						t.Fatal("existing reservation", err)
 					}
-					if c.availableSendBytes() != 0 || c.reservedResetBytes != partialResetControlCharge || st.outstandingData != 4 {
+					if c.availableStreamBytes() != 0 || c.reservedResetBytes != partialResetControlCharge || st.outstandingData != 4 {
 						t.Fatal("duplicated reservation")
 					}
 					// Remove only the synthetic unrelated charge before packet processing.

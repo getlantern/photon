@@ -29,13 +29,14 @@ func TestCandidateCIDReplayDoesNotQueueRetirements(t *testing.T) {
 		}
 		payload := []byte("withheld control packet data")
 		packet := &pathPacket{pathID: 1, number: 101, receipt: NewPacket, frames: []wire.Frame{frame(0, 0, old), wire.StreamFrame{StreamID: 0, Data: payload, Fin: true}}}
-		before := c.queuedBytes
 		if err := c.receiveMigrationCIDControl(packet, now); err != nil {
 			t.Fatal(err)
 		}
 		charge, count := c.queuedBytes, len(a.space.queue)
-		if charge <= before {
-			t.Fatal("obsolete CID did not elicit retirement")
+		// Retiring sequence 0 already queued its RETIRE; its obsolete
+		// advertisement doesn't queue another (RFC 9000 Section 19.15).
+		if retiresWaiting(a.space.queue, 1, 0) != 1 {
+			t.Fatal("obsolete CID retirement not exactly once", retiresWaiting(a.space.queue, 1, 0))
 		}
 		for i := 0; i < 20; i++ {
 			if err := c.receiveMigrationCIDControl(packet, now); err != nil {
@@ -73,4 +74,16 @@ func TestCandidateCIDReplayDoesNotQueueRetirements(t *testing.T) {
 		}
 
 	}
+}
+
+// retiresWaiting counts the RETIRE_CONNECTION_IDs for path's sequence seq
+// waiting in queue.
+func retiresWaiting(queue []*sendItem, path, seq uint64) int {
+	n := 0
+	for _, item := range queue {
+		if f, ok := item.frame.(wire.PathRetireConnectionIDFrame); ok && f.PathID == path && f.Sequence == seq && !item.acked {
+			n++
+		}
+	}
+	return n
 }

@@ -160,8 +160,26 @@ const (
 	handshakeSpace   = 1
 	applicationSpace = 2
 	maxDeferredBytes = 64 * 1024
-	maxSendBytes     = 1024 * 1024
-	maxSentPackets   = 4096
+	// maxSendBytes bounds everything queued until acknowledged: frames
+	// unsent and in flight, with their bookkeeping. Stream data is admitted
+	// only up to streamSendLimit, which follows the congestion window.
+	maxSendBytes = 16 << 20
+	// minStreamSendBytes is streamSendLimit's floor, the stream data a
+	// peer that never acknowledges anything can make a connection hold.
+	minStreamSendBytes = 1 << 20
+	// controlReserve is room beyond stream data kept for control frames,
+	// so a full stream limit never leaves a flow-control update or a path
+	// response unable to queue, which fails the connection.
+	controlReserve = 1 << 20
+	// maxPathResponses bounds the PATH_RESPONSEs waiting to be sent, as
+	// quic-go does; a peer's further challenges go unanswered until they
+	// leave, rather than each costing a frame and a queue shift.
+	maxPathResponses = 256
+	// streamSendWindows is how many congestion windows of stream data
+	// streamSendLimit admits: one in flight, its bookkeeping, about a third
+	// more, and the rest unsent, ready as acknowledgments open the window.
+	streamSendWindows = 4
+	maxSentPackets    = 16384
 	// probeHeadroom is ledger space beyond maxSentPackets kept for PTO
 	// probes, so a ledger full of packets in flight never stops the probe,
 	// or the ACK it carries, that recovery from a silent peer needs.
@@ -253,57 +271,60 @@ type Conn struct {
 	pendingMultipath      []pendingMultipathPacket
 	pendingMultipathBytes int
 	// Serialized frame scratch is never retained by packets or retransmission records.
-	payloadScratch                       [defaultPathMTUCeiling]byte
-	handshakeStarted                     time.Time
-	retryUsed                            bool
-	retryToken, retrySourceCID           []byte
-	receivedTokens                       map[[32]byte]struct{}
-	validation                           pathValidation
-	datagrams                            datagramBuffer
-	pendingDatagrams                     int
-	pacer                                recovery.Pacer
-	pacingAt                             time.Time
-	closing                              *closingState
-	drainUntil                           time.Time
-	sealed                               [3]uint64
-	failedAuth, integrityLimit           uint64
-	idle                                 idleActivity
-	idleRevision                         uint64
-	pendingWrite                         *pendingForeignWrite
-	packetRoutes                         *packetRouteReservations // scoped to serialized packet construction
-	keepAliveAttempt                     time.Time
-	authenticatedPackets                 uint64
-	config                               Config
-	streams                              streamSet
-	completedReads                       map[uint64]*streamState
-	applicationKeys                      applicationKeys
-	tls                                  *handshake.TLS
-	initialRead, initialWrite            *packet.Keys
-	originalInitialRead                  *packet.Keys
-	candidateInitial                     candidateInitialKeys
-	decodeScratch                        []byte
-	sendBuffers                          [][]byte
-	cachedSendBufferBytes                int
-	sealStorage                          []byte // borrowed only during synchronous socket output
-	originalVersion                      wire.Version
-	versionChosen                        bool
-	spaces                               [3]numberSpace
-	budget                               Amplification
-	recovery                             *recovery.Sent
-	timer                                recovery.Timer
-	congestion                           recovery.Controller
-	probeAllowance                       [3]bool
-	handshakeACK                         bool
-	peerCID                              []byte
-	peerCIDKnown                         bool
-	initialPeerCID                       []byte
-	peerIDs                              *peerIDs
-	localIDs                             *localIDs
-	peerParams                           *wire.TransportParameters
-	deferred                             []deferredPacket
-	deferredBytes                        int
-	queuedBytes                          int
-	reservedResetBytes                   int
+	payloadScratch             [defaultPathMTUCeiling]byte
+	handshakeStarted           time.Time
+	retryUsed                  bool
+	retryToken, retrySourceCID []byte
+	receivedTokens             map[[32]byte]struct{}
+	validation                 pathValidation
+	datagrams                  datagramBuffer
+	pendingDatagrams           int
+	pacer                      recovery.Pacer
+	pacingAt                   time.Time
+	closing                    *closingState
+	drainUntil                 time.Time
+	sealed                     [3]uint64
+	failedAuth, integrityLimit uint64
+	idle                       idleActivity
+	idleRevision               uint64
+	pendingWrite               *pendingForeignWrite
+	packetRoutes               *packetRouteReservations // scoped to serialized packet construction
+	keepAliveAttempt           time.Time
+	authenticatedPackets       uint64
+	config                     Config
+	streams                    streamSet
+	completedReads             map[uint64]*streamState
+	applicationKeys            applicationKeys
+	tls                        *handshake.TLS
+	initialRead, initialWrite  *packet.Keys
+	originalInitialRead        *packet.Keys
+	candidateInitial           candidateInitialKeys
+	decodeScratch              []byte
+	sendBuffers                [][]byte
+	cachedSendBufferBytes      int
+	sealStorage                []byte // borrowed only during synchronous socket output
+	originalVersion            wire.Version
+	versionChosen              bool
+	spaces                     [3]numberSpace
+	budget                     Amplification
+	recovery                   *recovery.Sent
+	timer                      recovery.Timer
+	congestion                 recovery.Controller
+	probeAllowance             [3]bool
+	handshakeACK               bool
+	peerCID                    []byte
+	peerCIDKnown               bool
+	initialPeerCID             []byte
+	peerIDs                    *peerIDs
+	localIDs                   *localIDs
+	peerParams                 *wire.TransportParameters
+	deferred                   []deferredPacket
+	deferredBytes              int
+	queuedBytes                int
+	reservedResetBytes         int
+	// admittedWhole is set while TryWriteStreamAll writes a slice it
+	// admitted whole, so its chunks don't wait on maxQueuedFrames.
+	admittedWhole                        bool
 	complete, confirmed, started, closed bool
 	err                                  error
 }
@@ -1035,6 +1056,12 @@ func (c *Conn) receiveECN(raw []byte, h wire.Header, now time.Time, buffer bool,
 				return true, err
 			}
 		case wire.PathChallengeFrame:
+			// Responses queue at the head, so those waiting are a prefix.
+			if waiting := c.spaces[applicationSpace].queue; len(waiting) >= maxPathResponses {
+				if _, ok := waiting[maxPathResponses-1].frame.(wire.PathResponseFrame); ok {
+					continue
+				}
+			}
 			// The adapter associates this engine with one fixed peer path. Migration
 			// will need to retain that path identity with each queued response.
 			if err := c.enqueue(applicationSpace, wire.PathResponseFrame{Data: f.Data}, 32); err != nil {
@@ -1089,6 +1116,9 @@ func (c *Conn) receiveECN(raw []byte, h wire.Header, now time.Time, buffer bool,
 				return true, c.fail(err)
 			}
 			c.peerCID = clone(c.peerIDs.active[c.peerIDs.current].cid)
+			if retired, err = c.newRetirements(0, retired, f.Type()); err != nil {
+				return true, c.fail(err)
+			}
 			for _, seq := range retired {
 				if err := c.enqueue(applicationSpace, wire.RetireConnectionIDFrame{Sequence: seq}, 16); err != nil {
 					return true, err

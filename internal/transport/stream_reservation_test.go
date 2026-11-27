@@ -65,13 +65,13 @@ func TestLargeWriteAdmissionDoesNotConsumeCreditWhenBlocked(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.queuedBytes = maxSendBytes - 100
+	c.queuedBytes = c.streamSendLimit() - 100
 	if n, err := c.WriteStream(id, make([]byte, 2500), true); err == nil || n != 0 || c.streams.objects[id].send.Offset() != 0 || c.streams.objects[id].finQueued {
 		t.Fatal("blocked admission committed credit/FIN", n, err)
 	}
-	c.queuedBytes = maxSendBytes - (portableStreamPayload + 32)
+	c.queuedBytes = c.streamSendLimit() - (portableStreamPayload + 32)
 	n, err := c.WriteStream(id, make([]byte, 2500), true)
-	if err != nil || n != portableStreamPayload || c.streams.objects[id].finQueued || c.queuedBytes != maxSendBytes {
+	if err != nil || n != portableStreamPayload || c.streams.objects[id].finQueued || c.queuedBytes != c.streamSendLimit() {
 		t.Fatal("portable fallback admission", n, err)
 	}
 	if a.space.queue[0].delivery != nil {

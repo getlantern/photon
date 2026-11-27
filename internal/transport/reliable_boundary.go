@@ -8,6 +8,32 @@ const partialResetControlCharge = 32
 func (c *Conn) availableSendBytes() int {
 	return maxSendBytes - c.queuedBytes - c.reservedResetBytes
 }
+
+// availableStreamBytes is how much more stream data may be queued: up to
+// streamSendLimit, and within availableSendBytes. Control frames use the
+// latter alone, so a window that shrinks below what is already queued
+// holds back only new stream data.
+func (c *Conn) availableStreamBytes() int {
+	return min(c.availableSendBytes(), c.streamSendLimit()-c.queuedBytes-c.reservedResetBytes)
+}
+
+// streamSendLimit follows the congestion window, summed over paths, so a
+// connection buffers about what its paths can carry: a window grows only as
+// the peer acknowledges data, so one that never does holds the connection to
+// minStreamSendBytes.
+func (c *Conn) streamSendLimit() int {
+	var window uint64
+	if c.multipath != nil {
+		for _, state := range c.multipath.paths {
+			if state.application != nil {
+				window += state.application.congestion.Window()
+			}
+		}
+	} else {
+		window = c.congestion.Window()
+	}
+	return int(min(max(streamSendWindows*window, minStreamSendBytes), maxSendBytes-controlReserve))
+}
 func (c *Conn) releaseResetReservation(s *streamState) {
 	if s.resetReserved {
 		s.resetReserved = false

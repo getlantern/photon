@@ -75,12 +75,11 @@ func TestPeerMigrationPreservesResponsesOnCommit(t *testing.T) {
 			return wire.PathNewConnectionIDFrame{PathID: 1, NewConnectionIDFrame: wire.NewConnectionIDFrame{Sequence: seq, RetirePriorTo: floor, ConnectionID: id.cid, StatelessResetToken: id.token}}
 		}
 		send(changed, cidFrame(1, 1, replacement))
-		beforeCIDReplay := server.queuedBytes
 		expected := a.space.received.Expected()
 		burst := send(changed, cidFrame(0, 0, obsolete), wire.PathChallengeFrame{Data: [8]byte{1}}, wire.PathChallengeFrame{Data: [8]byte{2}}, wire.StreamFrame{StreamID: 4, Data: []byte("withheld"), Fin: true})
 		charge, queued := server.queuedBytes, len(a.space.queue)
-		if charge <= beforeCIDReplay {
-			t.Fatal("obsolete CID retirement not exercised")
+		if retiresWaiting(a.space.queue, 1, 0) != 1 {
+			t.Fatal("obsolete CID retirement not exercised exactly once", retiresWaiting(a.space.queue, 1, 0))
 		}
 		for i := 0; i < 16; i++ {
 			if err := server.handleBoundMultipathPacket(burst, local, changed, now); err != nil {
