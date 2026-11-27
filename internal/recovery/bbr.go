@@ -326,7 +326,7 @@ func (b *BBR) OnACK(e ACKEvent) {
 		b.hasSeenRTT = true
 		b.pacingRate = bbrStartupPacingGain * float64(b.initialWindow) / rtt.Seconds()
 	}
-	b.baseline.noteRTT(rs.RTT)
+	b.baseline.noteRTT(rs.RTT, b.queueing)
 	// UpdateModelAndState.
 	b.updateLatestDeliverySignals(rs)
 	b.updateCongestionSignals(rs)
