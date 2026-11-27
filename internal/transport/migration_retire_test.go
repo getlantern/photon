@@ -20,9 +20,11 @@ func TestSelectiveMigrationCIDRetirement(t *testing.T) {
 		t.Fatal("selective retirement disturbed established CID")
 	}
 	frame := wire.NewConnectionIDFrame{Sequence: seq, ConnectionID: []byte{byte(seq)}}
+	// The retirement already sent its RETIRE: a delayed advertisement
+	// retires nothing again (RFC 9000 Section 19.15).
 	for range 2 {
 		retired, err := p.add(frame)
-		if err != nil || len(retired) != 1 || retired[0] != seq {
+		if err != nil || len(retired) != 0 {
 			t.Fatal(retired, err)
 		}
 		if _, ok := p.active[seq]; ok {
@@ -96,8 +98,10 @@ func TestMigrationRetirementQueueAndEncryptedDelivery(t *testing.T) {
 			t.Fatal("encrypted retirement not delivered")
 		}
 		retired, err := client.multipath.receiveNew(wire.PathNewConnectionIDFrame{PathID: 1, NewConnectionIDFrame: wire.NewConnectionIDFrame{Sequence: seq, ConnectionID: original.cid, StatelessResetToken: original.token}})
-		if err != nil || len(retired) != 1 || retired[0].Sequence != seq {
-			t.Fatal("old advertisement not re-retired", retired, err)
+		// Its RETIRE was delivered: the old advertisement neither revives
+		// the ID nor retires it again (RFC 9000 Section 19.15).
+		if _, revived := client.multipath.paths[1].peer.active[seq]; err != nil || len(retired) != 0 || revived {
+			t.Fatal("old advertisement revived or re-retired", retired, err)
 		}
 	}
 }

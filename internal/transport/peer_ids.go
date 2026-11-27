@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"maps"
+	"slices"
 	"sort"
 
 	"github.com/getlantern/photon/internal/wire"
@@ -19,12 +20,20 @@ type peerID struct {
 }
 
 // peerIDs retains only active IDs. IDs below retireBefore can never become active
-// again; retired duplicate frames elicit RETIRE_CONNECTION_ID without allocation.
+// again; a retired ID's NEW_CONNECTION_ID elicits RETIRE_CONNECTION_ID once
+// (RFC 9000 Section 19.15), as answered records.
 type peerIDs struct {
 	active                       map[uint64]peerID
 	retired                      map[uint64]struct{}
 	current, retireBefore, limit uint64
+	// answered holds the latest maxAnswered sequence numbers retired, oldest
+	// first: a repeat or stale NEW_CONNECTION_ID for one retires nothing
+	// again, whether its RETIRE is waiting, sent or lost and requeued. One
+	// older than these elicits another, which is harmless.
+	answered []uint64
 }
+
+const maxAnswered = 256
 
 func newPeerIDs(cid []byte, limit uint64) *peerIDs {
 	return &peerIDs{active: map[uint64]peerID{0: {cid: clone(cid)}}, limit: limit}
@@ -76,7 +85,9 @@ func (p *peerIDs) addWithType(f wire.NewConnectionIDFrame, frameType uint64) ([]
 	}
 	_, selectivelyRetired := p.retired[f.Sequence]
 	if f.Sequence < floor || selectivelyRetired {
-		retire = append(retire, f.Sequence)
+		if !slices.Contains(p.answered, f.Sequence) {
+			retire = append(retire, f.Sequence)
+		}
 	} else {
 		next[f.Sequence] = peerID{cid: clone(f.ConnectionID), token: f.StatelessResetToken, hasToken: true, used: next[f.Sequence].used, reservation: next[f.Sequence].reservation}
 	}
@@ -101,7 +112,20 @@ func (p *peerIDs) addWithType(f wire.NewConnectionIDFrame, frameType uint64) ([]
 	p.retired = retained
 	p.active, p.current, p.retireBefore = next, current, floor
 	sort.Slice(retire, func(i, j int) bool { return retire[i] < retire[j] })
+	p.answer(retire)
 	return retire, nil
+}
+
+// answer records sequences retired, keeping the latest maxAnswered.
+func (p *peerIDs) answer(sequences []uint64) {
+	if len(sequences) == 0 {
+		return
+	}
+	answered := append(slices.Clone(p.answered), sequences...)
+	if extra := len(answered) - maxAnswered; extra > 0 {
+		answered = answered[extra:]
+	}
+	p.answered = answered
 }
 
 // nextUnused selects deterministically without changing CID ownership.
@@ -133,6 +157,7 @@ func (p *peerIDs) rotate() ([]uint64, error) {
 	p.current = next
 	p.retireBefore = max(p.retireBefore, next)
 	sort.Slice(retired, func(i, j int) bool { return retired[i] < retired[j] })
+	p.answer(retired)
 	return retired, nil
 }
 
@@ -154,5 +179,6 @@ func (p *peerIDs) retireReserved(candidate *migrationCandidate, seq uint64) erro
 	retired[seq] = struct{}{}
 	p.retired = retired
 	delete(p.active, seq)
+	p.answer([]uint64{seq})
 	return nil
 }

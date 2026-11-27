@@ -28,8 +28,10 @@ func TestPeerIDRotation(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(retired, []uint64{0, 1}) || p.current != 2 || len(p.active) != 1 {
 		t.Fatal(retired, err)
 	}
-	if retired, err = p.add(f); err != nil || !reflect.DeepEqual(retired, []uint64{1}) || len(p.active) != 1 {
-		t.Fatal("retired duplicate restored", retired, err)
+	// Sequence 1 is already retired: its repeat retires nothing again
+	// (RFC 9000 Section 19.15) and doesn't restore it.
+	if retired, err = p.add(f); err != nil || len(retired) != 0 || len(p.active) != 1 {
+		t.Fatal("retired duplicate restored or retired again", retired, err)
 	}
 	overflow.ConnectionID[0] = 'X'
 	if string(p.active[2].cid) != "third" {

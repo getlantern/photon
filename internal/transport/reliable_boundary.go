@@ -24,8 +24,10 @@ func (c *Conn) availableStreamBytes() int {
 func (c *Conn) streamSendLimit() int {
 	var window uint64
 	if c.multipath != nil {
-		for _, state := range c.multipath.paths {
-			if state.application != nil {
+		for id, state := range c.multipath.paths {
+			// An abandoned path keeps its state until retention ends but
+			// carries no new data.
+			if state.application != nil && c.multipath.abandoned[id] == nil {
 				window += state.application.congestion.Window()
 			}
 		}

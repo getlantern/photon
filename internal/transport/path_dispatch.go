@@ -3,7 +3,6 @@ package transport
 import (
 	"errors"
 	"fmt"
-	"slices"
 	"time"
 
 	"github.com/getlantern/photon/internal/recovery"
@@ -46,19 +45,13 @@ func (c *Conn) dispatchMultipathPacketFrames(decoded *pathPacket, now time.Time,
 			if err != nil {
 				return c.fail(err)
 			}
-			var sequences []uint64
-			pathID := uint64(0)
-			for _, r := range retire {
-				sequences, pathID = append(sequences, r.Sequence), r.PathID
-			}
-			fresh, err := c.newRetirements(pathID, sequences, f.Type())
-			if err != nil {
-				return c.fail(err)
+			if len(retire) > 0 {
+				if err := c.checkRetirements(retire[0].PathID, len(retire), f.Type()); err != nil {
+					return c.fail(err)
+				}
+				c.noteRetireQueued(retire[0].PathID, len(retire))
 			}
 			for _, response := range retire {
-				if !slices.Contains(fresh, response.Sequence) {
-					continue
-				}
 				if err := c.queuePathControl(decoded.pathID, response); err != nil {
 					return c.fail(err)
 				}
