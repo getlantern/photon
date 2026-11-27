@@ -81,14 +81,14 @@ func TestLossBaselineRounds(t *testing.T) {
 		quiet := i < bbrMinBaselineRounds-1
 		l.endRound(l.roundDelivered+950, quiet, noQueue)
 	}
-	if l.rate != 0.05 || l.lastRoundRate != 0.05 || l.lastRoundSent != 1000 {
-		t.Fatal("quiet rounds", l.rate, l.lastRoundRate, l.lastRoundSent)
+	if l.rate != 0.05 {
+		t.Fatal("quiet rounds", l.rate)
 	}
 	// A probing round counts toward the last round's rate, not the baseline.
 	l.noteLost(500)
 	l.endRound(l.roundDelivered+500, true, noQueue)
-	if l.rate != 0.05 || l.lastRoundRate != 0.5 {
-		t.Fatal("probing round", l.rate, l.lastRoundRate)
+	if l.rate != 0.05 {
+		t.Fatal("probing round", l.rate)
 	}
 	// So does the quiet round after it, which sees the probe's loss.
 	l.noteLost(500)
@@ -130,13 +130,19 @@ func TestLossBaselineRounds(t *testing.T) {
 	}
 }
 
-// Without a baseline any loss in a round is congestion, as draft-07 has it.
-// With one, a round's loss must exceed it by the threshold and by sampling
-// noise: three standard deviations, wider for a short round, but at most
-// bbrMaxLossMargin.
+// Without a baseline any loss in a loss round is congestion, as draft-07
+// has it. With one, the loss round's own loss, counted from its start,
+// must exceed it by the threshold and by sampling noise: three standard
+// deviations, wider for a short round, but at most bbrMaxLossMargin.
 func TestRoundCongested(t *testing.T) {
 	b := NewBBR(1200)
-	b.baseline.lastRoundRate, b.baseline.lastRoundSent = 0.001, 1200*1000
+	// A loss round of packets, of which a share were lost, that began
+	// after 5000 bytes were delivered.
+	round := func(share float64, packets uint64) {
+		lost := uint64(share * float64(packets*1200))
+		b.lossRoundFrom, b.lossRoundLost, b.delivered = 5000, lost, 5000+packets*1200-lost
+	}
+	round(0.001, 1000)
 	if !b.roundCongested() {
 		t.Fatal("no baseline: any loss is congestion")
 	}
@@ -147,7 +153,7 @@ func TestRoundCongested(t *testing.T) {
 		packets uint64
 		want    bool
 	}{{0.08, 1000, false}, {0.095, 1000, true}, {0.095, 100, false}, {0.15, 100, true}, {0.13, 10, true}} {
-		b.baseline.lastRoundRate, b.baseline.lastRoundSent = tc.rate, tc.packets*1200
+		round(tc.rate, tc.packets)
 		if got := b.roundCongested(); got != tc.want {
 			t.Fatalf("round loss %.1f%% of %d packets: congested %v, want %v", 100*tc.rate, tc.packets, got, tc.want)
 		}
@@ -167,13 +173,27 @@ func TestBaselineDiscountsLossNotCE(t *testing.T) {
 			t.Fatalf("%d lost and %d marked of 1000 at a 5%% baseline: too high %v, want %v", tc.lost, tc.ce, got, tc.want)
 		}
 	}
-	b.baseline.lastRoundRate, b.baseline.lastRoundSent = 0, 1200*1000
+	b.lossRoundFrom, b.lossRoundLost, b.delivered = 0, 0, 1200*1000
 	if b.roundCongested() {
 		t.Fatal("no loss or marks")
 	}
 	b.ceInRound = true
 	if !b.roundCongested() {
 		t.Fatal("CE marks with a baseline")
+	}
+}
+
+// The estimate of where congestion crossed the threshold discounts the
+// baseline from loss only: when the loss is within it, the marks alone
+// cross at 2%, below the flight they were seen at.
+func TestInflightAtCongestion(t *testing.T) {
+	b := NewBBR(1200)
+	b.baseline.rate = 0.05
+	if got := b.inflightAtCongestion(1200, 120000, 0, 3600); got >= 120000 || got != inflightAtLoss(1200, 120000, 3600, bbrLossThresh) {
+		t.Fatal("marks only:", got)
+	}
+	if got := b.inflightAtCongestion(1200, 120000, 9600, 1200); got != inflightAtLoss(1200, 120000, 10800, 0.07) {
+		t.Fatal("loss above the baseline:", got)
 	}
 }
 
@@ -201,8 +221,8 @@ func TestBBRQueueing(t *testing.T) {
 
 // On a buffer too shallow to show a queue, Startup still ends on loss: an
 // overflow loses more than any baseline would discount. Under a queue
-// requirement alone it ran on, dropping 6.2%, 14.1% and 4.7% of its first
-// 3 s of packets on these paths.
+// requirement alone it ran on, dropping 6.9%, 14.7% and 4.7% of its first
+// 3 s of packets on these paths, where it drops 3.2%, 7.2% and 2.2%.
 func TestBBRStartupExitsOnShallowBufferLoss(t *testing.T) {
 	for _, tc := range []struct {
 		bps      float64
