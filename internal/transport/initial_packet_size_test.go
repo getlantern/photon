@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/getlantern/photon/internal/recovery"
 	"github.com/getlantern/photon/internal/wire"
 )
 
@@ -85,7 +86,7 @@ func TestInitialPacketSizeValidation(t *testing.T) {
 		if want == 0 {
 			want = 1200
 		}
-		if good.config.InitialPacketSize != want || good.congestion.Window() != 10*uint64(want) {
+		if good.config.InitialPacketSize != want || good.congestion.Window() != recovery.InitialWindow(uint64(want)) {
 			t.Fatal("initial packet/congestion size", size, good.congestion.Window())
 		}
 		good.Close()
@@ -119,7 +120,7 @@ func TestConfiguredInitialSizeSurvivesRetry(t *testing.T) {
 		if err := c.HandleDatagram(retryPacket(t, c, []byte("retrycid"), token), now.Add(time.Millisecond)); err != nil {
 			t.Fatal(err)
 		}
-		if c.congestion.Window() != 14520 {
+		if c.congestion.Window() != recovery.InitialWindow(1452) {
 			t.Fatal("Retry lost configured congestion size", c.congestion.Window())
 		}
 		packets := drain(t, c, now.Add(2*time.Millisecond))

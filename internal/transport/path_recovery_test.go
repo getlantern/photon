@@ -61,7 +61,7 @@ func TestPathPacketNumberIsolation(t *testing.T) {
 	if b.sent.BytesInFlight != 2400 || a.sent.BytesInFlight != 9600 {
 		t.Fatal("ACK/loss crossed paths")
 	}
-	if a.sent.RTT.Sampled || !b.sent.RTT.Sampled || a.congestion.Window() != 12000 || b.congestion.Window() >= 12000 {
+	if a.sent.RTT.Sampled || !b.sent.RTT.Sampled || a.congestion.Window() != recovery.InitialWindow(1200) || b.congestion.Window() >= recovery.InitialWindow(1200) {
 		t.Fatal("RTT/congestion crossed paths")
 	}
 	// A base ACK names path zero, even when received on another network path.
