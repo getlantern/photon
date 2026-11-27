@@ -694,7 +694,14 @@ func (b *BBR) startRound() { b.nextRoundDelivered = b.delivered }
 func (b *BBR) updateRound(rs RateSample) {
 	if rs.PriorDelivered >= b.nextRoundDelivered {
 		b.startRound()
-		b.baseline.endRound(b.delivered, b.state == bbrProbeBWDown || b.state == bbrProbeBWCruise, b.queueing)
+		if b.baseline.endRound(b.delivered, b.state == bbrProbeBWDown || b.state == bbrProbeBWCruise, b.queueing) {
+			// Until there was a baseline, any loss lowered the short-term
+			// bounds. Now that loss shows as random, those cuts answered
+			// it, not congestion: drop them rather than wait for the next
+			// probe, which a short transfer may never reach. Only the
+			// first baseline does this: a policer's comes and goes.
+			b.resetShortTermModel()
+		}
 		b.roundCount++
 		b.roundsSinceProbeUp++
 		b.roundStart = true

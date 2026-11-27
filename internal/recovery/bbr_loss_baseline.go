@@ -62,6 +62,9 @@ type lossBaseline struct {
 	baseRTT time.Duration
 	// stale counts the rounds since the last quiet one.
 	stale int
+	// learned is whether the path has had a baseline since the connection
+	// began or its baseline was last dropped as stale.
+	learned bool
 	// prevQuiet is whether the round before began quiet: loss shows about a
 	// round after the packet was sent, so a round's loss is from the last.
 	prevQuiet bool
@@ -84,8 +87,9 @@ func (l *lossBaseline) noteRTT(rtt time.Duration) {
 // the next. The finished round joins the baseline if BBR wasn't probing as
 // it or the round before began, and no queue showed in it (queueing, of the
 // round's lowest RTT). quietNext reports whether BBR is quiet as the next
-// round begins.
-func (l *lossBaseline) endRound(delivered uint64, quietNext bool, queueing func(time.Duration) bool) {
+// round begins. It reports whether the path has its first baseline, since
+// the connection began or its last baseline was dropped as stale.
+func (l *lossBaseline) endRound(delivered uint64, quietNext bool, queueing func(time.Duration) bool) (learned bool) {
 	began := l.roundQuiet
 	if !l.prevQuiet || l.roundMinRTT > 0 && queueing(l.roundMinRTT) {
 		l.roundQuiet = false
@@ -94,7 +98,7 @@ func (l *lossBaseline) endRound(delivered uint64, quietNext bool, queueing func(
 	if sent > 0 {
 		if !l.roundQuiet {
 			if l.stale++; l.stale >= bbrStaleBaselineRounds {
-				l.lost, l.sent, l.next, l.count, l.rate = [bbrBaselineRounds]uint64{}, [bbrBaselineRounds]uint64{}, 0, 0, 0
+				l.lost, l.sent, l.next, l.count, l.rate, l.learned = [bbrBaselineRounds]uint64{}, [bbrBaselineRounds]uint64{}, 0, 0, 0, false
 			}
 		} else {
 			l.stale = 0
@@ -112,6 +116,11 @@ func (l *lossBaseline) endRound(delivered uint64, quietNext bool, queueing func(
 		}
 	}
 	l.roundLost, l.roundDelivered, l.roundQuiet, l.roundMinRTT, l.prevQuiet = 0, delivered, quietNext, 0, began
+	if l.learned || l.rate == 0 {
+		return false
+	}
+	l.learned = true
+	return true
 }
 
 // lossThresh is the share of in-flight data whose loss marks congestion:

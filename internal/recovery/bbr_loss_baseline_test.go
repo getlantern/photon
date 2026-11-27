@@ -1,6 +1,7 @@
 package recovery
 
 import (
+	"math"
 	"math/rand/v2"
 	"testing"
 	"time"
@@ -24,6 +25,72 @@ func TestBBRHoldsLinkUnderRandomLoss(t *testing.T) {
 				t.Fatalf("%v, %.0f%% loss: baseline %.2f%%", rtt, 100*loss, 100*b.baseline.rate)
 			}
 		}
+	}
+}
+
+// The cuts to the short-term bounds made before there was a baseline
+// answered random loss, so the first baseline drops them: a short transfer
+// would otherwise cruise below the link until its next probe. On a 50 ms
+// path at 1% loss they had BBR pacing at 96% of the link.
+func TestBBRFirstBaselineDropsShortTermCuts(t *testing.T) {
+	b := NewBBR(1200)
+	b.rng = rand.New(rand.NewPCG(3, 4))
+	var cut bool
+	var at time.Time
+	simulate(t, b, newLink(50e6, 50*time.Millisecond, 0.01), 5*time.Second, func(now time.Time) {
+		if !b.baseline.learned {
+			cut = cut || !math.IsInf(b.bwShortterm, 1)
+		} else if at.IsZero() {
+			at = now
+			if !math.IsInf(b.bwShortterm, 1) || b.inflightShortterm != bbrInfinity {
+				t.Fatalf("first baseline at %v left short-term bounds %.0f, %d", now.Sub(simStart), b.bwShortterm, b.inflightShortterm)
+			}
+		}
+	})
+	if !cut || at.IsZero() {
+		t.Fatalf("cut before a baseline %v, baseline learned %v", cut, !at.IsZero())
+	}
+}
+
+// Only the first baseline reports itself, again only once a stale one is
+// dropped: a policer's baseline comes and goes, and each return would
+// otherwise drop the bounds that hold BBR under it.
+func TestLossBaselineReportsFirstOnly(t *testing.T) {
+	noQueue := func(time.Duration) bool { return false }
+	queue := func(time.Duration) bool { return true }
+	var l lossBaseline
+	learned := 0
+	round := func(lost uint64, q func(time.Duration) bool) {
+		l.noteLost(lost)
+		l.noteRTT(time.Millisecond)
+		if l.endRound(l.roundDelivered+1000-lost, true, q) {
+			learned++
+		}
+	}
+	round(0, noQueue)
+	round(0, noQueue)
+	for range bbrMinBaselineRounds {
+		round(10, noQueue)
+	}
+	if learned != 1 || l.rate == 0 {
+		t.Fatal("first baseline", learned, l.rate)
+	}
+	for range bbrBaselineRounds {
+		round(0, noQueue)
+	}
+	round(10, noQueue)
+	if l.rate == 0 || learned != 1 {
+		t.Fatal("a baseline's return", learned, l.rate)
+	}
+	for range bbrStaleBaselineRounds {
+		round(0, queue)
+	}
+	round(0, noQueue)
+	for range bbrMinBaselineRounds {
+		round(10, noQueue)
+	}
+	if learned != 2 {
+		t.Fatal("after a stale baseline", learned, l.rate)
 	}
 }
 
