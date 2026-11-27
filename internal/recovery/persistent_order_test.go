@@ -35,7 +35,7 @@ func TestCongestionHistoryOrderModel(t *testing.T) {
 			case 1:
 				if len(ledger) > 0 {
 					id := ledger[rng.IntN(len(ledger))].id
-					h.ack(id.space, ack(id.number, id.number))
+					h.ack(id.space, ack(id.number, id.number), []Packet{{Number: id.number}})
 					for i := range ledger {
 						if ledger[i].id == id {
 							ledger[i].done = true

@@ -59,14 +59,7 @@ func (t *Timer) Arm(r *Sent, now time.Time, state TimerState) {
 	anyEliciting := false
 	for i := range r.spaces {
 		s := &r.spaces[i]
-		outstanding := false
-		for _, p := range s.packets {
-			if p.AckEliciting {
-				outstanding = true
-				break
-			}
-		}
-		if !outstanding {
+		if s.eliciting == 0 {
 			continue
 		}
 		anyEliciting = true

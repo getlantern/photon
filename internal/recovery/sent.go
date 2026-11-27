@@ -3,6 +3,7 @@ package recovery
 import (
 	"cmp"
 	"errors"
+	"maps"
 	"slices"
 	"time"
 
@@ -53,7 +54,8 @@ type packetSpace struct {
 	ecnFeedback    ECNFeedback
 	ecnSent        [2]uint64
 	ecnPending     map[uint64]ecnTransmission
-	ecnReclaimable bool // a packet with ECN evidence left the ledger since the last reclaim
+	ecnUntracked   numberSet // ecnPending's numbers whose packets recovery doesn't track
+	ecnReclaimable bool      // a packet with ECN evidence left the ledger since the last reclaim
 	// ECN feedback attributed to the current network path. At a path
 	// change, ecnBase records the cumulative counts reported so far and
 	// ecnOld the marked packets sent before it that no count has reported
@@ -66,8 +68,11 @@ type packetSpace struct {
 	ecnBase           [3]uint64
 	ecnOld            uint64
 	ecnCredited       [2]uint64 // ECT, CE
-	ackOnly           ackOnlyOrder
-	ackNodes          map[uint64]*ackOnlyNode
+	ackOnly           packetOrder
+	ackNodes          map[uint64]*packetNode
+	sendOrder         packetOrder // every packet in packets, ascending by number and so by send time
+	sendNodes         map[uint64]*packetNode
+	eliciting         int // ack-eliciting packets in packets
 	packets           map[uint64]Packet
 	rejected          map[uint64]struct{} // locally rejected packets; never ACKable
 	skipped           []uint64            // the latest skipped packet numbers, ascending; never ACKable
@@ -100,7 +105,8 @@ func NewSent(capacity int) (*Sent, error) {
 	r := &Sent{RTT: NewRTT(), capacity: capacity, history: congestionHistory{capacity: 6 * capacity}}
 	for i := range r.spaces {
 		r.spaces[i].packets = make(map[uint64]Packet)
-		r.spaces[i].ackNodes = make(map[uint64]*ackOnlyNode)
+		r.spaces[i].ackNodes = make(map[uint64]*packetNode)
+		r.spaces[i].sendNodes = make(map[uint64]*packetNode)
 	}
 	return r, nil
 }
@@ -141,6 +147,7 @@ func (r *Sent) OnSent(space Space, p Packet) error {
 	if !r.CanTrack(space) && s.ackOnly.Len() > 0 {
 		old := s.ackOnly.Front().number
 		r.remove(s, s.packets[old])
+		r.history.resolve(space, old)
 	}
 	if p.InFlight {
 		r.rate.stamp(&p, r.BytesInFlight)
@@ -148,6 +155,10 @@ func (r *Sent) OnSent(space Space, p Packet) error {
 	// A full in-flight ledger must not prevent pure congestion feedback.
 	if r.CanTrack(space) {
 		s.packets[p.Number] = p
+		s.sendNodes[p.Number] = s.sendOrder.PushBack(p.Number)
+		if p.AckEliciting {
+			s.eliciting++
+		}
 		if !p.InFlight {
 			s.ackNodes[p.Number] = s.ackOnly.PushBack(p.Number)
 		}
@@ -157,6 +168,9 @@ func (r *Sent) OnSent(space Space, p Packet) error {
 			s.ecnPending = make(map[uint64]ecnTransmission)
 		}
 		s.ecnPending[p.Number] = ecnTransmission{marking: p.ECN, sentAt: p.SentAt, currentPath: true}
+		if _, tracked := s.packets[p.Number]; !tracked {
+			s.ecnUntracked.add(p.Number)
+		}
 		s.ecnSent[p.ECN.index()]++
 	}
 	if p.ECN == ECT0 {
@@ -222,6 +236,18 @@ func (s *packetSpace) skippedBetween(lo, hi uint64) uint64 {
 	return n
 }
 
+// ackCursor reports whether f acknowledges each packet number of an
+// ascending sequence, advancing through f's ranges as the numbers grow.
+func ackCursor(f wire.AckFrame) func(uint64) bool {
+	i := len(f.Ranges) - 1
+	return func(pn uint64) bool {
+		for i >= 0 && f.Ranges[i].Largest < pn {
+			i--
+		}
+		return i >= 0 && f.Ranges[i].Smallest <= pn
+	}
+}
+
 func validACK(f wire.AckFrame) bool {
 	if len(f.Ranges) == 0 {
 		return false
@@ -241,7 +267,15 @@ func order(p []Packet) {
 }
 func (r *Sent) remove(s *packetSpace, p Packet) {
 	delete(s.packets, p.Number)
+	if node := s.sendNodes[p.Number]; node != nil {
+		s.sendOrder.Remove(node)
+		delete(s.sendNodes, p.Number)
+	}
+	if p.AckEliciting {
+		s.eliciting--
+	}
 	if _, ok := s.ecnPending[p.Number]; ok {
+		s.ecnUntracked.add(p.Number)
 		s.ecnReclaimable = true
 	}
 	if node := s.ackNodes[p.Number]; node != nil {
@@ -278,7 +312,18 @@ func (r *Sent) OnACK(space Space, f wire.AckFrame, now time.Time, delay, maxDela
 	}
 	largestPacket, largestNew := s.packets[largest]
 	ecnPacket, haveECNPacket := s.ecnPending[largest]
-	events.NewlyECT = s.ackECN(f)
+	// Send order is ascending, so the walk visits only packets at or below
+	// the largest acknowledged: the newly acknowledged ones and the few
+	// unacknowledged among them, which loss detection then settles. A
+	// cumulative ACK costs what it newly acknowledges, not the width of its
+	// ranges or the packets in flight.
+	acks := ackCursor(f)
+	for node := s.sendOrder.Front(); node != nil && node.number <= largest; node = node.next {
+		if acks(node.number) {
+			events.Acked = append(events.Acked, s.packets[node.number])
+		}
+	}
+	events.NewlyECT = s.ackECN(f, events.Acked)
 	events.ECN = s.ecnFeedback.Check(largest, f.ECN, s.ecnSent, events.NewlyECT)
 	path := s.pathECN(events.ECN)
 	r.ecnPath.ACK(space, f, path)
@@ -295,55 +340,13 @@ func (r *Sent) OnACK(space Space, f wire.AckFrame, now time.Time, delay, maxDela
 			events.ECNSentAt = ecnPacket.sentAt
 		}
 	}
-	events.RecoveredPackets, events.RecoveredBytes = r.history.ack(space, f)
-	// Allocate only for newly acknowledged, retained packets. Counting first
-	// avoids geometric slice growth for cumulative ACKs without reserving from
-	// peer-controlled range widths (or allocating for duplicate ACKs).
-	lookup := useACKLookup(f, len(s.packets))
-	count := 0
-	if lookup {
-		for _, span := range f.Ranges {
-			for pn := span.Smallest; pn <= span.Largest; pn++ {
-				if _, ok := s.packets[pn]; ok {
-					count++
-				}
-			}
-		}
-	} else {
-		for pn := range s.packets {
-			if f.Acknowledges(pn) {
-				count++
-			}
-		}
-	}
-	if count > 0 {
-		events.Acked = make([]Packet, 0, count)
-	}
+	events.RecoveredPackets, events.RecoveredBytes = r.history.ack(space, f, events.Acked)
 	eliciting := false
 	var sampler rateSampler
-	retire := func(p Packet) {
+	for _, p := range events.Acked {
 		r.rate.acked(&sampler, p, now)
-		events.Acked = append(events.Acked, p)
 		eliciting = eliciting || p.AckEliciting
 		r.remove(s, p)
-	}
-	if lookup {
-		// Wire ranges descend. Visit them in reverse so retirement produces
-		// ascending packet numbers directly, including disjoint ranges.
-		for i := len(f.Ranges) - 1; i >= 0; i-- {
-			span := f.Ranges[i]
-			for pn := span.Smallest; pn <= span.Largest; pn++ {
-				if p, ok := s.packets[pn]; ok {
-					retire(p)
-				}
-			}
-		}
-	} else {
-		for pn, p := range s.packets {
-			if f.Acknowledges(pn) {
-				retire(p)
-			}
-		}
 	}
 	if largestNew && eliciting {
 		if space != Application {
@@ -375,15 +378,16 @@ func (r *Sent) OnACK(space Space, f wire.AckFrame, now time.Time, delay, maxDela
 	}
 	// After loss detection and CE, so the sample counts this ACK's.
 	events.Rate = r.rate.sample(&sampler, now, r.RTT.Minimum, r.RTT.Sampled)
-	if !lookup {
-		order(events.Acked)
-	}
 	return events, nil
 }
 
 // DetectLoss implements packet threshold 3 and time threshold 9/8, and records
 // the next time-threshold deadline. Unacknowledged tail packets require PTO;
 // elapsed time alone never marks them lost without a later acknowledged packet.
+// It visits packets oldest first and stops at the first one not lost: every
+// later one is both nearer the largest acknowledged and sent no earlier, so
+// neither threshold can declare it lost either, and the first one's deadline
+// is the earliest.
 func (r *Sent) DetectLoss(space Space, now time.Time) []Packet {
 	if space > Application {
 		return nil
@@ -395,19 +399,18 @@ func (r *Sent) DetectLoss(space Space, now time.Time) []Packet {
 	}
 	var lost []Packet
 	delay := r.RTT.LossDelay()
-	for pn, p := range s.packets {
-		if pn >= s.largestAcked {
-			continue
-		}
+	for node := s.sendOrder.Front(); node != nil && node.number < s.largestAcked; {
+		next := node.next
+		p := s.packets[node.number]
 		at := p.SentAt.Add(delay)
-		if s.largestAcked-pn-s.skippedBetween(pn, s.largestAcked) >= 3 || !at.After(now) {
-			lost = append(lost, p)
-			r.remove(s, p)
-		} else if s.lossTime.IsZero() || at.Before(s.lossTime) {
+		if s.largestAcked-p.Number-s.skippedBetween(p.Number, s.largestAcked) < 3 && at.After(now) {
 			s.lossTime = at
+			break
 		}
+		lost = append(lost, p)
+		r.remove(s, p)
+		node = next
 	}
-	order(lost)
 	for _, p := range lost {
 		r.ecnPath.Lost(space, p.Number)
 		// A lost MTU probe shows the path is smaller, not congested.
@@ -450,6 +453,7 @@ func (r *Sent) Discard(space Space) {
 	}
 	s.ecnFeedback = ECNFeedback{}
 	s.ecnPending = nil
+	s.ecnUntracked.clear()
 	s.ecnSent = [2]uint64{}
 }
 
@@ -524,6 +528,9 @@ func (r *Sent) ResetForPathChange() [3][]Packet {
 	for i := range r.spaces {
 		r.spaces[i].ecnFeedback = ecnFeedback[i]
 		r.spaces[i].ecnSent, r.spaces[i].ecnPending = ecnSent[i], ecnPending[i]
+		// Every retained mark is now of a packet recovery no longer tracks.
+		numbers := slices.Sorted(maps.Keys(ecnPending[i]))
+		r.spaces[i].ecnUntracked = numberSet{nums: numbers, gone: make([]bool, len(numbers))}
 		r.spaces[i].ecnBase, r.spaces[i].ecnOld = ecnAttribution[i].ecnBase, ecnAttribution[i].ecnOld
 	}
 	return outstanding

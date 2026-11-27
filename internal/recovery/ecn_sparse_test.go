@@ -55,11 +55,13 @@ func TestECNACKRangeBoundaryWorkIsBounded(t *testing.T) {
 	s := packetSpace{ecnPending: map[uint64]ecnTransmission{
 		0: {marking: ECT1}, wire.MaxVarint: {marking: ECT0},
 	}}
-	if got := s.ackECN(ack(wire.MaxVarint, wire.MaxVarint)); got != [2]uint64{1, 0} {
+	s.ecnUntracked.add(0)
+	s.ecnUntracked.add(wire.MaxVarint)
+	if got := s.ackECN(ack(wire.MaxVarint, wire.MaxVarint), nil); got != [2]uint64{1, 0} {
 		t.Fatal("maximum PN lookup", got)
 	}
-	// This range must scan the one remaining entry, never enumerate 2^62 PNs.
-	if got := s.ackECN(ack(0, wire.MaxVarint)); got != [2]uint64{0, 1} {
+	// This range must find the one remaining entry, never enumerate 2^62 PNs.
+	if got := s.ackECN(ack(0, wire.MaxVarint), nil); got != [2]uint64{0, 1} {
 		t.Fatal("wide ACK scan", got)
 	}
 	if len(s.ecnPending) != 0 {

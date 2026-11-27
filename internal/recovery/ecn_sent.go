@@ -55,6 +55,7 @@ func (r *Sent) reclaimECN(space Space) {
 	for pn, evidence := range s.ecnPending {
 		if _, ok := s.packets[pn]; !ok && evidence.currentPath {
 			delete(s.ecnPending, pn)
+			s.ecnUntracked.remove(pn)
 		}
 	}
 }
@@ -108,6 +109,7 @@ func (r *Sent) RejectECNMarking(space Space, number uint64) bool {
 	}
 	s.ecnSent[evidence.marking.index()]--
 	delete(s.ecnPending, number)
+	s.ecnUntracked.remove(number)
 	if packet, ok := s.packets[number]; ok {
 		packet.ECN = NotECT
 		s.packets[number] = packet
@@ -127,30 +129,24 @@ func (r *Sent) ECNMarkingAt(space Space, now time.Time) ECNMark {
 	return r.ECNMarking(space)
 }
 
-// ackECN is called only after ACK range/unsent validation. For sparse ACKs,
-// inspect their packet numbers directly instead of scanning retained loss
-// evidence. Dense ranges still scan the bounded ledger rather than enumerate
-// potentially enormous ranges supplied by a peer.
-func (s *packetSpace) ackECN(frame wire.AckFrame) (newly [2]uint64) {
+// ackECN is called only after ACK range/unsent validation. acked are the
+// packets f newly acknowledges that recovery still tracks; marks of packets it
+// no longer tracks are found through ecnUntracked by f's ranges. Neither
+// enumerates a peer-supplied range or scans the retained evidence.
+func (s *packetSpace) ackECN(frame wire.AckFrame, acked []Packet) (newly [2]uint64) {
 	if len(s.ecnPending) == 0 {
 		return
 	}
-	if useACKLookup(frame, len(s.ecnPending)) {
-		for _, span := range frame.Ranges {
-			for pn := span.Smallest; pn <= span.Largest; pn++ {
-				if evidence, ok := s.ecnPending[pn]; ok {
-					newly[evidence.marking.index()]++
-					delete(s.ecnPending, pn)
-				}
-			}
+	count := func(pn uint64) bool {
+		if evidence, ok := s.ecnPending[pn]; ok {
+			newly[evidence.marking.index()]++
+			delete(s.ecnPending, pn)
 		}
-	} else {
-		for pn, evidence := range s.ecnPending {
-			if frame.Acknowledges(pn) {
-				newly[evidence.marking.index()]++
-				delete(s.ecnPending, pn)
-			}
-		}
+		return true
 	}
+	for _, p := range acked {
+		count(p.Number)
+	}
+	s.ecnUntracked.covered(frame, count)
 	return
 }
