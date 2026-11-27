@@ -110,7 +110,9 @@ func (b *BBR) crOnACK(rs RateSample) {
 		}
 		// The initial window acknowledged without congestion, while sending
 		// as fast as the window allows: a rate-limited sender stays here.
-		if b.delivered < b.initialWindow || rs.AppLimited {
+		// The jump starts with a round, as the draft's Appendix C.1 has it,
+		// so that the two rounds that validate it are whole ones.
+		if b.delivered < b.initialWindow || rs.AppLimited || !b.roundStart {
 			return
 		}
 		rtt, saved := b.minRTT, b.cr.saved.MinRTT

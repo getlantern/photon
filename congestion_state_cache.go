@@ -27,13 +27,12 @@ type CongestionState struct {
 // at a time resumes from it, and Puts its own at close. Put must replace a
 // state only if it was measured no later than the one put, by Saved: a
 // connection puts back a state it took and didn't use, which mustn't undo
-// a newer one another connection from the address saved meanwhile. Delete
-// drops a state whose jump met congestion. Implementations must be safe
-// for concurrent use.
+// a newer one another connection from the address saved meanwhile. A state
+// whose jump met congestion is simply not put back. Implementations must
+// be safe for concurrent use.
 type CongestionStateCache interface {
 	Take(key string) (CongestionState, bool)
 	Put(key string, s CongestionState)
-	Delete(key string)
 }
 
 // MemoryCongestionStateCache is an in-memory CongestionStateCache that
@@ -111,7 +110,7 @@ func (c *MemoryCongestionStateCache) Put(key string, s CongestionState) {
 	}
 }
 
-// Delete implements CongestionStateCache.
+// Delete drops key's state.
 func (c *MemoryCongestionStateCache) Delete(key string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -154,8 +153,6 @@ func (s congestionStates) Take(key string) (recovery.ResumeState, bool) {
 func (s congestionStates) Put(key string, v recovery.ResumeState) {
 	s.cache.Put(key, CongestionState{Bandwidth: uint64(v.Bandwidth), MinRTT: v.MinRTT, Saved: v.Saved})
 }
-
-func (s congestionStates) Delete(key string) { s.cache.Delete(key) }
 
 const defaultCarefulResumeMaxJump = 4 << 20
 
