@@ -397,9 +397,9 @@ func TestBBRToleratesRandomLoss(t *testing.T) {
 	reno, _ := NewCongestion(1200)
 	newReno := goodput(simulate(t, reno, newLink(100e6, 50*time.Millisecond, 0.01), d, nil), d)
 	t.Logf("1%% loss, 100 Mbit/s, 50 ms: BBR %.1f Mbit/s, NewReno %.1f Mbit/s", bbr/1e6, newReno/1e6)
-	// Outside bandwidth probes, BBRv3's short-term bound decays a little in
-	// each round with loss and resets at the next probe, so random loss
-	// costs it some throughput, not most.
+	// The loss BBR sees in rounds when it isn't probing is learned as the
+	// path's baseline and not taken for congestion, so random loss costs it
+	// little throughput.
 	if bbr < 0.5*100e6 {
 		t.Fatalf("BBR goodput %.1f Mbit/s under 1%% loss, want at least 50", bbr/1e6)
 	}
