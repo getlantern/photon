@@ -55,6 +55,11 @@ type lossBaseline struct {
 	roundDelivered uint64
 	roundQuiet     bool
 	roundMinRTT    time.Duration
+	// baseRTT is the path's lowest RTT, the reference for telling a queue.
+	// Unlike BBR's min_rtt it never expires: on expiry min_rtt takes a
+	// fresh sample, which another flow's standing queue can inflate, and
+	// that queue would then pass for none.
+	baseRTT time.Duration
 	// stale counts the rounds since the last quiet one.
 	stale int
 	// prevQuiet is whether the round before began quiet: loss shows about a
@@ -69,6 +74,9 @@ func (l *lossBaseline) noteLost(bytes uint64) { l.roundLost += bytes }
 func (l *lossBaseline) noteRTT(rtt time.Duration) {
 	if rtt > 0 && (l.roundMinRTT == 0 || rtt < l.roundMinRTT) {
 		l.roundMinRTT = rtt
+	}
+	if rtt > 0 && (l.baseRTT == 0 || rtt < l.baseRTT) {
+		l.baseRTT = rtt
 	}
 }
 
@@ -160,13 +168,14 @@ func (b *BBR) inflightAtCongestion(size, txInFlight, lost, ce uint64) uint64 {
 	return inflightAtLoss(size, txInFlight, lost+ce, b.lossThresh())
 }
 
-// queueing reports whether the latest RTT shows a queue: above the minimum
-// by an eighth of it, at least 4 ms and at most 16 ms, as HyStart++ judges
+// queueing reports whether the latest RTT shows a queue: above the path's
+// lowest RTT by an eighth of it, at least 4 ms and at most 16 ms, as HyStart++ judges
 // a rise. Random loss comes without one; a buffer overflowing comes with
 // one.
 func (b *BBR) queueing(rtt time.Duration) bool {
-	if rtt <= 0 || b.minRTT == time.Duration(1<<63-1) {
+	base := b.baseline.baseRTT
+	if rtt <= 0 || base == 0 {
 		return true
 	}
-	return rtt >= b.minRTT+min(max(b.minRTT/8, 4*time.Millisecond), 16*time.Millisecond)
+	return rtt >= base+min(max(base/8, 4*time.Millisecond), 16*time.Millisecond)
 }
