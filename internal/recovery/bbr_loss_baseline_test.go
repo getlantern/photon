@@ -62,7 +62,7 @@ func TestLossBaselineReportsFirstOnly(t *testing.T) {
 	learned := 0
 	round := func(lost uint64, q func(time.Duration) bool) {
 		l.noteLost(lost)
-		l.noteRTT(time.Millisecond)
+		l.noteRTT(time.Millisecond, noQueueing)
 		if l.endRound(l.roundDelivered+1000-lost, true, q) {
 			learned++
 		}
@@ -94,6 +94,8 @@ func TestLossBaselineReportsFirstOnly(t *testing.T) {
 	}
 }
 
+func noQueueing(time.Duration) bool { return false }
+
 // Where loss means congestion, the baseline stays at about zero throughout
 // and BBR responds as draft-07 has it: a clean path, a shallow buffer, and a
 // queue shared with NewReno flows, whose loss shows with a queue and is kept
@@ -102,31 +104,45 @@ func TestLossBaselineReportsFirstOnly(t *testing.T) {
 // overruns the bucket now and then with no queue to show it, and learns a
 // baseline that averages about 1% and peaks near 7%.
 func TestLossBaselineStaysZeroUnderCongestion(t *testing.T) {
-	policed := bufferedLink(100e6, 50*time.Millisecond, 1)
-	policed.policer = &simPolicer{rate: 10e6 / 8, burst: 64 * 1024}
 	for _, tc := range []struct {
 		name   string
-		link   *simLink
+		link   func() *simLink
 		renos  int
 		d      time.Duration
+		seeds  uint64 // BBR seeds 1 to this, or just 3 if 0
 		maxTop float64
 	}{
-		{"clean", bufferedLink(100e6, 50*time.Millisecond, 1), 0, 60 * time.Second, 0.002},
-		{"policer", policed, 0, 60 * time.Second, 0.08},
-		{"shallow buffer", bufferedLink(100e6, 50*time.Millisecond, 0.1), 0, 60 * time.Second, 0.002},
-		{"with NewReno", bufferedLink(10e6, 20*time.Millisecond, 1), 2, 60 * time.Second, 0.002},
-		{"standing queue", bufferedLink(20e6, 50*time.Millisecond, 4), 16, 90 * time.Second, 0.002},
+		{"clean", func() *simLink { return bufferedLink(100e6, 50*time.Millisecond, 1) }, 0, 60 * time.Second, 0, 0.002},
+		{"policer", func() *simLink {
+			l := bufferedLink(100e6, 50*time.Millisecond, 1)
+			l.policer = &simPolicer{rate: 10e6 / 8, burst: 64 * 1024}
+			return l
+		}, 0, 60 * time.Second, 0, 0.08},
+		{"shallow buffer", func() *simLink { return bufferedLink(100e6, 50*time.Millisecond, 0.1) }, 0, 60 * time.Second, 0, 0.002},
+		// On a path this short, a round spans NewReno's sawtooth: its queue
+		// overflows and drains within the round.
+		{"with NewReno", func() *simLink { return bufferedLink(10e6, 20*time.Millisecond, 1) }, 2, 60 * time.Second, 8, 0.002},
+		{"standing queue", func() *simLink { return bufferedLink(20e6, 50*time.Millisecond, 4) }, 16, 90 * time.Second, 0, 0.002},
 	} {
-		b := newBBRFlow(3)().(*BBR)
-		top := 0.0
-		flows := []*simFlow{{c: b, observe: func(time.Time) { top = max(top, b.baseline.rate) }}}
-		for i := range tc.renos {
-			flows = append(flows, &simFlow{c: newRenoFlow(), start: simStart.Add(3*time.Second + time.Duration(i)*100*time.Millisecond)})
+		seeds := []uint64{3}
+		if tc.seeds > 0 {
+			seeds = nil
+			for s := range tc.seeds {
+				seeds = append(seeds, s+1)
+			}
 		}
-		simulateFlows(t, tc.link, tc.d, flows...)
-		t.Logf("%s: baseline at most %.3f%%, %.3f%% at the end", tc.name, 100*top, 100*b.baseline.rate)
-		if top > tc.maxTop {
-			t.Fatalf("%s: baseline reached %.3f%%, want at most %.1f%%", tc.name, 100*top, 100*tc.maxTop)
+		for _, seed := range seeds {
+			b := newBBRFlow(seed)().(*BBR)
+			top := 0.0
+			flows := []*simFlow{{c: b, observe: func(time.Time) { top = max(top, b.baseline.rate) }}}
+			for i := range tc.renos {
+				flows = append(flows, &simFlow{c: newRenoFlow(), start: simStart.Add(3*time.Second + time.Duration(i)*100*time.Millisecond)})
+			}
+			simulateFlows(t, tc.link(), tc.d, flows...)
+			t.Logf("%s, seed %d: baseline at most %.3f%%, %.3f%% at the end", tc.name, seed, 100*top, 100*b.baseline.rate)
+			if top > tc.maxTop {
+				t.Fatalf("%s, seed %d: baseline reached %.3f%%, want at most %.1f%%", tc.name, seed, 100*top, 100*tc.maxTop)
+			}
 		}
 	}
 }
@@ -147,7 +163,7 @@ func TestLossBaselineRounds(t *testing.T) {
 			t.Fatal("baseline after", i, "rounds", l.rate)
 		}
 		l.noteLost(50)
-		l.noteRTT(time.Millisecond)
+		l.noteRTT(time.Millisecond, noQueueing)
 		quiet := i < bbrMinBaselineRounds-1
 		l.endRound(l.roundDelivered+950, quiet, noQueue)
 	}
@@ -168,15 +184,35 @@ func TestLossBaselineRounds(t *testing.T) {
 	}
 	// A quiet round with a queue is kept out too.
 	l.noteLost(500)
-	l.noteRTT(time.Millisecond)
+	l.noteRTT(time.Millisecond, noQueueing)
 	l.endRound(l.roundDelivered+500, true, queue)
 	if l.rate != 0.05 {
 		t.Fatal("queued round", l.rate)
 	}
+	// So is one whose lowest RTT shows none, if the first RTT after a loss
+	// in it shows one: a queue that overflowed and drained within the round.
+	l.noteRTT(time.Millisecond, noQueue)
+	l.noteLost(500)
+	l.noteRTT(5*time.Millisecond, queue)
+	l.endRound(l.roundDelivered+500, true, noQueue)
+	if l.rate != 0.05 {
+		t.Fatal("round with a queue at its loss", l.rate)
+	}
+	// Only that first sample counts: a later one with a queue, or one before
+	// the loss, doesn't keep the round out.
+	l.noteRTT(5*time.Millisecond, queue)
+	l.noteLost(100)
+	l.noteRTT(time.Millisecond, noQueue)
+	l.noteRTT(5*time.Millisecond, queue)
+	l.endRound(l.roundDelivered+900, true, noQueue)
+	if l.rate == 0.05 {
+		t.Fatal("round with a queue away from its loss", l.rate)
+	}
+	rate := l.rate
 	// A lossless quiet round lowers it; heavy loss is capped.
 	l.endRound(l.roundDelivered+1000, true, noQueue)
-	if l.rate != 200.0/5000 {
-		t.Fatal("lossless round", l.rate)
+	if l.rate >= rate {
+		t.Fatal("lossless round", l.rate, rate)
 	}
 	for range bbrBaselineRounds {
 		l.noteLost(900)
@@ -187,13 +223,13 @@ func TestLossBaselineRounds(t *testing.T) {
 	} // Rounds that all show a queue keep the baseline, until there have been
 	// bbrStaleBaselineRounds of them.
 	for range bbrStaleBaselineRounds - 1 {
-		l.noteRTT(time.Millisecond)
+		l.noteRTT(time.Millisecond, noQueueing)
 		l.endRound(l.roundDelivered+1000, true, queue)
 	}
 	if l.rate != bbrMaxLossBaseline {
 		t.Fatal("queued rounds", l.rate)
 	}
-	l.noteRTT(time.Millisecond)
+	l.noteRTT(time.Millisecond, noQueueing)
 	l.endRound(l.roundDelivered+1000, true, queue)
 	if l.rate != 0 || l.count != 0 {
 		t.Fatal("stale", l.rate, l.count)
@@ -276,7 +312,7 @@ func TestBBRQueueing(t *testing.T) {
 	if !b.queueing(50 * time.Millisecond) {
 		t.Fatal("no RTT yet")
 	}
-	b.baseline.noteRTT(50 * time.Millisecond)
+	b.baseline.noteRTT(50*time.Millisecond, noQueueing)
 	for _, tc := range []struct {
 		rtt  time.Duration
 		want bool
@@ -286,12 +322,12 @@ func TestBBRQueueing(t *testing.T) {
 		}
 	}
 	b.minRTT = 80 * time.Millisecond
-	b.baseline.noteRTT(80 * time.Millisecond)
+	b.baseline.noteRTT(80*time.Millisecond, noQueueing)
 	if !b.queueing(80 * time.Millisecond) {
 		t.Fatal("an expired min_rtt resets the reference")
 	}
 	b = NewBBR(1200)
-	b.baseline.noteRTT(400 * time.Millisecond)
+	b.baseline.noteRTT(400*time.Millisecond, noQueueing)
 	if b.queueing(415*time.Millisecond) || !b.queueing(416*time.Millisecond) {
 		t.Fatal("16 ms cap")
 	}

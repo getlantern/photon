@@ -16,8 +16,9 @@ import (
 // measured in rounds when BBR isn't probing for bandwidth (ProbeBW_DOWN and
 // ProbeBW_CRUISE) and wasn't the round before either, since loss shows
 // about a round after the packet was sent, so it builds no queue of its
-// own, and when no other flow holds one either: the round's lowest RTT is
-// at the path's minimum. A clean path and an overflowing buffer show no
+// own, and when no other flow holds one either: neither the round's lowest
+// RTT nor the first RTT after any of its losses is above the path's
+// minimum. A clean path and an overflowing buffer show no
 // loss in those rounds, and a queue another flow fills keeps its rounds
 // out, so the baseline stays at zero and BBR responds as the draft has it.
 // Random loss shows in every round, and is discounted. Two costs remain. A
@@ -55,6 +56,11 @@ type lossBaseline struct {
 	roundDelivered uint64
 	roundQuiet     bool
 	roundMinRTT    time.Duration
+	// lossPending is whether loss was declared since the last RTT sample,
+	// and roundLossQueued whether a sample just after a loss in the round
+	// showed a queue. A round's lowest RTT can miss a queue that overflowed
+	// and drained within it, as a loss-based flow's does on a short path.
+	lossPending, roundLossQueued bool
 	// baseRTT is the path's lowest RTT, the reference for telling a queue.
 	// Unlike BBR's min_rtt it never expires: on expiry min_rtt takes a
 	// fresh sample, which another flow's standing queue can inflate, and
@@ -71,27 +77,39 @@ type lossBaseline struct {
 }
 
 // noteLost adds bytes declared lost to the round in progress.
-func (l *lossBaseline) noteLost(bytes uint64) { l.roundLost += bytes }
+func (l *lossBaseline) noteLost(bytes uint64) {
+	l.roundLost += bytes
+	l.lossPending = l.lossPending || bytes > 0
+}
 
-// noteRTT notes an RTT sample from the round in progress.
-func (l *lossBaseline) noteRTT(rtt time.Duration) {
-	if rtt > 0 && (l.roundMinRTT == 0 || rtt < l.roundMinRTT) {
+// noteRTT notes an RTT sample from the round in progress. The first sample
+// after a loss also says whether a queue came with it (queueing).
+func (l *lossBaseline) noteRTT(rtt time.Duration, queueing func(time.Duration) bool) {
+	if rtt <= 0 {
+		return
+	}
+	if l.roundMinRTT == 0 || rtt < l.roundMinRTT {
 		l.roundMinRTT = rtt
 	}
-	if rtt > 0 && (l.baseRTT == 0 || rtt < l.baseRTT) {
+	if l.baseRTT == 0 || rtt < l.baseRTT {
 		l.baseRTT = rtt
+	}
+	if l.lossPending {
+		l.roundLossQueued = l.roundLossQueued || queueing(rtt)
+		l.lossPending = false
 	}
 }
 
 // endRound finishes the round in progress, at delivered bytes, and starts
 // the next. The finished round joins the baseline if BBR wasn't probing as
-// it or the round before began, and no queue showed in it (queueing, of the
-// round's lowest RTT). quietNext reports whether BBR is quiet as the next
-// round begins. It reports whether the path has its first baseline, since
+// it or the round before began, and no queue showed in it: not in the
+// round's lowest RTT (queueing), nor just after any of its losses.
+// quietNext reports whether BBR is quiet as the next round begins. It
+// reports whether the path has its first baseline, since
 // the connection began or its last baseline was dropped as stale.
 func (l *lossBaseline) endRound(delivered uint64, quietNext bool, queueing func(time.Duration) bool) (learned bool) {
 	began := l.roundQuiet
-	if !l.prevQuiet || l.roundMinRTT > 0 && queueing(l.roundMinRTT) {
+	if !l.prevQuiet || l.roundLossQueued || l.roundMinRTT > 0 && queueing(l.roundMinRTT) {
 		l.roundQuiet = false
 	}
 	sent := delivered - l.roundDelivered + l.roundLost
@@ -115,7 +133,7 @@ func (l *lossBaseline) endRound(delivered uint64, quietNext bool, queueing func(
 			}
 		}
 	}
-	l.roundLost, l.roundDelivered, l.roundQuiet, l.roundMinRTT, l.prevQuiet = 0, delivered, quietNext, 0, began
+	l.roundLost, l.roundDelivered, l.roundQuiet, l.roundMinRTT, l.prevQuiet, l.roundLossQueued = 0, delivered, quietNext, 0, began, false
 	if l.learned || l.rate == 0 {
 		return false
 	}

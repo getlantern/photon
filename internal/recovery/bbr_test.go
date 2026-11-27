@@ -150,7 +150,7 @@ func TestBBRStartupExitsOnHighLoss(t *testing.T) {
 	b.delivered = 100000
 	// The path's RTT was 30 ms, so the 50 ms the ACK shows is a queue: the
 	// loss comes from a buffer overflowing, not at random.
-	b.baseline.noteRTT(30 * time.Millisecond)
+	b.baseline.noteRTT(30*time.Millisecond, noQueueing)
 	// The first loss starts recovery before the packet is sent; the rest are
 	// detected after it, so its sample counts them.
 	sentAt := start.Add(time.Millisecond)
