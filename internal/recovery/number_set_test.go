@@ -211,3 +211,73 @@ func TestEvictedPureACKHistorySettles(t *testing.T) {
 		t.Fatal("acknowledged history not trimmed", n)
 	}
 }
+
+// numberSet against a map under random adds, removes and covered ranges.
+func TestNumberSetModel(t *testing.T) {
+	rng := rand.New(rand.NewPCG(3, 9))
+	var s numberSet
+	model := map[uint64]bool{}
+	for step := range 20000 {
+		pn := uint64(rng.IntN(500))
+		switch rng.IntN(4) {
+		case 0, 1:
+			s.add(pn)
+			model[pn] = true
+		case 2:
+			s.remove(pn)
+			delete(model, pn)
+		case 3:
+			lo := uint64(rng.IntN(500))
+			f := ack(lo, lo+uint64(rng.IntN(100)))
+			var got []uint64
+			s.covered(f, func(n uint64) bool {
+				got = append(got, n)
+				if rng.IntN(2) == 0 {
+					delete(model, n)
+					return true
+				}
+				return false
+			})
+			var want []uint64
+			for n := range model {
+				if f.Acknowledges(n) {
+					want = append(want, n)
+				}
+			}
+			slices.Sort(want)
+			// Members visited and removed are already gone from model.
+			for _, n := range got {
+				if !f.Acknowledges(n) {
+					t.Fatal("visited outside the range", n)
+				}
+			}
+			for _, n := range want {
+				if !slices.Contains(got, n) {
+					t.Fatal("step", step, "missed member", n)
+				}
+			}
+			if !slices.IsSorted(got) {
+				t.Fatal("visited out of order", got)
+			}
+		}
+		if s.Len() != len(model) {
+			t.Fatal("step", step, "size", s.Len(), "want", len(model))
+		}
+	}
+}
+
+// Cumulative ACKs covering a block of recovered late losses amid losses
+// that stay lost: removed entries short of compaction cost nothing to pass.
+func BenchmarkNumberSetCoveredAfterRecovery(b *testing.B) {
+	var s numberSet
+	for pn := uint64(0); pn < 18000; pn += 2 {
+		s.add(pn)
+	}
+	// Recover 3,000 of the 9,000 losses, below compaction's threshold.
+	s.covered(ack(6000, 11999), func(uint64) bool { return true })
+	f := wire.AckFrame{Ranges: []wire.AckRange{{Smallest: 6000, Largest: 11999}}}
+	b.ResetTimer()
+	for range b.N {
+		s.covered(f, func(uint64) bool { return false })
+	}
+}

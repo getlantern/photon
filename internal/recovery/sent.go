@@ -449,6 +449,10 @@ func (r *Sent) Discard(space Space) {
 	}
 	r.history.discard(space)
 	s := &r.spaces[space]
+	// Drop the marking evidence first: removing each packet would otherwise
+	// file its mark as untracked, in map order, only to discard it.
+	s.ecnPending = nil
+	s.ecnUntracked.clear()
 	for _, p := range s.packets {
 		r.remove(s, p)
 	}
@@ -460,8 +464,6 @@ func (r *Sent) Discard(space Space) {
 		}
 	}
 	s.ecnFeedback = ECNFeedback{}
-	s.ecnPending = nil
-	s.ecnUntracked.clear()
 	s.ecnSent = [2]uint64{}
 }
 
@@ -537,8 +539,9 @@ func (r *Sent) ResetForPathChange() [3][]Packet {
 		r.spaces[i].ecnFeedback = ecnFeedback[i]
 		r.spaces[i].ecnSent, r.spaces[i].ecnPending = ecnSent[i], ecnPending[i]
 		// Every retained mark is now of a packet recovery no longer tracks.
-		numbers := slices.Sorted(maps.Keys(ecnPending[i]))
-		r.spaces[i].ecnUntracked = numberSet{nums: numbers, gone: make([]bool, len(numbers))}
+		for _, pn := range slices.Sorted(maps.Keys(ecnPending[i])) {
+			r.spaces[i].ecnUntracked.add(pn)
+		}
 		r.spaces[i].ecnBase, r.spaces[i].ecnOld = ecnAttribution[i].ecnBase, ecnAttribution[i].ecnOld
 	}
 	return outstanding
