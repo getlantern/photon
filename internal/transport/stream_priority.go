@@ -37,41 +37,64 @@ func (c *Conn) streamPriority(id uint64) streamPriority {
 const maxQueuedFrames = 1024
 
 // checkRetirements fails with CONNECTION_ID_LIMIT_ERROR if queueing adding
-// more RETIRE_CONNECTION_IDs on path would leave more than twice our
-// active_connection_id_limit waiting to be sent, the bound RFC 9000 Section
+// more RETIRE_CONNECTION_IDs for path would leave more than twice our
+// active_connection_id_limit unacknowledged, the bound RFC 9000 Section
 // 5.1.2 allows: a peer retiring every earlier ID with each new one, and not
 // acknowledging, would otherwise queue one per frame it sends. peerIDs
-// already answers each sequence number once. retiresQueued counts those
-// queued on each path, less those sent; frames that leave a queue some other
-// way leave it high, so only the path's queue, counted exactly, can fail
-// the connection, and recounting corrects it.
+// already answers each sequence number once. retiresOutstanding counts each
+// RETIRE once, by the path it retires on, from when it is queued until it is
+// acknowledged, whatever queue holds it and through loss and requeueing.
+// One dropped unacknowledged leaves the count high, so only an exact count,
+// taken when the count reaches the bound, can fail the connection.
 func (c *Conn) checkRetirements(path uint64, adding int, frameType uint64) error {
 	limit := 2 * int(max(c.config.Parameters.ActiveConnectionIDLimit, 2))
-	if adding == 0 || c.retiresQueued[path]+adding <= limit {
+	if adding == 0 || c.retiresOutstanding[path]+adding <= limit {
 		return nil
 	}
-	queue := c.spaces[applicationSpace].queue
-	if c.multipath != nil {
-		state := c.multipath.paths[path]
-		if state == nil || state.application == nil {
-			return nil
-		}
-		queue = state.application.space.queue
+	outstanding := c.countRetirements(path)
+	if c.retiresOutstanding == nil {
+		c.retiresOutstanding = map[uint64]int{}
 	}
-	waiting := 0
-	for _, item := range queue {
-		if _, ok := retirementPath(item.frame); ok && !item.acked {
-			waiting++
-		}
-	}
-	if c.retiresQueued == nil {
-		c.retiresQueued = map[uint64]int{}
-	}
-	c.retiresQueued[path] = waiting
-	if waiting+adding > limit {
+	c.retiresOutstanding[path] = outstanding
+	if outstanding+adding > limit {
 		return &TransportError{Code: 9, FrameType: frameType, Reason: "too many connection IDs awaiting retirement"}
 	}
 	return nil
+}
+
+// countRetirements counts the unacknowledged RETIRE_CONNECTION_IDs for path
+// in every application queue and sent-packet ledger.
+func (c *Conn) countRetirements(path uint64) int {
+	n := 0
+	visit := func(item *sendItem) {
+		if p, ok := retirementPath(item.frame); ok && p == path && !item.acked {
+			n++
+		}
+	}
+	spaces := []*numberSpace{&c.spaces[applicationSpace]}
+	if c.multipath != nil {
+		for _, state := range c.multipath.paths {
+			if state.application != nil && state.application.space != &c.spaces[applicationSpace] {
+				spaces = append(spaces, state.application.space)
+			}
+		}
+	}
+	seen := map[*sendItem]bool{}
+	for _, s := range spaces {
+		for _, item := range s.queue {
+			if item != nil && !seen[item] {
+				seen[item] = true
+				visit(item)
+			}
+		}
+		for _, item := range s.sent {
+			if item != nil && !seen[item] {
+				seen[item] = true
+				visit(item)
+			}
+		}
+	}
+	return n
 }
 
 // retirementPath reports the path a RETIRE_CONNECTION_ID frame retires on.
@@ -85,16 +108,23 @@ func retirementPath(f wire.Frame) (uint64, bool) {
 	return 0, false
 }
 
-// noteRetireQueued and noteRetireSent keep retiresQueued.
-func (c *Conn) noteRetireQueued(path uint64, n int) {
-	if c.retiresQueued == nil {
-		c.retiresQueued = map[uint64]int{}
+// countRetire counts item in retiresOutstanding if it is a RETIRE not yet
+// counted; uncountRetire releases it once acknowledged.
+func (c *Conn) countRetire(item *sendItem) {
+	path, ok := retirementPath(item.frame)
+	if !ok || item.retireCounted {
+		return
 	}
-	c.retiresQueued[path] += n
+	if c.retiresOutstanding == nil {
+		c.retiresOutstanding = map[uint64]int{}
+	}
+	item.retireCounted = true
+	c.retiresOutstanding[path]++
 }
-func (c *Conn) noteRetireSent(f wire.Frame) {
-	if path, ok := retirementPath(f); ok && c.retiresQueued[path] > 0 {
-		c.retiresQueued[path]--
+func (c *Conn) uncountRetire(item *sendItem) {
+	if path, ok := retirementPath(item.frame); ok && item.retireCounted {
+		item.retireCounted = false
+		c.retiresOutstanding[path]--
 	}
 }
 

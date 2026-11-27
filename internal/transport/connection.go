@@ -194,6 +194,7 @@ type sendItem struct {
 	frame         wire.Frame
 	queued, acked bool
 	transmitted   bool
+	retireCounted bool // counted in retiresOutstanding until acknowledged
 	bytes         int
 }
 type numberSpace struct {
@@ -325,9 +326,9 @@ type Conn struct {
 	// admittedWhole is set while TryWriteStreamAll writes a slice it
 	// admitted whole, so its chunks don't wait on maxQueuedFrames.
 	admittedWhole bool
-	// retiresQueued counts RETIRE_CONNECTION_IDs waiting on each path; see
-	// checkRetirements.
-	retiresQueued                        map[uint64]int
+	// retiresOutstanding counts unacknowledged RETIRE_CONNECTION_IDs by
+	// the path they retire on; see checkRetirements.
+	retiresOutstanding                   map[uint64]int
 	complete, confirmed, started, closed bool
 	err                                  error
 }
@@ -686,6 +687,7 @@ func (c *Conn) enqueue(space int, f wire.Frame, size int) error {
 		c.pendingDatagrams++
 	}
 	destination.queue = append(destination.queue, item)
+	c.countRetire(item)
 	if space == applicationSpace && c.multipath != nil && c.confirmed {
 		switch f.(type) {
 		case wire.StreamFrame, wire.DatagramFrame:
@@ -1127,7 +1129,6 @@ func (c *Conn) receiveECN(raw []byte, h wire.Header, now time.Time, buffer bool,
 					return true, err
 				}
 			}
-			c.noteRetireQueued(0, len(retired))
 		case wire.RetireConnectionIDFrame:
 			changed, err := c.localIDs.retire(f.Sequence, h.DCID)
 			if err != nil {
@@ -1223,6 +1224,7 @@ func (c *Conn) handleAck(space int, f wire.AckFrame, now time.Time) error {
 				return err
 			}
 		}
+		c.uncountRetire(item)
 		c.queuedBytes -= item.bytes
 		c.recycleStreamItem(item)
 		return nil
@@ -1535,7 +1537,6 @@ func (c *Conn) nextBaseDatagram(now time.Time) ([]byte, error) {
 				c.localIDs.markSent(cid.Sequence)
 			}
 			c.commitStreamPriority(item)
-			c.noteRetireSent(item.frame)
 			item.queued = false
 			s.queue[0] = nil
 			s.queue = s.queue[1:]
@@ -1695,6 +1696,9 @@ func (c *Conn) RotatePeerID() error {
 	*c.peerIDs = staged
 	c.peerCID = clone(c.peerIDs.active[c.peerIDs.current].cid)
 	destination.queue = append(destination.queue, items...)
+	for _, item := range items {
+		c.countRetire(item)
+	}
 	c.queuedBytes += 16 * len(items)
 	return nil
 }

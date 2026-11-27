@@ -49,7 +49,6 @@ func (c *Conn) dispatchMultipathPacketFrames(decoded *pathPacket, now time.Time,
 				if err := c.checkRetirements(retire[0].PathID, len(retire), f.Type()); err != nil {
 					return c.fail(err)
 				}
-				c.noteRetireQueued(retire[0].PathID, len(retire))
 			}
 			for _, response := range retire {
 				if err := c.queuePathControl(decoded.pathID, response); err != nil {
@@ -176,6 +175,7 @@ func (c *Conn) dispatchMultipathPacketFrames(decoded *pathPacket, now time.Time,
 				if err := c.ackStreamFrame(item.frame); err != nil {
 					return err
 				}
+				c.uncountRetire(item)
 				c.queuedBytes -= item.bytes
 				c.recycleStreamItem(item)
 				return nil
