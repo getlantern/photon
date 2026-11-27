@@ -69,33 +69,51 @@ func TestTryWriteAllFrameBound(t *testing.T) {
 	}
 }
 
-// The cost of a packet after a run of 1-byte writes: each is a frame, and
-// choosing each packet's stream scans the queued frames. Run with
-// -benchtime=3000x: one fill, under the sent-packet ledger's limit.
+// The cost of a packet with a full queue of 1-byte writes: each is a frame,
+// and choosing each packet's stream scans the queued frames. Each measured
+// send starts from a full queue, refilled outside the timer; a fresh pair
+// replaces one whose sent-packet ledger is near its limit.
 func BenchmarkTinyWritesNextDatagram(b *testing.B) {
 	p := streamParameters()
 	p.InitialMaxData = 64 << 20
 	p.InitialMaxStreamDataBidiLocal, p.InitialMaxStreamDataBidiRemote = 16<<20, 16<<20
-	client, server := testPair(b, wire.Version1, p)
-	drivePair(b, client, server, false, false)
-	client.congestion = openController{client.congestion}
-	id, err := client.OpenStream(false)
-	if err != nil {
-		b.Fatal(err)
-	}
-	queued := 0
-	for {
-		if w, err := client.WriteStream(id, []byte{1}, false); w != 1 || err != nil {
-			break
+	var client *Conn
+	var id uint64
+	var sent, queued int
+	fresh := func() {
+		var server *Conn
+		client, server = testPair(b, wire.Version1, p)
+		drivePair(b, client, server, false, false)
+		client.congestion = openController{client.congestion}
+		var err error
+		if id, err = client.OpenStream(false); err != nil {
+			b.Fatal(err)
 		}
-		queued++
+		sent = 0
+	}
+	fill := func() {
+		for {
+			if w, err := client.WriteStream(id, []byte{1}, false); w != 1 || err != nil {
+				break
+			}
+		}
+		queued = client.queuedFrames()
 	}
 	now := time.Unix(200, 0)
+	fresh()
+	fill()
 	b.ResetTimer()
-	b.ReportMetric(float64(queued), "queued")
 	for range b.N {
 		if out, err := client.NextDatagram(now); err != nil || out == nil {
 			b.Fatal("no packet", err)
 		}
+		b.StopTimer()
+		now = now.Add(time.Millisecond) // refills the pacer's burst
+		if sent++; sent >= maxSentPackets/2 {
+			fresh()
+		}
+		fill()
+		b.StartTimer()
 	}
+	b.ReportMetric(float64(queued), "queued")
 }
