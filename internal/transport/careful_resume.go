@@ -9,12 +9,12 @@ import (
 
 // CongestionStates keeps saved congestion state for Careful Resume, by
 // client. Take removes what it returns, so that one connection at a time
-// resumes from a saved state, and Put replaces, so that a client has one.
-// Its methods may be called from many connections at once.
+// resumes from a saved state, and Put replaces a state measured no later,
+// so that a client has one, the latest. Its methods may be called from many
+// connections at once.
 type CongestionStates interface {
 	Take(key string) (recovery.ResumeState, bool)
 	Put(key string, s recovery.ResumeState)
-	Delete(key string)
 }
 
 type carefulResumeState struct {
@@ -55,8 +55,8 @@ func (c *Conn) resumeCongestionState(address netip.AddrPort, verified bool) {
 }
 
 // saveCongestionState runs once as a server connection ends, by Close or
-// when it finishes draining. A failed jump drops the state it resumed
-// from; then the path's state, if worth it, is saved under its client's
+// when it finishes draining. A failed jump doesn't put back the state it
+// resumed from; then the path's state, if worth it, is saved under its client's
 // current address, as a migrated connection's controller measured the new
 // path, if the handshake completed, which shows the client could receive
 // there, and the connection didn't fail on a protocol violation it
@@ -80,8 +80,9 @@ func (c *Conn) saveCongestionState() {
 	}
 	taken := c.carefulResume.taken
 	c.carefulResume.taken = nil
-	if taken != nil && r.ResumeFailed() {
-		states.Delete(key)
+	if r.ResumeFailed() {
+		// The state it took is gone with it: Take removed it, and it isn't
+		// put back. Another connection's, saved since, stays.
 		taken = nil
 	}
 	if !c.saveSnapshot(states, r) && taken != nil {

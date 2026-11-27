@@ -9,8 +9,7 @@ import (
 )
 
 type testStates struct {
-	saved   map[string]recovery.ResumeState
-	deleted []string
+	saved map[string]recovery.ResumeState
 }
 
 func (s *testStates) Take(key string) (recovery.ResumeState, bool) {
@@ -19,7 +18,6 @@ func (s *testStates) Take(key string) (recovery.ResumeState, bool) {
 	return v, ok
 }
 func (s *testStates) Put(key string, v recovery.ResumeState) { s.saved[key] = v }
-func (s *testStates) Delete(key string)                      { s.deleted = append(s.deleted, key) }
 
 type testResumer struct {
 	recovery.Controller
@@ -61,30 +59,36 @@ func TestResumeCongestionStateNeedsVerifiedAddress(t *testing.T) {
 
 // A connection saves its path's state once, under its client's current
 // address, unmapped, and only after a completed handshake and an end not
-// caused by a protocol violation it detected. A failed jump drops the state
-// it resumed from; a connection that saves nothing otherwise puts back the
-// one it took.
+// caused by a protocol violation it detected. A failed jump doesn't put
+// back the state it resumed from, nor touch one another connection saved
+// since; a connection that saves nothing otherwise puts back the one it
+// took.
 func TestSaveCongestionState(t *testing.T) {
 	snap := recovery.ResumeState{Bandwidth: 2e6, MinRTT: 1e8}
 	taken := recovery.ResumeState{Bandwidth: 3e6, MinRTT: 1e8}
+	other := recovery.ResumeState{Bandwidth: 4e6, MinRTT: 1e8}
 	for _, tc := range []struct {
 		name     string
 		complete bool
 		err      error
 		failed   bool
 		snapshot bool
+		since    *recovery.ResumeState // saved by another connection meanwhile
 		want     *recovery.ResumeState
-		deleted  bool
 	}{
-		{"clean", true, nil, false, true, &snap, false},
-		{"peer closed", true, &ConnectionTransportError{Remote: true, ErrorCode: 0xa}, false, true, &snap, false},
-		{"no handshake", false, nil, false, true, &taken, false},
-		{"optimistic ACK", true, connectionFailure(&TransportError{Code: 0xa, Reason: "ack"}), false, true, &taken, false},
-		{"short connection", true, nil, false, false, &taken, false},
-		{"failed jump", true, nil, true, true, &snap, true},
-		{"failed jump, nothing measured", true, nil, true, false, nil, true},
+		{"clean", true, nil, false, true, nil, &snap},
+		{"peer closed", true, &ConnectionTransportError{Remote: true, ErrorCode: 0xa}, false, true, nil, &snap},
+		{"no handshake", false, nil, false, true, nil, &taken},
+		{"optimistic ACK", true, connectionFailure(&TransportError{Code: 0xa, Reason: "ack"}), false, true, nil, &taken},
+		{"short connection", true, nil, false, false, nil, &taken},
+		{"failed jump", true, nil, true, true, nil, &snap},
+		{"failed jump, nothing measured", true, nil, true, false, nil, nil},
+		{"failed jump, another's state since", true, nil, true, false, &other, &other},
 	} {
 		states := &testStates{saved: map[string]recovery.ResumeState{}}
+		if tc.since != nil {
+			states.saved["192.0.2.7"] = *tc.since
+		}
 		r := &testResumer{failed: tc.failed}
 		if tc.snapshot {
 			r.snapshot = &snap
@@ -95,8 +99,8 @@ func TestSaveCongestionState(t *testing.T) {
 		c.saveCongestionState()
 		c.saveCongestionState()
 		got, saved := states.saved["192.0.2.7"]
-		if saved != (tc.want != nil) || saved && got != *tc.want || (len(states.deleted) == 1) != tc.deleted || len(states.deleted) > 1 {
-			t.Fatalf("%s: saved %v %+v, deleted %v", tc.name, saved, got, states.deleted)
+		if saved != (tc.want != nil) || saved && got != *tc.want {
+			t.Fatalf("%s: saved %v %+v", tc.name, saved, got)
 		}
 	}
 	// A single-path connection whose path an address-aware listener owns

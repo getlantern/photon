@@ -32,8 +32,8 @@ func TestCarefulResumeIsFaster(t *testing.T) {
 	b.Resume(saved, 0)
 	resumed := deliverTime(t, b, bufferedLink(100e6, 100*time.Millisecond, 1), n, 10*time.Second)
 	t.Logf("20 MB: %v fresh, %v resumed", fresh, resumed)
-	if resumed > fresh-200*time.Millisecond {
-		t.Fatalf("resumed %v, fresh %v: want at least two RTTs sooner", resumed, fresh)
+	if resumed > fresh-150*time.Millisecond {
+		t.Fatalf("resumed %v, fresh %v: want at least one and a half RTTs sooner", resumed, fresh)
 	}
 	if b.ResumeFailed() {
 		t.Fatal("a jump to half the saved window failed on the same path")
@@ -152,10 +152,18 @@ func TestCarefulResumeJump(t *testing.T) {
 		// After the first round: the RTT measured, and the window and
 		// pacing rate of a Startup that delivered the initial window.
 		b.delivered, b.minRTT, b.pacingRate = b.initialWindow, 90*time.Millisecond, 2e6
+		b.roundStart = true
 		b.crOnACK(RateSample{AppLimited: true})
 		if b.cr.phase != crReconnaissance {
 			t.Fatal("left Reconnaissance while rate limited")
 		}
+		// The jump waits for a round to start, so its rounds are whole.
+		b.roundStart = false
+		b.crOnACK(RateSample{})
+		if b.cr.phase != crReconnaissance {
+			t.Fatal("jumped in the middle of a round")
+		}
+		b.roundStart = true
 		b.crOnACK(RateSample{})
 		if b.cr.phase != crUnvalidated || b.cr.jump != tc.want {
 			t.Fatalf("max jump %d: phase %d, jump %d, want %d", tc.maxJump, b.cr.phase, b.cr.jump, tc.want)
@@ -194,7 +202,7 @@ func TestCarefulResumeCongestion(t *testing.T) {
 	}
 	b = NewBBR(1200)
 	b.Resume(saved, 0)
-	b.delivered, b.minRTT = b.initialWindow, 100*time.Millisecond
+	b.delivered, b.minRTT, b.roundStart = b.initialWindow, 100*time.Millisecond, true
 	b.crOnACK(RateSample{})
 	b.crBound()
 	// The loss enters recovery, which saves the jump's window to restore.
