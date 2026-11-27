@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/getlantern/photon/internal/recovery"
 	"github.com/getlantern/photon/internal/wire"
 )
 
@@ -139,7 +140,7 @@ func TestLocalMigrationMutualValidationBeforeCommit(t *testing.T) {
 				if client.queuedBytes != maxSendBytes || app.migrationResponse == nil {
 					t.Fatal("saturated commit lost response or changed queue charge")
 				}
-				if app.sent.BytesInFlight != 0 || app.sent.RTT.Sampled || app.space.nextPN != pn || app.congestion.Window() != 12000 || candidate.responsePending != nil {
+				if app.sent.BytesInFlight != 0 || app.sent.RTT.Sampled || app.space.nextPN != pn || app.congestion.Window() != recovery.InitialWindow(1200) || candidate.responsePending != nil {
 					t.Fatal("local commit retained old recovery state or lost pending response")
 				}
 				app.sent.BytesInFlight = app.congestion.Window()

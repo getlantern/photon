@@ -25,11 +25,24 @@ func NewCongestion(maxDatagram uint64) (*NewReno, error) {
 	return c, nil
 }
 
+// initialWindowPackets is the initial congestion window, in datagrams, of
+// both controllers. RFC 9002 Section 7.2 recommends (SHOULD) ten, capped at
+// the larger of 14720 bytes or two datagrams; Chromium's QUIC, quic-go and
+// Hysteria2 start with 32, and so does photon: on a long path ten cost about
+// 1.7 more round trips to reach the same rate, which dominates short
+// transfers. Both controllers pace from the start, so the larger window is
+// spread out: NewReno's over about 0.8 of the smoothed RTT after a 12 KB
+// burst, BBR Startup's over about a third of it.
+const initialWindowPackets = 32
+
+// InitialWindow is the initial congestion window for maxDatagram.
+func InitialWindow(maxDatagram uint64) uint64 { return initialWindowPackets * maxDatagram }
+
 // Reset returns the window to its initial value for maxDatagram, clamped to
 // the sizes NewCongestion accepts.
 func (c *NewReno) Reset(maxDatagram uint64) {
 	maxDatagram = min(max(maxDatagram, 1200), 65527)
-	*c = NewReno{window: min(10*maxDatagram, max(14720, 2*maxDatagram)), threshold: math.MaxUint64, datagram: maxDatagram}
+	*c = NewReno{window: InitialWindow(maxDatagram), threshold: math.MaxUint64, datagram: maxDatagram}
 }
 
 // PacingRate is 0: NewReno is paced from its window.
