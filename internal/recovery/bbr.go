@@ -634,7 +634,10 @@ func (b *BBR) adaptLongTermModel(rs RateSample) bool {
 // last ProbeRTT ended; min_rtt takes it when it is lower, and when
 // min_rtt's own ten-second filter expires. So an expired min_rtt takes the
 // lowest RTT of up to five seconds, across the troughs of another flow's
-// queue, not the next sample, which a standing queue would inflate.
+// queue, not the next sample, which a standing queue would inflate. An
+// interval minimum equal to min_rtt refreshes it too, where the draft
+// needs a lower one: the minimum was seen again, and without the refresh
+// it could expire across an ACK gap and give way to a queued sample.
 func (b *BBR) updateMinRTT(rs RateSample, now time.Time) {
 	b.probeRTTExpired = now.After(b.probeRTTMinStamp.Add(bbrProbeRTTInterval))
 	if b.probeRTTExpired {
@@ -645,7 +648,7 @@ func (b *BBR) updateMinRTT(rs RateSample, now time.Time) {
 		b.probeRTTMinStamp = now
 	}
 	b.minRTTExpired = now.After(b.minRTTStamp.Add(bbrMinRTTFilterLen))
-	if b.probeRTTMinDelay < b.minRTT || b.minRTTExpired {
+	if b.probeRTTMinDelay <= b.minRTT || b.minRTTExpired {
 		b.minRTT = b.probeRTTMinDelay
 		b.minRTTStamp = b.probeRTTMinStamp
 	}

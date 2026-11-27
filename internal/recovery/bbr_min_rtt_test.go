@@ -31,6 +31,24 @@ func TestBBRMinRTTExpiryTakesIntervalMinimum(t *testing.T) {
 	}
 }
 
+// Seeing min_rtt again refreshes it: after an ACK gap, a min_rtt confirmed
+// five seconds ago hasn't expired, and a queued sample doesn't replace it.
+func TestBBRMinRTTRefreshedWhenSeenAgain(t *testing.T) {
+	b := NewBBR(1200)
+	start := time.Unix(100, 0)
+	ms := time.Millisecond
+	sample := func(after, rtt time.Duration) {
+		b.at(start.Add(after))
+		b.updateMinRTT(RateSample{RTT: rtt}, start.Add(after))
+	}
+	sample(0, 50*ms)
+	sample(5300*ms, 50*ms)
+	sample(10400*ms, 90*ms)
+	if b.minRTT != 50*ms {
+		t.Fatalf("min_rtt %v after an ACK gap, want the 50ms seen 5 s before", b.minRTT)
+	}
+}
+
 // ProbeRTT runs after five seconds without a lower RTT, as the draft's
 // ProbeRTTInterval has it, not ten: on a clean path, every five seconds.
 func TestBBRProbeRTTInterval(t *testing.T) {
