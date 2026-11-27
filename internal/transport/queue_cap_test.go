@@ -117,3 +117,32 @@ func BenchmarkTinyWritesNextDatagram(b *testing.B) {
 	}
 	b.ReportMetric(float64(queued), "queued")
 }
+
+// With multipath the bound counts every path's frames together: frames
+// split across paths block new stream data at the same total.
+func TestQueuedFramesBoundAcrossPaths(t *testing.T) {
+	c, _ := sendingPathPair(t, wire.Version1)
+	id, err := c.OpenStream(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for c.queuedFrames() < maxQueuedFrames {
+		path := uint64(c.queuedFrames() % 2)
+		if err := c.queueFrameOnPath(path, wire.PingFrame{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, path := range []uint64{0, 1} {
+		if len(c.multipath.paths[path].application.space.queue) == 0 {
+			t.Fatal("no frames on path", path)
+		}
+	}
+	if n, err := c.WriteStream(id, []byte{1}, false); n != 0 || !errors.Is(err, stream.ErrWouldBlock) || c.streams.objects[id].send.Offset() != 0 {
+		t.Fatal("write past the bound summed over paths", n, err)
+	}
+	one := c.multipath.paths[1].application.space
+	one.queue = one.queue[1:]
+	if n, err := c.WriteStream(id, []byte{1}, false); n != 1 || err != nil {
+		t.Fatal("write under the bound refused", n, err)
+	}
+}
