@@ -24,9 +24,12 @@ type CongestionState struct {
 // CongestionStateCache keeps servers' saved congestion state for Careful
 // Resume (draft-ietf-tsvwg-careful-resume), keyed by client IP address. A
 // connection Takes its client's state on admission, so that one connection
-// at a time resumes from it, and Puts its own at close, replacing any
-// other. Delete drops a state whose jump met congestion. Implementations
-// must be safe for concurrent use.
+// at a time resumes from it, and Puts its own at close. Put must replace a
+// state only if it was measured no later than the one put, by Saved: a
+// connection puts back a state it took and didn't use, which mustn't undo
+// a newer one another connection from the address saved meanwhile. Delete
+// drops a state whose jump met congestion. Implementations must be safe
+// for concurrent use.
 type CongestionStateCache interface {
 	Take(key string) (CongestionState, bool)
 	Put(key string, s CongestionState)
@@ -92,12 +95,15 @@ func (c *MemoryCongestionStateCache) Take(key string) (CongestionState, bool) {
 func (c *MemoryCongestionStateCache) Put(key string, s CongestionState) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if e, ok := c.entries[key]; ok {
-		c.remove(e)
-	}
 	saved := s.Saved
 	if saved.IsZero() {
 		saved = c.now()
+	}
+	if e, ok := c.entries[key]; ok {
+		if e.Value.(savedCongestionState).saved.After(saved) {
+			return
+		}
+		c.remove(e)
 	}
 	c.entries[key] = c.order.PushFront(savedCongestionState{key, s, saved})
 	for c.order.Len() > c.maxEntries {

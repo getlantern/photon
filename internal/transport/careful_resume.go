@@ -20,6 +20,9 @@ type CongestionStates interface {
 type carefulResumeState struct {
 	key   string // the client the connection resumed for, or tried to
 	taken *recovery.ResumeState
+	// admitted is the client's address at admission, for a listener that
+	// doesn't track its connections' addresses, as a wildcard one doesn't.
+	admitted netip.AddrPort
 }
 
 // congestionStateKey keys a client's saved state: its IP address, without
@@ -41,7 +44,7 @@ func (c *Conn) resumeCongestionState(address netip.AddrPort, verified bool) {
 	if !ok {
 		return
 	}
-	c.carefulResume.key = congestionStateKey(address)
+	c.carefulResume.key, c.carefulResume.admitted = congestionStateKey(address), address
 	if !verified {
 		return
 	}
@@ -62,7 +65,8 @@ func (c *Conn) resumeCongestionState(address netip.AddrPort, verified bool) {
 // A connection that saves nothing, too short to measure the path, say,
 // puts back the state it took, unless its jump failed, so that a short
 // connection doesn't use it up; its saved time stays, so this doesn't
-// extend its lifetime. Multipath connections save nothing.
+// extend its lifetime. Connections that negotiated multipath save nothing;
+// a single-path connection whose path an address-aware listener owns does.
 func (c *Conn) saveCongestionState() {
 	states := c.config.CongestionStates
 	if states == nil || !c.config.Server || c.carefulResume.key == "" {
@@ -88,7 +92,7 @@ func (c *Conn) saveCongestionState() {
 // saveSnapshot saves the path's state, as saveCongestionState describes, and
 // reports whether it did.
 func (c *Conn) saveSnapshot(states CongestionStates, r recovery.Resumer) bool {
-	if c.multipath != nil || !c.complete {
+	if c.multipath != nil && !c.multipath.baseOnly || !c.complete {
 		return false
 	}
 	var failure *ConnectionTransportError
@@ -96,6 +100,9 @@ func (c *Conn) saveSnapshot(states CongestionStates, r recovery.Resumer) bool {
 		return false
 	}
 	remote := c.CurrentRemoteAddr()
+	if !remote.IsValid() {
+		remote = c.carefulResume.admitted
+	}
 	if !remote.IsValid() {
 		return false
 	}

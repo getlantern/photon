@@ -99,6 +99,31 @@ func TestSaveCongestionState(t *testing.T) {
 			t.Fatalf("%s: saved %v %+v, deleted %v", tc.name, saved, got, states.deleted)
 		}
 	}
+	// A single-path connection whose path an address-aware listener owns
+	// saves; one that negotiated multipath doesn't. A wildcard listener
+	// publishes no address, so the admitted one keys the state.
+	for _, tc := range []struct {
+		name      string
+		multipath *pathCIDs
+		published bool
+		key       string
+	}{
+		{"base-only owner", &pathCIDs{baseOnly: true}, true, "192.0.2.7"},
+		{"negotiated multipath", &pathCIDs{}, true, ""},
+		{"wildcard listener", nil, false, "198.51.100.4"},
+	} {
+		states := &testStates{saved: map[string]recovery.ResumeState{}}
+		c := &Conn{config: Config{Server: true, CongestionStates: states}, congestion: &testResumer{snapshot: &snap}, complete: true, multipath: tc.multipath}
+		if tc.published {
+			c.publishRemoteAddress(netip.MustParseAddrPort("192.0.2.7:4433"))
+		}
+		c.carefulResume = carefulResumeState{key: "198.51.100.4", admitted: netip.MustParseAddrPort("198.51.100.4:5000")}
+		c.saveCongestionState()
+		_, saved := states.saved[tc.key]
+		if saved != (tc.key != "") || len(states.saved) > 1 {
+			t.Fatalf("%s: saved %v", tc.name, states.saved)
+		}
+	}
 	if !errors.As(connectionFailure(&TransportError{Code: 0xa}), new(*ConnectionTransportError)) {
 		t.Fatal("a local transport error isn't a ConnectionTransportError")
 	}

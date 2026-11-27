@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/binary"
 	"io"
+	"net"
 	"testing"
 	"time"
 
@@ -16,9 +17,13 @@ import (
 // resumeServer is a photon server that answers each stream's 8-byte length
 // with that many bytes, its listener keeping congestion state in cache.
 func resumeServer(tb testing.TB, ctx context.Context, serverTLS *tls.Config, cache quic.CongestionStateCache) string {
+	return resumeServerAt(tb, ctx, "127.0.0.1:0", serverTLS, cache)
+}
+
+func resumeServerAt(tb testing.TB, ctx context.Context, address string, serverTLS *tls.Config, cache quic.CongestionStateCache) string {
 	tb.Helper()
 	const window = 32 << 20
-	l, err := quic.ListenAddr("127.0.0.1:0", serverTLS, &quic.Config{Versions: []quic.Version{quic.Version1}, InitialStreamReceiveWindow: window / 2, MaxStreamReceiveWindow: window / 2, InitialConnectionReceiveWindow: window, MaxConnectionReceiveWindow: window, CongestionStateCache: cache})
+	l, err := quic.ListenAddr(address, serverTLS, &quic.Config{Versions: []quic.Version{quic.Version1}, InitialStreamReceiveWindow: window / 2, MaxStreamReceiveWindow: window / 2, InitialConnectionReceiveWindow: window, MaxConnectionReceiveWindow: window, CongestionStateCache: cache})
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -47,27 +52,54 @@ func resumeServer(tb testing.TB, ctx context.Context, serverTLS *tls.Config, cac
 			}()
 		}
 	}()
-	return l.Addr().String()
+	_, port, err := net.SplitHostPort(l.Addr().String())
+	if err != nil {
+		tb.Fatal(err)
+	}
+	return net.JoinHostPort("127.0.0.1", port)
 }
 
 // resumeDownload connects to server through a fresh relay applying link,
 // downloads n bytes, closes the connection and reports how long the
 // download took. during, if set, runs once the download has started.
 func resumeDownload(tb testing.TB, ctx context.Context, server string, clientTLS *tls.Config, link wanLink, n uint64, during func()) time.Duration {
+	return resumeDownloadWith(tb, ctx, false, server, clientTLS, link, n, during)
+}
+
+// resumeDownloadWith is resumeDownload from a photon client, if photon, or
+// a quic-go one.
+func resumeDownloadWith(tb testing.TB, ctx context.Context, photon bool, server string, clientTLS *tls.Config, link wanLink, n uint64, during func()) time.Duration {
 	tb.Helper()
 	relay := newWANRelay(tb, server, link, link)
 	dialCtx, stop := context.WithTimeout(ctx, 30*time.Second)
 	defer stop()
 	const window = 32 << 20
-	peer, err := dialUpstreamAddr(tb, dialCtx, relay.addr(), clientTLS, &upstream.Config{Versions: []upstream.Version{upstream.Version1}, InitialStreamReceiveWindow: window / 2, MaxStreamReceiveWindow: window / 2, InitialConnectionReceiveWindow: window, MaxConnectionReceiveWindow: window})
-	if err != nil {
-		tb.Fatal(err)
-	}
-	defer peer.CloseWithError(0, "")
-	start := time.Now()
-	s, err := peer.OpenStreamSync(ctx)
-	if err != nil {
-		tb.Fatal(err)
+	var s io.ReadWriteCloser
+	var start time.Time
+	if photon {
+		peer, err := quic.DialAddr(dialCtx, relay.addr(), clientTLS, &quic.Config{Versions: []quic.Version{quic.Version1}, InitialStreamReceiveWindow: window / 2, MaxStreamReceiveWindow: window / 2, InitialConnectionReceiveWindow: window, MaxConnectionReceiveWindow: window})
+		if err != nil {
+			tb.Fatal(err)
+		}
+		defer peer.CloseWithError(0, "")
+		start = time.Now()
+		stream, err := peer.OpenStreamSync(ctx)
+		if err != nil {
+			tb.Fatal(err)
+		}
+		s = stream
+	} else {
+		peer, err := dialUpstreamAddr(tb, dialCtx, relay.addr(), clientTLS, &upstream.Config{Versions: []upstream.Version{upstream.Version1}, InitialStreamReceiveWindow: window / 2, MaxStreamReceiveWindow: window / 2, InitialConnectionReceiveWindow: window, MaxConnectionReceiveWindow: window})
+		if err != nil {
+			tb.Fatal(err)
+		}
+		defer peer.CloseWithError(0, "")
+		start = time.Now()
+		stream, err := peer.OpenStreamSync(ctx)
+		if err != nil {
+			tb.Fatal(err)
+		}
+		s = stream
 	}
 	var req [8]byte
 	binary.BigEndian.PutUint64(req[:], n)
@@ -104,22 +136,35 @@ func waitForStates(tb testing.TB, cache *quic.MemoryCongestionStateCache, n int)
 
 // A server connection saves its path's state at close, keyed by the
 // client's address; the client's next connection takes it, so the cache
-// is empty while that connection runs, and saves its own at close.
+// is empty while that connection runs, and saves its own at close. It
+// holds for a listener on a concrete address, which owns its connections'
+// paths, and one on a wildcard address, which doesn't, and for a photon
+// client, whose path the concrete listener's owner adopts, and a quic-go
+// one.
 func TestCarefulResumeSavesAndResumes(t *testing.T) {
+	for _, tc := range []struct {
+		name, listen string
+		photon       bool
+	}{{"concrete/quic-go", "127.0.0.1:0", false}, {"concrete/photon", "127.0.0.1:0", true}, {"wildcard/photon", "0.0.0.0:0", true}} {
+		t.Run(tc.name, func(t *testing.T) { testCarefulResumeSavesAndResumes(t, tc.listen, tc.photon) })
+	}
+}
+
+func testCarefulResumeSavesAndResumes(t *testing.T, listen string, photon bool) {
 	clientTLS, serverTLS := tlsConfigs(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	cache := quic.NewMemoryCongestionStateCache(0, 0)
-	server := resumeServer(t, ctx, serverTLS, cache)
+	server := resumeServerAt(t, ctx, listen, serverTLS, cache)
 	link := wanLink{delay: 50 * time.Millisecond, rate: 20e6 / 8, queue: 100 * time.Millisecond}
-	resumeDownload(t, ctx, server, clientTLS, link, 4<<20, nil)
+	resumeDownloadWith(t, ctx, photon, server, clientTLS, link, 4<<20, nil)
 	waitForStates(t, cache, 1)
 	s, ok := cache.Take("127.0.0.1")
 	if !ok || s.Bandwidth < 1e6 || s.Bandwidth > 4e6 || s.MinRTT < 100*time.Millisecond || s.MinRTT > 200*time.Millisecond {
 		t.Fatalf("saved %+v, %v after 4 MB through a 20 Mbit/s, 100 ms relay", s, ok)
 	}
 	cache.Put("127.0.0.1", s)
-	resumeDownload(t, ctx, server, clientTLS, link, 4<<20, func() {
+	resumeDownloadWith(t, ctx, photon, server, clientTLS, link, 4<<20, func() {
 		if cache.Len() != 0 {
 			t.Error("the second connection didn't take the saved state")
 		}

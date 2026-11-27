@@ -124,6 +124,10 @@ func TestBBRSnapshot(t *testing.T) {
 	if !ok || s.Bandwidth < 0.9*50e6/8 || s.MinRTT < 50*time.Millisecond || s.MinRTT > 55*time.Millisecond {
 		t.Fatalf("snapshot %+v, %v after 3 s on a 50 Mbit/s, 50 ms path", s, ok)
 	}
+	// Saved is when the bandwidth was last measured, not when it's taken.
+	if el := s.Saved.Sub(simStart); el < 2900*time.Millisecond || el > 3*time.Second {
+		t.Fatal("snapshot measured", el, "into a 3 s transfer")
+	}
 	b.state = bbrProbeRTT
 	if _, ok := b.Snapshot(); ok {
 		t.Fatal("snapshot in ProbeRTT")
@@ -212,5 +216,9 @@ func TestCarefulResumeCongestion(t *testing.T) {
 	b.OnPersistentCongestion()
 	if !b.ResumeFailed() {
 		t.Fatal("persistent congestion forgot the failure")
+	}
+	b.Reset(1200)
+	if !b.ResumeFailed() {
+		t.Fatal("a path change forgot the failure")
 	}
 }
