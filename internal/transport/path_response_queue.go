@@ -27,6 +27,13 @@ func (q *pathResponseQueue) pop() {
 	q.frames[q.count] = wire.PathResponseFrame{}
 }
 func (c *Conn) queuePathResponse(id uint64, f wire.PathResponseFrame) error {
+	// Responses queue at the head, so those waiting are a prefix: past
+	// maxPathResponses a peer's further challenges go unanswered.
+	if queue := c.multipath.paths[id].application.space.queue; len(queue) >= maxPathResponses {
+		if _, ok := queue[maxPathResponses-1].frame.(wire.PathResponseFrame); ok {
+			return nil
+		}
+	}
 	if err := c.queueFrameOnPath(id, f); err != nil {
 		if errors.Is(err, ErrSendBuffer) && c.multipath.paths[id].application.controlResponses.push(f) {
 			return nil

@@ -205,7 +205,7 @@ func (c *Conn) writeStream(id uint64, data []byte, fin bool, limiter func(int) i
 		if streamBlocked || connectionBlocked {
 			return 0, stream.ErrWouldBlock
 		}
-		if c.queuedFrames() >= maxQueuedFrames {
+		if !c.admittedWhole && c.queuedFrames() >= maxQueuedFrames {
 			return 0, stream.ErrWouldBlock
 		}
 	}
@@ -228,13 +228,13 @@ func (c *Conn) writeStream(id uint64, data []byte, fin bool, limiter func(int) i
 		reserve = partialResetControlCharge
 	}
 	offered := min(len(data), payloadLimit)
-	if offered+32+streamSplitReservation(offered)+reserve > c.availableSendBytes() {
+	if offered+32+streamSplitReservation(offered)+reserve > c.availableStreamBytes() {
 		// A portable partial write can still make progress without fragment
 		// reservations when the larger admission would exceed the queue limit.
 		payloadLimit = min(payloadLimit, portableStreamPayload)
 		offered = min(len(data), payloadLimit)
 	}
-	if offered+32+streamSplitReservation(offered)+reserve > c.availableSendBytes() {
+	if offered+32+streamSplitReservation(offered)+reserve > c.availableStreamBytes() {
 		return 0, stream.ErrWouldBlock
 	}
 	limited := false

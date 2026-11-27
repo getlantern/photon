@@ -18,7 +18,7 @@ func (c *Conn) TryWriteStreamAll(id uint64, data []byte) error {
 	if uint64(len(data)) > s.send.Limit()-s.send.Offset() || uint64(len(data)) > c.streams.send.Limit()-c.streams.send.Used() {
 		return stream.ErrWouldBlock
 	}
-	available := c.availableSendBytes()
+	available := c.availableStreamBytes()
 	if len(data) > available {
 		return stream.ErrWouldBlock
 	}
@@ -34,9 +34,9 @@ func (c *Conn) TryWriteStreamAll(id uint64, data []byte) error {
 	if len(data)+frames*32+reserve > available {
 		return stream.ErrWouldBlock
 	}
-	// All or nothing: the slice waits for room for all its frames. Within
-	// the send buffer, a slice needs fewer than maxQueuedFrames.
-	if c.queuedFrames()+frames > maxQueuedFrames {
+	// All or nothing: the slice waits for room for all its frames, or, if
+	// it alone needs more, for an empty queue.
+	if queued := c.queuedFrames(); queued > 0 && queued+frames > maxQueuedFrames {
 		return stream.ErrWouldBlock
 	}
 	if c.multipath != nil && c.confirmed {
@@ -44,6 +44,9 @@ func (c *Conn) TryWriteStreamAll(id uint64, data []byte) error {
 			return c.fail(&TransportError{Code: 0x10, Reason: "no viable path for application output"})
 		}
 	}
+	// Admitted whole: its chunks don't wait on the frame bound.
+	c.admittedWhole = true
+	defer func() { c.admittedWhole = false }()
 	for len(data) > 0 {
 		size := min(chunk, len(data))
 		n, err := c.WriteStream(id, data[:size], false)
