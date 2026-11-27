@@ -320,15 +320,27 @@ func TestRetireFloodCountsSentUnacknowledged(t *testing.T) {
 	t.Fatal("unacknowledged RETIREs never bounded the flood")
 }
 
-// The exact count finds a path's RETIREs wherever they wait or fly, and
-// only that path's.
+// The exact count finds a path's RETIREs wherever they wait or fly, in any
+// path's space, counts one held in two places once, skips acknowledged ones,
+// and counts only that path's.
 func TestCountRetirementsAcrossQueues(t *testing.T) {
 	c, _ := sendingPathPair(t, wire.Version1)
 	zero := c.multipath.paths[0].application.space
-	zero.queue = append(zero.queue, &sendItem{frame: wire.PathRetireConnectionIDFrame{PathID: 1, Sequence: 7}, queued: true})
-	zero.sent[1<<40] = &sendItem{frame: wire.PathRetireConnectionIDFrame{PathID: 1, Sequence: 8}}
-	zero.queue = append(zero.queue, &sendItem{frame: wire.PathRetireConnectionIDFrame{PathID: 2, Sequence: 9}, queued: true})
-	if n := c.countRetirements(1); n != 2 {
+	one := c.multipath.paths[1].application.space
+	if zero == one {
+		t.Fatal("fixture needs distinct path spaces")
+	}
+	retire := func(path, seq uint64) *sendItem {
+		return &sendItem{frame: wire.PathRetireConnectionIDFrame{PathID: path, Sequence: seq}, queued: true}
+	}
+	evacuated := retire(1, 8)
+	zero.queue = append(zero.queue, retire(1, 7), evacuated)
+	one.sent[1<<40] = evacuated // still in the old path's ledger
+	one.queue = append(one.queue, retire(1, 9))
+	done := retire(1, 10)
+	done.acked = true
+	zero.queue = append(zero.queue, done, retire(2, 11))
+	if n := c.countRetirements(1); n != 3 {
 		t.Fatal("path 1 retirements", n)
 	}
 	if n := c.countRetirements(2); n != 1 {
@@ -337,8 +349,8 @@ func TestCountRetirementsAcrossQueues(t *testing.T) {
 }
 
 // Retiring spent migration reservations shares the bound on unacknowledged
-// RETIREs: with the bound reached, it fails the connection rather than
-// queueing more.
+// RETIREs. A local action can reach it, so past the bound it waits, as for a
+// full queue, leaving the reservation and the connection as they were.
 func TestMigrationRetirementsBounded(t *testing.T) {
 	client, _ := sendingPathPair(t, wire.Version1)
 	peers := client.multipath.paths[1].peer
@@ -349,14 +361,26 @@ func TestMigrationRetirementsBounded(t *testing.T) {
 	}
 	limit := 2 * int(max(client.config.Parameters.ActiveConnectionIDLimit, 2))
 	zero := client.multipath.paths[0].application.space
-	for i := range limit {
-		item := &sendItem{frame: wire.PathRetireConnectionIDFrame{PathID: 1, Sequence: uint64(1000 + i)}, queued: true}
-		zero.queue = append(zero.queue, item)
-		client.countRetire(item)
+	held := make([]*sendItem, limit)
+	for i := range held {
+		held[i] = &sendItem{frame: wire.PathRetireConnectionIDFrame{PathID: 1, Sequence: uint64(1000 + i)}, queued: true}
+		zero.queue = append(zero.queue, held[i])
+		client.countRetire(held[i])
 	}
-	err := client.retireMigrationReservations(1, nil)
-	var te *TransportError
-	if !errors.As(err, &te) || te.Code != 9 || client.Err() == nil {
-		t.Fatal("migration retirement past the bound", err)
+	queued := len(zero.queue)
+	if err := client.retireMigrationReservations(1, nil); !errors.Is(err, ErrSendBuffer) || client.Err() != nil {
+		t.Fatal("migration retirement past the bound", err, client.Err())
+	}
+	if _, active := peers.active[seq]; !active || len(zero.queue) != queued {
+		t.Fatal("waiting retirement changed state")
+	}
+	// Once one is acknowledged, it goes.
+	held[0].acked = true
+	client.uncountRetire(held[0])
+	if err := client.retireMigrationReservations(1, nil); err != nil {
+		t.Fatal("retirement under the bound", err)
+	}
+	if _, active := peers.active[seq]; active {
+		t.Fatal("spent reservation not retired")
 	}
 }
