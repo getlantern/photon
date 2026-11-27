@@ -92,6 +92,7 @@ type BBR struct {
 	fullBwCount              int
 
 	baseline lossBaseline
+	cr       carefulResume
 
 	lossRoundDelivered uint64
 	lossRoundStart     bool
@@ -256,9 +257,13 @@ func (b *BBR) OnPersistentCongestion() {
 	// The reset forgets the loss events so far, the one that led here
 	// included, so any marks on the same ACK count as the fresh model's.
 	now, inflight := b.now, b.inflight
+	// A jump that ends here failed, and the state it resumed from goes; in
+	// Reconnaissance there was no jump to fail.
+	failed := b.cr.failed || b.cr.phase == crUnvalidated || b.cr.phase == crRetreat
 	b.Reset(b.smss)
 	b.at(now)
 	b.inflight = inflight
+	b.cr.failed = failed
 	b.cwnd = b.minPipeCwnd()
 	b.inRecovery, b.recoveryStart = true, now
 }
@@ -350,6 +355,7 @@ func (b *BBR) OnACK(e ACKEvent) {
 	b.updateMinRTT(rs, e.Now)
 	b.checkProbeRTT(rs, e.Now)
 	b.noteRoundStartState()
+	b.crOnACK(rs)
 	b.advanceLatestDeliverySignals(rs)
 	b.boundBWForModel()
 	// Leaving recovery comes after the model update, which checks whether
@@ -367,6 +373,7 @@ func (b *BBR) OnACK(e ACKEvent) {
 	// UpdateControlParameters.
 	b.setPacingRate()
 	b.setCwnd(rs)
+	b.crBound()
 }
 
 func (b *BBR) minPipeCwnd() uint64 { return 4 * b.smss }
@@ -753,7 +760,8 @@ func (b *BBR) advanceMaxBwFilter() {
 
 func (b *BBR) updateMaxBw(rs RateSample) {
 	b.updateRound(rs)
-	if !rs.Valid || rs.Rate == 0 {
+	// Drain after a failed jump discards its rates (Careful Resume).
+	if !rs.Valid || rs.Rate == 0 || b.cr.phase == crRetreat {
 		return
 	}
 	rate := float64(rs.Rate)
@@ -794,6 +802,7 @@ func (b *BBR) handleInflightTooHigh(appLimited bool, txInFlight uint64) {
 }
 
 func (b *BBR) noteLoss() {
+	b.crCongestion()
 	if !b.lossInRound {
 		b.lossRoundDelivered = b.delivered
 		b.lossRoundFrom = b.delivered

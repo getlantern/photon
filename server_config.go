@@ -47,6 +47,8 @@ func serverConfigSelector(listener Config) func(transport.Config, netip.AddrPort
 		base.RequireStreamCreditRelease = cfg.RequireStreamCreditRelease
 		base.DisablePathMTUDiscovery = cfg.DisablePathMTUDiscovery
 		base.CongestionControl = cfg.congestionAlgorithm()
+		base.CongestionStates = cfg.congestionStates()
+		base.CarefulResumeMaxJump = cfg.carefulResumeMaxJump()
 		base.InitialPacketSize = cfg.InitialPacketSize
 		base.HandshakeTimeout = cfg.HandshakeTimeout
 		base.HandshakeIdleTimeout = cfg.HandshakeIdleTimeout

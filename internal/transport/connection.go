@@ -71,6 +71,13 @@ type Config struct {
 	DisablePathMTUDiscovery bool
 	// CongestionControl selects each path's congestion controller.
 	CongestionControl recovery.Algorithm
+	// CongestionStates, on a server, keeps clients' saved congestion state
+	// for Careful Resume: a connection resumes from its client's on
+	// admission and saves its own at close. Nil disables it.
+	CongestionStates CongestionStates
+	// CarefulResumeMaxJump caps a resumed connection's jump, in bytes. Zero
+	// sets no limit beyond half the saved window.
+	CarefulResumeMaxJump uint64
 	// Enabled only by a runtime that configured nonfragmenting sockets.
 	enablePathMTUDiscovery bool
 	// Set by the UDP runtime with per-message marking and local-error fallback.
@@ -226,6 +233,7 @@ type deferredPacket struct {
 // Conn is the serialized transport engine. Except for explicit atomic snapshot
 // accessors, its methods and fields require the endpoint owner's goroutine.
 type Conn struct {
+	carefulResume                         carefulResumeState
 	forwardingBlocked                     bool // CID advertisements await foreign reservations.
 	lifetimeContext                       context.Context
 	cancelLifetimeContext                 context.CancelCauseFunc
@@ -589,6 +597,7 @@ func (c *Conn) Close() error {
 		return nil
 	}
 	c.publishStatistics()
+	c.saveCongestionState()
 	c.closed = true
 	if c.pendingWrite != nil {
 		c.pendingWrite.release()
