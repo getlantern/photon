@@ -113,6 +113,14 @@ type BBR struct {
 	cycleStamp                               time.Time
 	prevProbeTooHigh, prevProbePrecautionary bool
 
+	// probeRTTMinDelay is the lowest RTT of the current ProbeRTT interval,
+	// sampled at probeRTTMinStamp, or since the last ProbeRTT ended if that
+	// is later; min_rtt takes it when lower, or when min_rtt's own filter
+	// expires (the draft's two-level filter).
+	probeRTTMinDelay time.Duration
+	probeRTTMinStamp time.Time
+	probeRTTExpired  bool
+
 	probeRTTDoneStamp time.Time
 	probeRTTRoundDone bool
 	probeRTTCwnd      uint64
@@ -144,6 +152,7 @@ const (
 	bbrHeadroom            = 0.15
 	bbrExtraAckedFilterLen = 10 // round trips
 	bbrMinRTTFilterLen     = 10 * time.Second
+	bbrProbeRTTInterval    = 5 * time.Second
 	bbrProbeRTTCwndGain    = 0.5
 	bbrProbeRTTDuration    = 200 * time.Millisecond
 	bbrStartupFullLossCnt  = 6
@@ -169,6 +178,7 @@ func (b *BBR) Reset(maxDatagram uint64) {
 	b.initialWindow = InitialWindow(maxDatagram)
 	b.cwnd = b.initialWindow
 	b.minRTT = time.Duration(math.MaxInt64)
+	b.probeRTTMinDelay = time.Duration(math.MaxInt64)
 	b.probeRTTCwnd = bbrInfinity
 	b.inflightLongterm = bbrInfinity
 	b.probeUpAckedPerInc = bbrInfinity
@@ -201,6 +211,7 @@ func (b *BBR) at(now time.Time) {
 	b.now = now
 	if b.minRTTStamp.IsZero() {
 		b.minRTTStamp = now
+		b.probeRTTMinStamp = now
 		b.extraAckedStart = now
 	}
 }
@@ -616,19 +627,31 @@ func (b *BBR) adaptLongTermModel(rs RateSample) bool {
 
 // --- ProbeRTT (section 5.3.4) ---
 
+// updateMinRTT keeps the draft's two-level filter. probe_rtt_min_delay is
+// the lowest RTT of the current ProbeRTT interval, which expires, and
+// starts a ProbeRTT, five seconds after its minimum was sampled or the
+// last ProbeRTT ended; min_rtt takes it when it is lower, and when
+// min_rtt's own ten-second filter expires. So an expired min_rtt takes the
+// lowest RTT of up to five seconds, across the troughs of another flow's
+// queue, not the next sample, which a standing queue would inflate.
 func (b *BBR) updateMinRTT(rs RateSample, now time.Time) {
-	b.minRTTExpired = now.After(b.minRTTStamp.Add(bbrMinRTTFilterLen))
-	if b.minRTTExpired {
+	b.probeRTTExpired = now.After(b.probeRTTMinStamp.Add(bbrProbeRTTInterval))
+	if b.probeRTTExpired {
 		b.probeRTTCwnd = b.bdpMultiple(bbrProbeRTTCwndGain)
 	}
-	if rs.RTT > 0 && (rs.RTT < b.minRTT || b.minRTTExpired) {
-		b.minRTT = rs.RTT
-		b.minRTTStamp = now
+	if rs.RTT > 0 && (rs.RTT < b.probeRTTMinDelay || b.probeRTTExpired) {
+		b.probeRTTMinDelay = rs.RTT
+		b.probeRTTMinStamp = now
+	}
+	b.minRTTExpired = now.After(b.minRTTStamp.Add(bbrMinRTTFilterLen))
+	if b.probeRTTMinDelay < b.minRTT || b.minRTTExpired {
+		b.minRTT = b.probeRTTMinDelay
+		b.minRTTStamp = b.probeRTTMinStamp
 	}
 }
 
 func (b *BBR) checkProbeRTT(rs RateSample, now time.Time) {
-	if b.state != bbrProbeRTT && b.minRTTExpired && !b.idleRestart {
+	if b.state != bbrProbeRTT && b.probeRTTExpired && !b.idleRestart {
 		b.saveCwnd()
 		b.enterProbeRTT()
 		b.probeRTTDoneStamp = time.Time{}
@@ -668,7 +691,7 @@ func (b *BBR) handleProbeRTT(now time.Time) {
 
 func (b *BBR) checkProbeRTTDone(now time.Time) {
 	if !b.probeRTTDoneStamp.IsZero() && now.After(b.probeRTTDoneStamp) {
-		b.minRTTStamp = now
+		b.probeRTTMinStamp = now
 		b.restoreCwnd()
 		b.exitProbeRTT(now)
 	}

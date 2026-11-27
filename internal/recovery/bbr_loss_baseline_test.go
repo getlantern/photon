@@ -184,13 +184,19 @@ func TestLossBaselineRounds(t *testing.T) {
 		}
 		l.noteLost(50)
 		l.noteRTT(time.Millisecond)
-		quiet := i < bbrMinBaselineRounds-1
-		l.endRound(l.roundDelivered+950, quiet, noQueue)
+		l.endRound(l.roundDelivered+950, true, noQueue)
 	}
 	if l.rate != 0.05 {
 		t.Fatal("quiet rounds", l.rate)
 	}
-	// A probing round counts toward the last round's rate, not the baseline.
+	// A round that ends as BBR starts to probe stays out.
+	l.noteLost(500)
+	l.noteRTT(time.Millisecond)
+	l.endRound(l.roundDelivered+500, false, noQueue)
+	if l.rate != 0.05 {
+		t.Fatal("round ending in a probe", l.rate)
+	}
+	// So does the probing round.
 	l.noteLost(500)
 	l.endRound(l.roundDelivered+500, true, noQueue)
 	if l.rate != 0.05 {
