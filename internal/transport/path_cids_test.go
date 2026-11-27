@@ -56,9 +56,10 @@ func TestPathCIDTablePeerBindings(t *testing.T) {
 	if _, ok := p.paths[3]; ok {
 		t.Fatal("failed frame allocated path")
 	}
+	// Already retired: neither revived nor retired again.
 	retired, err = p.receiveNew(pathNew(1, 0, 0, "pathone0"))
-	if err != nil || len(retired) != 1 || retired[0].Sequence != 0 || len(p.paths[1].peer.active) != 1 {
-		t.Fatal("retired duplicate revived", retired, err)
+	if err != nil || len(retired) != 0 || len(p.paths[1].peer.active) != 1 {
+		t.Fatal("retired duplicate revived or retired again", retired, err)
 	}
 	// Base and multipath frame forms share path zero's binding space.
 	base := pathNew(0, 1, 0, "remote01").NewConnectionIDFrame

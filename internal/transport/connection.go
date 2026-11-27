@@ -324,7 +324,10 @@ type Conn struct {
 	reservedResetBytes         int
 	// admittedWhole is set while TryWriteStreamAll writes a slice it
 	// admitted whole, so its chunks don't wait on maxQueuedFrames.
-	admittedWhole                        bool
+	admittedWhole bool
+	// retiresQueued counts RETIRE_CONNECTION_IDs waiting on each path; see
+	// checkRetirements.
+	retiresQueued                        map[uint64]int
 	complete, confirmed, started, closed bool
 	err                                  error
 }
@@ -1116,7 +1119,7 @@ func (c *Conn) receiveECN(raw []byte, h wire.Header, now time.Time, buffer bool,
 				return true, c.fail(err)
 			}
 			c.peerCID = clone(c.peerIDs.active[c.peerIDs.current].cid)
-			if retired, err = c.newRetirements(0, retired, f.Type()); err != nil {
+			if err := c.checkRetirements(0, len(retired), f.Type()); err != nil {
 				return true, c.fail(err)
 			}
 			for _, seq := range retired {
@@ -1124,6 +1127,7 @@ func (c *Conn) receiveECN(raw []byte, h wire.Header, now time.Time, buffer bool,
 					return true, err
 				}
 			}
+			c.noteRetireQueued(0, len(retired))
 		case wire.RetireConnectionIDFrame:
 			changed, err := c.localIDs.retire(f.Sequence, h.DCID)
 			if err != nil {
@@ -1531,6 +1535,7 @@ func (c *Conn) nextBaseDatagram(now time.Time) ([]byte, error) {
 				c.localIDs.markSent(cid.Sequence)
 			}
 			c.commitStreamPriority(item)
+			c.noteRetireSent(item.frame)
 			item.queued = false
 			s.queue[0] = nil
 			s.queue = s.queue[1:]

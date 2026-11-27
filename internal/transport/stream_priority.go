@@ -36,60 +36,66 @@ func (c *Conn) streamPriority(id uint64) streamPriority {
 // frames of about a packet each, that the send buffer has queued.
 const maxQueuedFrames = 1024
 
-type retirement struct{ path, sequence uint64 }
+// checkRetirements fails with CONNECTION_ID_LIMIT_ERROR if queueing adding
+// more RETIRE_CONNECTION_IDs on path would leave more than twice our
+// active_connection_id_limit waiting to be sent, the bound RFC 9000 Section
+// 5.1.2 allows: a peer retiring every earlier ID with each new one, and not
+// acknowledging, would otherwise queue one per frame it sends. peerIDs
+// already answers each sequence number once. retiresQueued counts those
+// queued on each path, less those sent; frames that leave a queue some other
+// way leave it high, so only the path's queue, counted exactly, can fail
+// the connection, and recounting corrects it.
+func (c *Conn) checkRetirements(path uint64, adding int, frameType uint64) error {
+	limit := 2 * int(max(c.config.Parameters.ActiveConnectionIDLimit, 2))
+	if adding == 0 || c.retiresQueued[path]+adding <= limit {
+		return nil
+	}
+	queue := c.spaces[applicationSpace].queue
+	if c.multipath != nil {
+		state := c.multipath.paths[path]
+		if state == nil || state.application == nil {
+			return nil
+		}
+		queue = state.application.space.queue
+	}
+	waiting := 0
+	for _, item := range queue {
+		if _, ok := retirementPath(item.frame); ok && !item.acked {
+			waiting++
+		}
+	}
+	if c.retiresQueued == nil {
+		c.retiresQueued = map[uint64]int{}
+	}
+	c.retiresQueued[path] = waiting
+	if waiting+adding > limit {
+		return &TransportError{Code: 9, FrameType: frameType, Reason: "too many connection IDs awaiting retirement"}
+	}
+	return nil
+}
 
-// newRetirements returns the retirements, of path's connection IDs, that
-// aren't already waiting to be sent: RFC 9000 Section 19.15 sends one per
-// sequence number, so a repeated NEW_CONNECTION_ID doesn't queue another. It
-// fails with CONNECTION_ID_LIMIT_ERROR if they would leave more than twice
-// our active_connection_id_limit waiting, the bound Section 5.1.2 allows: a
-// peer retiring every earlier ID with each new one, and not acknowledging the
-// RETIREs, would otherwise queue one per frame it sends.
-func (c *Conn) newRetirements(path uint64, sequences []uint64, frameType uint64) ([]uint64, error) {
-	if len(sequences) == 0 {
-		return nil, nil
+// retirementPath reports the path a RETIRE_CONNECTION_ID frame retires on.
+func retirementPath(f wire.Frame) (uint64, bool) {
+	switch f := f.(type) {
+	case wire.RetireConnectionIDFrame:
+		return 0, true
+	case wire.PathRetireConnectionIDFrame:
+		return f.PathID, true
 	}
-	waiting := map[retirement]bool{}
-	note := func(queue []*sendItem) {
-		for _, item := range queue {
-			if item.acked {
-				continue
-			}
-			switch f := item.frame.(type) {
-			case wire.RetireConnectionIDFrame:
-				waiting[retirement{0, f.Sequence}] = true
-			case wire.PathRetireConnectionIDFrame:
-				waiting[retirement{f.PathID, f.Sequence}] = true
-			}
-		}
+	return 0, false
+}
+
+// noteRetireQueued and noteRetireSent keep retiresQueued.
+func (c *Conn) noteRetireQueued(path uint64, n int) {
+	if c.retiresQueued == nil {
+		c.retiresQueued = map[uint64]int{}
 	}
-	if c.multipath == nil {
-		note(c.spaces[applicationSpace].queue)
-	} else {
-		for _, state := range c.multipath.paths {
-			if state.application != nil {
-				note(state.application.space.queue)
-			}
-		}
+	c.retiresQueued[path] += n
+}
+func (c *Conn) noteRetireSent(f wire.Frame) {
+	if path, ok := retirementPath(f); ok && c.retiresQueued[path] > 0 {
+		c.retiresQueued[path]--
 	}
-	var fresh []uint64
-	for _, seq := range sequences {
-		if key := (retirement{path, seq}); !waiting[key] {
-			waiting[key] = true
-			fresh = append(fresh, seq)
-		}
-	}
-	// Each path has its own connection IDs, so its own bound.
-	onPath := 0
-	for key := range waiting {
-		if key.path == path {
-			onPath++
-		}
-	}
-	if onPath > 2*int(max(c.config.Parameters.ActiveConnectionIDLimit, 2)) {
-		return nil, &TransportError{Code: 9, FrameType: frameType, Reason: "too many connection IDs awaiting retirement"}
-	}
-	return fresh, nil
 }
 
 // queuedFrames is how many application frames wait to be sent, on every

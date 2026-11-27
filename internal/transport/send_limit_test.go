@@ -269,3 +269,19 @@ func TestActivatedPathChallengeFloodBounded(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// An abandoned path carries no new data, so its window no longer counts.
+func TestStreamLimitSkipsAbandonedPaths(t *testing.T) {
+	c, _ := sendingPathPair(t, wire.Version1)
+	c.multipath.paths[0].application.congestion = fixedWindow{c.multipath.paths[0].application.congestion, 12000}
+	c.multipath.paths[1].application.congestion = fixedWindow{c.multipath.paths[1].application.congestion, 4 << 20}
+	if got := c.streamSendLimit(); got != maxSendBytes-controlReserve {
+		t.Fatal("limit with both paths", got)
+	}
+	if err := c.abandonFailedPath(1); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.streamSendLimit(); got != minStreamSendBytes {
+		t.Fatal("abandoned path's window still counted", got)
+	}
+}

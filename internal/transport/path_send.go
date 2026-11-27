@@ -295,6 +295,7 @@ func (c *Conn) nextPacketOnPathSelection(id, ackPath uint64, now time.Time, allo
 			c.multipath.markSent(f.PathID, f.Sequence)
 		}
 		c.commitStreamPriority(item)
+		c.noteRetireSent(item.frame)
 		item.queued = false
 		s.queue[0] = nil
 		s.queue = s.queue[1:]
