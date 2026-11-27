@@ -51,13 +51,21 @@ func (c *Conn) checkRetirements(path uint64, adding int, frameType uint64) error
 	if adding == 0 || c.retiresOutstanding[path]+adding <= limit {
 		return nil
 	}
+	tooMany := &TransportError{Code: 9, FrameType: frameType, Reason: "too many connection IDs awaiting retirement"}
+	// Nothing changed since the last exact count: it stands. Migration
+	// cleanup waiting at the bound retries before every packet.
+	if c.retiresRecounted[path] {
+		return tooMany
+	}
 	outstanding := c.countRetirements(path)
 	if c.retiresOutstanding == nil {
 		c.retiresOutstanding = map[uint64]int{}
+		c.retiresRecounted = map[uint64]bool{}
 	}
 	c.retiresOutstanding[path] = outstanding
+	c.retiresRecounted[path] = true
 	if outstanding+adding > limit {
-		return &TransportError{Code: 9, FrameType: frameType, Reason: "too many connection IDs awaiting retirement"}
+		return tooMany
 	}
 	return nil
 }
@@ -65,6 +73,7 @@ func (c *Conn) checkRetirements(path uint64, adding int, frameType uint64) error
 // countRetirements counts the unacknowledged RETIRE_CONNECTION_IDs for path
 // in every application queue and sent-packet ledger.
 func (c *Conn) countRetirements(path uint64) int {
+	c.retireRecounts++
 	n := 0
 	visit := func(item *sendItem) {
 		if p, ok := retirementPath(item.frame); ok && p == path && !item.acked {
@@ -117,14 +126,17 @@ func (c *Conn) countRetire(item *sendItem) {
 	}
 	if c.retiresOutstanding == nil {
 		c.retiresOutstanding = map[uint64]int{}
+		c.retiresRecounted = map[uint64]bool{}
 	}
 	item.retireCounted = true
 	c.retiresOutstanding[path]++
+	c.retiresRecounted[path] = false
 }
 func (c *Conn) uncountRetire(item *sendItem) {
 	if path, ok := retirementPath(item.frame); ok && item.retireCounted {
 		item.retireCounted = false
 		c.retiresOutstanding[path]--
+		c.retiresRecounted[path] = false
 	}
 }
 

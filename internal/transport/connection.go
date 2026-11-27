@@ -328,7 +328,11 @@ type Conn struct {
 	admittedWhole bool
 	// retiresOutstanding counts unacknowledged RETIRE_CONNECTION_IDs by
 	// the path they retire on; see checkRetirements.
-	retiresOutstanding                   map[uint64]int
+	retiresOutstanding map[uint64]int
+	// retiresRecounted marks a path whose count was taken exactly and hasn't
+	// changed since.
+	retiresRecounted                     map[uint64]bool
+	retireRecounts                       int // exact counts taken, for tests
 	complete, confirmed, started, closed bool
 	err                                  error
 }
