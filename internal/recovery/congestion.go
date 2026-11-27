@@ -13,6 +13,7 @@ type NewReno struct {
 	window, threshold, datagram, credit uint64
 	recoveryStart                       time.Time
 	recovering                          bool
+	hystart                             hystart
 }
 
 func NewCongestion(maxDatagram uint64) (*NewReno, error) {
@@ -68,12 +69,23 @@ func (c *NewReno) OnACK(e ACKEvent) {
 	if e.Limited {
 		return
 	}
+	if c.window < c.threshold && c.hystart.onACK(e) {
+		// Conservative slow start ran its rounds: the path's queue is
+		// filling, so grow as congestion avoidance from here.
+		c.threshold = c.window
+	}
 	for _, p := range e.Acked {
 		if !p.InFlight || c.inRecovery(p.SentAt) {
 			continue
 		}
 		if c.window < c.threshold {
-			c.window = saturatingAdd(c.window, uint64(p.Bytes))
+			grow := uint64(p.Bytes)
+			if c.hystart.css {
+				c.credit = saturatingAdd(c.credit, grow)
+				grow = c.credit / cssGrowthDivisor
+				c.credit -= grow * cssGrowthDivisor
+			}
+			c.window = saturatingAdd(c.window, grow)
 		} else {
 			c.credit = saturatingAdd(c.credit, uint64(p.Bytes))
 			for c.credit >= c.window {
@@ -116,6 +128,7 @@ func (c *NewReno) onCongestionEvent(sent, now time.Time) {
 		return
 	}
 	c.recoveryStart, c.recovering = now, true
+	c.hystart.done, c.hystart.css = true, false
 	c.threshold = c.window / 2
 	c.window = max(c.threshold, 2*c.datagram)
 	c.credit = 0

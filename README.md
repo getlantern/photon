@@ -159,9 +159,9 @@ Implemented and tested:
   accounted PTO exceptions.
 - BBRv3 congestion control (draft-ietf-ccwg-bbr-07), the default, driven by
   delivery-rate sampling and paced at its bandwidth estimate.
-- NewReno congestion-window gating, slow start, byte-counted congestion
-  avoidance, recovery-epoch loss reduction, and bounded PTO send exceptions,
-  selected with `Config.CongestionControl`.
+- NewReno congestion-window gating, slow start with HyStart++ (RFC 9406),
+  byte-counted congestion avoidance, recovery-epoch loss reduction, and
+  bounded PTO send exceptions, selected with `Config.CongestionControl`.
 - A standalone bounded stream receiver with reassembly, FIN/RESET final-size
   validation, and shared connection receive-flow accounting.
 - Stream send-credit/FIN/reset state and constant-memory stream-ID
