@@ -53,6 +53,7 @@ func (c *Conn) queueFrameOnPath(selected uint64, frame wire.Frame) error {
 	}
 	s := c.multipath.paths[selected].application.space
 	s.queue = append(s.queue, &sendItem{frame: frame, bytes: size, queued: true})
+	c.countRetire(s.queue[len(s.queue)-1])
 	if frame.Type() == 0x1a || frame.Type() == 0x1b {
 		item := s.queue[len(s.queue)-1]
 		// Responses retain arrival order and precede locally generated challenges.

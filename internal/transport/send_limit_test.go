@@ -285,3 +285,53 @@ func TestStreamLimitSkipsAbandonedPaths(t *testing.T) {
 		t.Fatal("abandoned path's window still counted", got)
 	}
 }
+
+// RETIREs count until acknowledged, not until sent: a flood whose RETIREs
+// go out but are never acknowledged still fails at the bound.
+func TestRetireFloodCountsSentUnacknowledged(t *testing.T) {
+	client, server := testPair(t, wire.Version1, streamParameters())
+	drivePair(t, client, server, false, false)
+	client.congestion = openController{client.congestion}
+	now := time.Unix(200, 0)
+	pn := uint64(1000)
+	for seq := uint64(10); seq < 200; seq++ {
+		pn++
+		f := wire.NewConnectionIDFrame{Sequence: seq, RetirePriorTo: seq, ConnectionID: []byte{0xd0, byte(seq >> 8), byte(seq), 1, 2, 3, 4, 5}, StatelessResetToken: [16]byte{byte(seq), 1}}
+		err := client.HandleDatagram(makePeerPacket(t, server, applicationSpace, pn, f), now)
+		if err != nil {
+			var te *TransportError
+			if !errors.As(err, &te) || te.Code != 9 {
+				t.Fatal("flood failed with", err)
+			}
+			return
+		}
+		// Send everything queued; the peer never acknowledges it.
+		for {
+			out, err := client.NextDatagram(now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if out == nil {
+				break
+			}
+		}
+		now = now.Add(time.Millisecond)
+	}
+	t.Fatal("unacknowledged RETIREs never bounded the flood")
+}
+
+// The exact count finds a path's RETIREs wherever they wait or fly, and
+// only that path's.
+func TestCountRetirementsAcrossQueues(t *testing.T) {
+	c, _ := sendingPathPair(t, wire.Version1)
+	zero := c.multipath.paths[0].application.space
+	zero.queue = append(zero.queue, &sendItem{frame: wire.PathRetireConnectionIDFrame{PathID: 1, Sequence: 7}, queued: true})
+	zero.sent[1<<40] = &sendItem{frame: wire.PathRetireConnectionIDFrame{PathID: 1, Sequence: 8}}
+	zero.queue = append(zero.queue, &sendItem{frame: wire.PathRetireConnectionIDFrame{PathID: 2, Sequence: 9}, queued: true})
+	if n := c.countRetirements(1); n != 2 {
+		t.Fatal("path 1 retirements", n)
+	}
+	if n := c.countRetirements(2); n != 1 {
+		t.Fatal("path 2 retirements", n)
+	}
+}

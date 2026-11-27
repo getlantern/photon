@@ -59,6 +59,9 @@ func (c *Conn) retireMigrationReservations(id uint64, keep *migrationCandidate) 
 	}
 	*state.peer = staged
 	space.queue = append(space.queue, items...)
+	for _, item := range items {
+		c.countRetire(item)
+	}
 	c.queuedBytes += 32 * len(items)
 	return nil
 }
