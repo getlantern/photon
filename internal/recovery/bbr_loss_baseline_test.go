@@ -29,10 +29,11 @@ func TestBBRHoldsLinkUnderRandomLoss(t *testing.T) {
 
 // Where loss means congestion, the baseline stays at about zero throughout
 // and BBR responds as draft-07 has it: a clean path, a shallow buffer, and a
-// queue shared with two NewReno flows, whose loss shows with a queue and is
-// kept out. A policer is the exception it tolerates: cruising at the policed
-// rate, BBR overruns the bucket now and then with no queue to show it, and
-// learns a baseline of up to a few percent at times.
+// queue shared with NewReno flows, whose loss shows with a queue and is kept
+// out, even when sixteen of them hold it standing past min_rtt's expiry. A
+// policer is the exception it tolerates: cruising at the policed rate, BBR
+// overruns the bucket now and then with no queue to show it, and learns a
+// baseline that averages about 1% and peaks near 7%.
 func TestLossBaselineStaysZeroUnderCongestion(t *testing.T) {
 	policed := bufferedLink(100e6, 50*time.Millisecond, 1)
 	policed.policer = &simPolicer{rate: 10e6 / 8, burst: 64 * 1024}
@@ -40,20 +41,22 @@ func TestLossBaselineStaysZeroUnderCongestion(t *testing.T) {
 		name   string
 		link   *simLink
 		renos  int
+		d      time.Duration
 		maxTop float64
 	}{
-		{"clean", bufferedLink(100e6, 50*time.Millisecond, 1), 0, 0.002},
-		{"policer", policed, 0, 0.05},
-		{"shallow buffer", bufferedLink(100e6, 50*time.Millisecond, 0.1), 0, 0.002},
-		{"with NewReno", bufferedLink(10e6, 20*time.Millisecond, 1), 2, 0.002},
+		{"clean", bufferedLink(100e6, 50*time.Millisecond, 1), 0, 60 * time.Second, 0.002},
+		{"policer", policed, 0, 60 * time.Second, 0.08},
+		{"shallow buffer", bufferedLink(100e6, 50*time.Millisecond, 0.1), 0, 60 * time.Second, 0.002},
+		{"with NewReno", bufferedLink(10e6, 20*time.Millisecond, 1), 2, 60 * time.Second, 0.002},
+		{"standing queue", bufferedLink(20e6, 50*time.Millisecond, 4), 16, 90 * time.Second, 0.002},
 	} {
 		b := newBBRFlow(3)().(*BBR)
 		top := 0.0
 		flows := []*simFlow{{c: b, observe: func(time.Time) { top = max(top, b.baseline.rate) }}}
 		for i := range tc.renos {
-			flows = append(flows, &simFlow{c: newRenoFlow(), start: simStart.Add(time.Duration(2+i) * time.Second)})
+			flows = append(flows, &simFlow{c: newRenoFlow(), start: simStart.Add(3*time.Second + time.Duration(i)*100*time.Millisecond)})
 		}
-		simulateFlows(t, tc.link, 30*time.Second, flows...)
+		simulateFlows(t, tc.link, tc.d, flows...)
 		t.Logf("%s: baseline at most %.3f%%, %.3f%% at the end", tc.name, 100*top, 100*b.baseline.rate)
 		if top > tc.maxTop {
 			t.Fatalf("%s: baseline reached %.3f%%, want at most %.1f%%", tc.name, 100*top, 100*tc.maxTop)
@@ -197,14 +200,16 @@ func TestInflightAtCongestion(t *testing.T) {
 	}
 }
 
-// A queue shows as an RTT above the minimum by an eighth, between 4 and
-// 16 ms; before any RTT, there is no telling, so it counts as one.
+// A queue shows as an RTT above the path's lowest by an eighth, between 4
+// and 16 ms; before any RTT, there is no telling, so it counts as one. The
+// lowest RTT never expires: min_rtt, refreshed while another flow holds a
+// standing queue, would let that queue pass for none.
 func TestBBRQueueing(t *testing.T) {
 	b := NewBBR(1200)
 	if !b.queueing(50 * time.Millisecond) {
-		t.Fatal("no minimum RTT yet")
+		t.Fatal("no RTT yet")
 	}
-	b.minRTT = 50 * time.Millisecond
+	b.baseline.noteRTT(50 * time.Millisecond)
 	for _, tc := range []struct {
 		rtt  time.Duration
 		want bool
@@ -213,7 +218,13 @@ func TestBBRQueueing(t *testing.T) {
 			t.Fatalf("RTT %v over 50ms: queueing %v, want %v", tc.rtt, got, tc.want)
 		}
 	}
-	b.minRTT = 400 * time.Millisecond
+	b.minRTT = 80 * time.Millisecond
+	b.baseline.noteRTT(80 * time.Millisecond)
+	if !b.queueing(80 * time.Millisecond) {
+		t.Fatal("an expired min_rtt resets the reference")
+	}
+	b = NewBBR(1200)
+	b.baseline.noteRTT(400 * time.Millisecond)
 	if b.queueing(415*time.Millisecond) || !b.queueing(416*time.Millisecond) {
 		t.Fatal("16 ms cap")
 	}
