@@ -102,15 +102,16 @@ func (l *lossBaseline) noteRTT(rtt time.Duration) {
 }
 
 // endRound finishes the round in progress, at delivered bytes, and starts
-// the next. The finished round joins the baseline if BBR wasn't probing as
-// it or the round before began, and no queue showed in it: not in the
-// round's lowest RTT (queueing), nor just after any of its losses.
-// quietNext reports whether BBR is quiet as the next round begins. It
-// reports whether the path has its first baseline, since
-// the connection began or its last baseline was dropped as stale.
+// the next. The finished round joins the baseline if BBR was quiet, not
+// probing, as it and the round before began and still is as it ends, and
+// no queue showed in it: not in the round's lowest RTT (queueing), nor
+// just after any of its losses. quietNext reports whether BBR is quiet now,
+// as the next round begins. It reports whether the path has its first
+// baseline, since the connection began or its last baseline was dropped as
+// stale.
 func (l *lossBaseline) endRound(delivered uint64, quietNext bool, queueing func(time.Duration) bool) (learned bool) {
 	began := l.roundQuiet
-	if !l.prevQuiet || l.roundLossRTT > 0 && queueing(l.roundLossRTT) || l.roundMinRTT > 0 && queueing(l.roundMinRTT) {
+	if !l.prevQuiet || !quietNext || l.roundLossRTT > 0 && queueing(l.roundLossRTT) || l.roundMinRTT > 0 && queueing(l.roundMinRTT) {
 		l.roundQuiet = false
 	}
 	sent := delivered - l.roundDelivered + l.roundLost
