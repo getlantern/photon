@@ -91,9 +91,12 @@ type BBR struct {
 	fullBw                   float64
 	fullBwCount              int
 
+	baseline lossBaseline
+
 	lossRoundDelivered uint64
 	lossRoundStart     bool
 	lossInRound        bool
+	ceInRound          bool // CE marks in the loss round, which no baseline discounts
 	lossEventsInRound  int
 	lossNoted          bool // OnLoss noted a loss event since the last OnACK
 	inRecovery         bool
@@ -260,6 +263,7 @@ func (b *BBR) OnLoss(e LossEvent) {
 	}
 	// Whether this detection was a loss event, for the ACK that may follow.
 	b.lossNoted = batch > 0
+	b.baseline.noteLost(batch)
 	if batch == 0 {
 		return
 	}
@@ -308,8 +312,9 @@ func (b *BBR) OnACK(e ACKEvent) {
 		if !lossNoted {
 			b.noteLoss()
 		}
-		if congested := rs.Lost + rs.CE; b.checkProbeLoss && isInflightTooHigh(congested, rs.InFlight) {
-			b.handleInflightTooHigh(rs.AppLimited, inflightAtLoss(min(rs.NewCE, congested), rs.InFlight, congested))
+		b.ceInRound = true
+		if congested := rs.Lost + rs.CE; b.checkProbeLoss && b.isInflightTooHigh(rs.Lost, rs.CE, rs.InFlight) {
+			b.handleInflightTooHigh(rs.AppLimited, inflightAtLoss(min(rs.NewCE, congested), rs.InFlight, congested, b.lossThresh()))
 		}
 	}
 	if rtt := e.SmoothedRTT; !b.hasSeenRTT && rtt > 0 {
@@ -318,6 +323,7 @@ func (b *BBR) OnACK(e ACKEvent) {
 		b.hasSeenRTT = true
 		b.pacingRate = bbrStartupPacingGain * float64(b.initialWindow) / rtt.Seconds()
 	}
+	b.baseline.noteRTT(rs.RTT)
 	// UpdateModelAndState.
 	b.updateLatestDeliverySignals(rs)
 	b.updateCongestionSignals(rs)
@@ -394,7 +400,12 @@ func (b *BBR) checkStartupHighLoss(rs RateSample) {
 	if b.lossEventsInRound < bbrStartupFullLossCnt {
 		return
 	}
-	if !isInflightTooHigh(rs.Lost+rs.CE, rs.InFlight) {
+	// Without a baseline yet, loss ends Startup only with a queue behind it,
+	// since random loss shows none, or above any rate the baseline would
+	// discount, as an overflowing buffer too shallow to show a queue gives.
+	lost := rs.Lost + rs.CE
+	if !b.isInflightTooHigh(rs.Lost, rs.CE, rs.InFlight) ||
+		rs.CE == 0 && !b.queueing(rs.RTT) && float64(lost) <= float64(rs.InFlight)*(bbrMaxLossBaseline+bbrLossThresh) {
 		return
 	}
 	b.fullBwReached = true
@@ -585,7 +596,7 @@ func (b *BBR) adaptLongTermModel(rs RateSample) bool {
 			return true
 		}
 	}
-	if !isInflightTooHigh(rs.Lost+rs.CE, rs.InFlight) {
+	if !b.isInflightTooHigh(rs.Lost, rs.CE, rs.InFlight) {
 		if b.inflightLongterm == bbrInfinity {
 			return false
 		}
@@ -680,6 +691,7 @@ func (b *BBR) startRound() { b.nextRoundDelivered = b.delivered }
 func (b *BBR) updateRound(rs RateSample) {
 	if rs.PriorDelivered >= b.nextRoundDelivered {
 		b.startRound()
+		b.baseline.endRound(b.delivered, b.state == bbrProbeBWDown || b.state == bbrProbeBWCruise, b.queueing)
 		b.roundCount++
 		b.roundsSinceProbeUp++
 		b.roundStart = true
@@ -728,12 +740,6 @@ func (b *BBR) updateACKAggregation(rs RateSample, now time.Time) {
 
 // --- Responding to loss (section 5.5.10) ---
 
-// isInflightTooHigh reports whether lost bytes exceed the loss threshold of
-// what was in flight. QUIC acknowledgments are selective.
-func isInflightTooHigh(lost, inflight uint64) bool {
-	return float64(lost) > float64(inflight)*bbrLossThresh
-}
-
 func (b *BBR) handleInflightTooHigh(appLimited bool, txInFlight uint64) {
 	b.prevProbeTooHigh = true
 	b.checkProbeLoss = false
@@ -760,18 +766,18 @@ func (b *BBR) handleLostPacket(p Packet, totalLost, totalCE uint64) {
 	}
 	txInFlight := p.Delivery.InFlight
 	// Marks since the packet was sent count with losses (see BBR).
-	lost := totalLost - p.Delivery.Lost + totalCE - p.Delivery.CE
-	if isInflightTooHigh(lost, txInFlight) {
-		b.handleInflightTooHigh(p.Delivery.AppLimited, inflightAtLoss(uint64(p.Bytes), txInFlight, lost))
+	lost, ce := totalLost-p.Delivery.Lost, totalCE-p.Delivery.CE
+	if b.isInflightTooHigh(lost, ce, txInFlight) {
+		b.handleInflightTooHigh(p.Delivery.AppLimited, inflightAtLoss(uint64(p.Bytes), txInFlight, lost+ce, b.lossThresh()))
 	}
 }
 
 // inflightAtLoss estimates the bytes in flight at which losses crossed the
 // threshold, within packet p's own bytes.
-func inflightAtLoss(size, txInFlight, lost uint64) uint64 {
+func inflightAtLoss(size, txInFlight, lost uint64, thresh float64) uint64 {
 	inflightPrev := float64(txInFlight) - float64(size)
 	lostPrev := float64(lost) - float64(size)
-	lostPrefix := (bbrLossThresh*inflightPrev - lostPrev) / (1 - bbrLossThresh)
+	lostPrefix := (thresh*inflightPrev - lostPrev) / (1 - thresh)
 	return uint64(max(inflightPrev+lostPrefix, 0))
 }
 
@@ -799,7 +805,7 @@ func (b *BBR) advanceLatestDeliverySignals(rs RateSample) {
 }
 
 func (b *BBR) resetCongestionSignals() {
-	b.lossInRound = false
+	b.lossInRound, b.ceInRound = false, false
 	b.lossEventsInRound = 0
 	b.bwLatest = 0
 	b.inflightLatest = 0
@@ -811,14 +817,14 @@ func (b *BBR) updateCongestionSignals(rs RateSample) {
 		return
 	}
 	b.adaptLowerBoundsFromCongestion()
-	b.lossInRound = false
+	b.lossInRound, b.ceInRound = false, false
 }
 
 func (b *BBR) adaptLowerBoundsFromCongestion() {
 	if b.isProbingBW() {
 		return
 	}
-	if b.lossInRound {
+	if b.lossInRound && b.roundCongested() {
 		// InitLowerBounds.
 		if math.IsInf(b.bwShortterm, 1) {
 			b.bwShortterm = b.maxBw
