@@ -98,6 +98,9 @@ func (c *MemoryCongestionStateCache) Put(key string, s CongestionState) {
 	if saved.IsZero() {
 		saved = c.now()
 	}
+	if c.now().Sub(saved) > c.lifetime {
+		return
+	}
 	if e, ok := c.entries[key]; ok {
 		if e.Value.(savedCongestionState).saved.After(saved) {
 			return

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/getlantern/photon/internal/recovery"
+	"github.com/getlantern/photon/internal/wire"
 )
 
 type testStates struct {
@@ -106,18 +107,25 @@ func TestSaveCongestionState(t *testing.T) {
 	// A single-path connection whose path an address-aware listener owns
 	// saves; one that negotiated multipath doesn't. A wildcard listener
 	// publishes no address, so the admitted one keys the state.
+	maxPathID := uint64(3)
 	for _, tc := range []struct {
-		name      string
-		multipath *pathCIDs
-		published bool
-		key       string
+		name       string
+		multipath  *pathCIDs
+		negotiated bool
+		published  bool
+		key        string
 	}{
-		{"base-only owner", &pathCIDs{baseOnly: true}, true, "192.0.2.7"},
-		{"negotiated multipath", &pathCIDs{}, true, ""},
-		{"wildcard listener", nil, false, "198.51.100.4"},
+		{"base-only owner", &pathCIDs{baseOnly: true}, false, true, "192.0.2.7"},
+		{"negotiated multipath", &pathCIDs{}, true, true, ""},
+		{"negotiated, path not yet adopted", nil, true, true, ""},
+		{"wildcard listener", nil, false, false, "198.51.100.4"},
 	} {
 		states := &testStates{saved: map[string]recovery.ResumeState{}}
 		c := &Conn{config: Config{Server: true, CongestionStates: states}, congestion: &testResumer{snapshot: &snap}, complete: true, multipath: tc.multipath}
+		if tc.negotiated {
+			c.config.multipathCapacity, c.config.Parameters.InitialMaxPathID = 4, &maxPathID
+			c.peerParams = &wire.TransportParameters{InitialMaxPathID: &maxPathID}
+		}
 		if tc.published {
 			c.publishRemoteAddress(netip.MustParseAddrPort("192.0.2.7:4433"))
 		}
