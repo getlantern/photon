@@ -11,7 +11,9 @@ import (
 // ECN marks of packets lost, abandoned or evicted. An ACK range finds its
 // members by binary search, so an ACK costs what it covers, not the set's
 // size. An honest ACK's gaps are exactly where losses were, so lost numbers
-// that stay lost are never visited.
+// that stay lost are never visited. Members a range removed, late ACKs of
+// lost packets, are revisited by ranges that cover them again until they
+// are half the set and it compacts.
 type numberSet struct {
 	nums []uint64
 	gone []bool // removed, awaiting compaction
