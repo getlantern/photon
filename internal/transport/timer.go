@@ -127,6 +127,7 @@ func (c *Conn) HandleTimeout(now time.Time) error {
 	}
 	if c.Draining() {
 		if !now.Before(c.drainUntil) {
+			c.saveCongestionState()
 			c.closed = true
 			if c.pendingWrite != nil {
 				c.pendingWrite.release()

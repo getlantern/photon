@@ -125,6 +125,25 @@ type Config struct {
 	// CongestionControl selects the congestion controller for the
 	// connection's paths. The zero value is BBR.
 	CongestionControl CongestionControl
+	// CongestionStateCache, on a listener using BBR, enables Careful Resume
+	// (draft-ietf-tsvwg-careful-resume): each connection saves its path's
+	// bandwidth and minimum RTT at close, keyed by client IP address, and a
+	// client's next connection, once its first round confirms the path
+	// looks the same, jumps to half that window instead of ramping up from
+	// the initial window, retreating if the jump meets congestion.
+	// Connections behind one IP address share a state. Only a connection
+	// admitted from a verified address resumes: ListenAddr and Listen send a
+	// Retry to verify each, but a Transport listener without
+	// VerifySourceAddress sends none, so there only clients presenting a
+	// NEW_TOKEN token resume. Multipath connections may resume, on their
+	// first path, but save nothing; clients don't take part. Nil disables
+	// Careful Resume.
+	CongestionStateCache CongestionStateCache
+	// CarefulResumeMaxJump caps a resumed connection's jump, in bytes, which
+	// is half the saved window. Zero selects 4 MiB: a stale or inflated
+	// state, perhaps from another client behind the same address, can then
+	// send at most that much before the path confirms it.
+	CarefulResumeMaxJump uint64
 	// EnableMultipath opts into RFC 10069 multipath, with path IDs 0–3.
 	// Both endpoints must opt in. ListenAddr requires a concrete bind address.
 	// Servers validate client address rebinding within the existing socket family,
@@ -246,7 +265,7 @@ func makeServerConfig(tlsConfig *tls.Config, cfg Config, params wire.TransportPa
 		return transport.Config{}, nil, err
 	}
 
-	engineConfig := transport.Config{MaxStreamReceiveWindow: cfg.MaxStreamReceiveWindow, MaxConnectionReceiveWindow: cfg.MaxConnectionReceiveWindow, AcceptEarly: early, EnableEarlyData: cfg.Allow0RTT, CompatibleVersions: compatibleVersions(cfg), PreferredAddresses: cfg.PreferredAddresses, AddressTokens: addressTokens, DisablePathMTUDiscovery: cfg.DisablePathMTUDiscovery, CongestionControl: cfg.congestionAlgorithm(), InitialPacketSize: cfg.InitialPacketSize, EnableMigration: true, EnableMultipath: cfg.EnableMultipath, RequireStreamCreditRelease: cfg.RequireStreamCreditRelease, Version: version, TLS: tlsConfig, Parameters: params, HandshakeTimeout: cfg.HandshakeTimeout, HandshakeIdleTimeout: cfg.HandshakeIdleTimeout, KeepAlivePeriod: cfg.KeepAlivePeriod}
+	engineConfig := transport.Config{MaxStreamReceiveWindow: cfg.MaxStreamReceiveWindow, MaxConnectionReceiveWindow: cfg.MaxConnectionReceiveWindow, AcceptEarly: early, EnableEarlyData: cfg.Allow0RTT, CompatibleVersions: compatibleVersions(cfg), PreferredAddresses: cfg.PreferredAddresses, AddressTokens: addressTokens, DisablePathMTUDiscovery: cfg.DisablePathMTUDiscovery, CongestionControl: cfg.congestionAlgorithm(), CongestionStates: cfg.congestionStates(), CarefulResumeMaxJump: cfg.carefulResumeMaxJump(), InitialPacketSize: cfg.InitialPacketSize, EnableMigration: true, EnableMultipath: cfg.EnableMultipath, RequireStreamCreditRelease: cfg.RequireStreamCreditRelease, Version: version, TLS: tlsConfig, Parameters: params, HandshakeTimeout: cfg.HandshakeTimeout, HandshakeIdleTimeout: cfg.HandshakeIdleTimeout, KeepAlivePeriod: cfg.KeepAlivePeriod}
 	engineConfig.AdapterData = acceptedConfig{cfg.EnableDatagrams, cfg.AllowConnectionWindowIncrease}
 	if cfg.GetConfigForClient != nil {
 		engineConfig.ConfigureClient = serverConfigSelector(cfg)

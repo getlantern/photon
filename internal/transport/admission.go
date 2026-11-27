@@ -172,6 +172,7 @@ func AdmitInitialECN(ctx context.Context, template Config, tokens *token.RetryTo
 	if verified {
 		c.budget.Validate()
 	}
+	c.resumeCongestionState(address, verified)
 	err = c.HandleDatagramECN(data, now, marking)
 	return c, nil, err
 }
