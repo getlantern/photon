@@ -96,7 +96,9 @@ type BBR struct {
 	lossRoundDelivered uint64
 	lossRoundStart     bool
 	lossInRound        bool
-	ceInRound          bool // CE marks in the loss round, which no baseline discounts
+	ceInRound          bool   // CE marks in the loss round, which no baseline discounts
+	lossRoundLost      uint64 // bytes lost in the loss round
+	lossRoundFrom      uint64 // delivered bytes as the loss round began
 	lossEventsInRound  int
 	lossNoted          bool // OnLoss noted a loss event since the last OnACK
 	inRecovery         bool
@@ -264,6 +266,7 @@ func (b *BBR) OnLoss(e LossEvent) {
 	// Whether this detection was a loss event, for the ACK that may follow.
 	b.lossNoted = batch > 0
 	b.baseline.noteLost(batch)
+	b.lossRoundLost += batch
 	if batch == 0 {
 		return
 	}
@@ -314,7 +317,7 @@ func (b *BBR) OnACK(e ACKEvent) {
 		}
 		b.ceInRound = true
 		if congested := rs.Lost + rs.CE; b.checkProbeLoss && b.isInflightTooHigh(rs.Lost, rs.CE, rs.InFlight) {
-			b.handleInflightTooHigh(rs.AppLimited, inflightAtLoss(min(rs.NewCE, congested), rs.InFlight, congested, b.lossThresh()))
+			b.handleInflightTooHigh(rs.AppLimited, b.inflightAtCongestion(min(rs.NewCE, congested), rs.InFlight, rs.Lost, rs.CE))
 		}
 	}
 	if rtt := e.SmoothedRTT; !b.hasSeenRTT && rtt > 0 {
@@ -754,6 +757,7 @@ func (b *BBR) handleInflightTooHigh(appLimited bool, txInFlight uint64) {
 func (b *BBR) noteLoss() {
 	if !b.lossInRound {
 		b.lossRoundDelivered = b.delivered
+		b.lossRoundFrom = b.delivered
 		b.saveStateUponLoss()
 	}
 	b.lossInRound = true
@@ -768,7 +772,7 @@ func (b *BBR) handleLostPacket(p Packet, totalLost, totalCE uint64) {
 	// Marks since the packet was sent count with losses (see BBR).
 	lost, ce := totalLost-p.Delivery.Lost, totalCE-p.Delivery.CE
 	if b.isInflightTooHigh(lost, ce, txInFlight) {
-		b.handleInflightTooHigh(p.Delivery.AppLimited, inflightAtLoss(uint64(p.Bytes), txInFlight, lost+ce, b.lossThresh()))
+		b.handleInflightTooHigh(p.Delivery.AppLimited, b.inflightAtCongestion(uint64(p.Bytes), txInFlight, lost, ce))
 	}
 }
 
@@ -805,7 +809,7 @@ func (b *BBR) advanceLatestDeliverySignals(rs RateSample) {
 }
 
 func (b *BBR) resetCongestionSignals() {
-	b.lossInRound, b.ceInRound = false, false
+	b.lossInRound, b.ceInRound, b.lossRoundLost = false, false, 0
 	b.lossEventsInRound = 0
 	b.bwLatest = 0
 	b.inflightLatest = 0
@@ -817,7 +821,7 @@ func (b *BBR) updateCongestionSignals(rs RateSample) {
 		return
 	}
 	b.adaptLowerBoundsFromCongestion()
-	b.lossInRound, b.ceInRound = false, false
+	b.lossInRound, b.ceInRound, b.lossRoundLost = false, false, 0
 }
 
 func (b *BBR) adaptLowerBoundsFromCongestion() {

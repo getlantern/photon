@@ -60,10 +60,6 @@ type lossBaseline struct {
 	// prevQuiet is whether the round before began quiet: loss shows about a
 	// round after the packet was sent, so a round's loss is from the last.
 	prevQuiet bool
-	// lastRoundRate is the most recent finished round's loss rate, of
-	// lastRoundSent bytes.
-	lastRoundRate float64
-	lastRoundSent uint64
 }
 
 // noteLost adds bytes declared lost to the round in progress.
@@ -88,7 +84,6 @@ func (l *lossBaseline) endRound(delivered uint64, quietNext bool, queueing func(
 	}
 	sent := delivered - l.roundDelivered + l.roundLost
 	if sent > 0 {
-		l.lastRoundRate, l.lastRoundSent = float64(l.roundLost)/float64(sent), sent
 		if !l.roundQuiet {
 			if l.stale++; l.stale >= bbrStaleBaselineRounds {
 				l.lost, l.sent, l.next, l.count, l.rate = [bbrBaselineRounds]uint64{}, [bbrBaselineRounds]uint64{}, 0, 0, 0
@@ -124,21 +119,45 @@ func (b *BBR) isInflightTooHigh(lost, ce, inflight uint64) bool {
 	return lostAbove+float64(ce) > float64(inflight)*bbrLossThresh
 }
 
-// roundCongested reports whether the last round's loss marks congestion,
-// for the short-term bounds. Without a baseline, any loss does, as the
-// draft has it, and so do CE marks, with or without one. With one, the round's loss must exceed the baseline by the
-// loss threshold, and by three standard deviations of a round that size's
-// loss count at the baseline rate, up to bbrMaxLossMargin: a short round's
-// random loss varies enough that the threshold alone would mistake it for
-// congestion.
+// roundCongested reports whether the loss round just ended, which had loss
+// or CE marks, marks congestion, for the short-term bounds. CE marks
+// always do, and so does any loss without a baseline, as the draft has it.
 func (b *BBR) roundCongested() bool {
-	p := b.baseline.rate
-	if p == 0 || b.ceInRound {
+	if b.ceInRound {
 		return true
 	}
-	packets := float64(b.baseline.lastRoundSent) / float64(max(b.smss, 1))
+	sent := b.lossRoundLost
+	if b.delivered > b.lossRoundFrom {
+		sent += b.delivered - b.lossRoundFrom
+	}
+	return b.lossCongested(b.lossRoundLost, sent)
+}
+
+// lossCongested reports whether lost of sent bytes marks congestion. With
+// a baseline, the loss must exceed it by the loss threshold, and by three
+// standard deviations of that many packets' loss count at the baseline
+// rate, up to bbrMaxLossMargin: a short round's random loss varies enough
+// that the threshold alone would mistake it for congestion.
+func (b *BBR) lossCongested(lost, sent uint64) bool {
+	p := b.baseline.rate
+	if p == 0 || sent == 0 {
+		return true
+	}
+	packets := float64(sent) / float64(max(b.smss, 1))
 	margin := min(3*math.Sqrt(p*(1-p)/max(packets, 1)), bbrMaxLossMargin)
-	return b.baseline.lastRoundRate > b.lossThresh()+margin
+	return float64(lost)/float64(sent) > b.lossThresh()+margin
+}
+
+// inflightAtCongestion estimates the bytes in flight at which lost and
+// CE-marked bytes crossed isInflightTooHigh's threshold, within the last
+// size bytes. Once the loss exceeds the baseline's discount, the crossing
+// is the combined bytes' at the baseline plus 2%; below it, only the marks
+// count, at 2%.
+func (b *BBR) inflightAtCongestion(size, txInFlight, lost, ce uint64) uint64 {
+	if float64(lost) <= float64(txInFlight)*b.baseline.rate {
+		return inflightAtLoss(min(size, ce), txInFlight, ce, bbrLossThresh)
+	}
+	return inflightAtLoss(size, txInFlight, lost+ce, b.lossThresh())
 }
 
 // queueing reports whether the latest RTT shows a queue: above the minimum
