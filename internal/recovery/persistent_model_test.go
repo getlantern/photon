@@ -69,7 +69,7 @@ func FuzzPersistentCongestionHistory(f *testing.F) {
 				if len(ledger) > 0 {
 					i := int(a) % len(ledger)
 					id := ledger[i].id
-					h.ack(id.space, ack(id.number, id.number))
+					h.ack(id.space, ack(id.number, id.number), []Packet{{Number: id.number}})
 					ledger[i].state = 2
 					trim()
 				}

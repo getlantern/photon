@@ -16,7 +16,7 @@ func BenchmarkCongestionHistoryACK(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		pn := uint64(i)
 		h.sent(Application, Packet{Number: pn, SentAt: now, AckEliciting: true}, true)
-		h.ack(Application, wire.AckFrame{Ranges: []wire.AckRange{{Smallest: pn, Largest: pn}}})
+		h.ack(Application, wire.AckFrame{Ranges: []wire.AckRange{{Smallest: pn, Largest: pn}}}, []Packet{{Number: pn}})
 	}
 }
 
@@ -41,7 +41,7 @@ func BenchmarkCongestionHistoryOutstanding(b *testing.B) {
 				h.lost(Application, []Packet{{Number: pn - uint64(capacity/4)}})
 				n := pn - uint64(capacity/2)
 				if n%2 == 0 {
-					h.ack(Application, wire.AckFrame{Ranges: []wire.AckRange{{Smallest: n, Largest: n}}})
+					h.ack(Application, wire.AckFrame{Ranges: []wire.AckRange{{Smallest: n, Largest: n}}}, []Packet{{Number: n}})
 				}
 				if i%64 == 0 {
 					h.detect(time.Second)

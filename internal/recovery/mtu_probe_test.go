@@ -75,7 +75,7 @@ func TestMTUProbeCannotAnchorPersistentCongestion(t *testing.T) {
 		h.sent(Application, p, true)
 		h.lost(Application, []Packet{p})
 	}
-	h.ack(Application, ack(1, 1))
+	h.ack(Application, ack(1, 1), []Packet{{Number: 1}})
 	if h.detect(time.Second) {
 		t.Fatal("probe ACK did not break loss interval")
 	}

@@ -31,7 +31,7 @@ func TestPersistentCongestionHistory(t *testing.T) {
 				h.lost(Handshake, []Packet{{Number: 0}})
 			}
 			if tc.middle == 2 {
-				h.ack(Handshake, ack(0, 0))
+				h.ack(Handshake, ack(0, 0), []Packet{{Number: 0}})
 			}
 			h.lost(Application, []Packet{{Number: 0}})
 			if got := h.detect(time.Second); got != tc.want {
@@ -55,7 +55,7 @@ func TestPersistentLateACKAndDiscard(t *testing.T) {
 		if discard {
 			h.discard(Handshake)
 		} else {
-			h.ack(Handshake, ack(0, 0))
+			h.ack(Handshake, ack(0, 0), []Packet{{Number: 0}})
 		}
 		if h.detect(time.Second) {
 			t.Fatal("ACK or key discard did not split interval")

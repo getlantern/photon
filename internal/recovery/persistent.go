@@ -62,6 +62,7 @@ func (o *congestionOrder) Remove(p *congestionRecord) {
 type congestionHistory struct {
 	order    congestionOrder
 	index    map[transmissionID]*congestionRecord
+	lostSet  [3]numberSet // each space's lost records, which a late ACK can recover
 	capacity int
 }
 
@@ -77,6 +78,9 @@ func (h *congestionHistory) sent(space Space, p Packet, sampled bool) {
 }
 func (h *congestionHistory) removeFront() {
 	e := h.order.Front()
+	if e.state == 1 {
+		h.lostSet[e.id.space].remove(e.id.number)
+	}
 	delete(h.index, e.id)
 	h.order.Remove(e)
 }
@@ -85,36 +89,39 @@ func (h *congestionHistory) trimAcknowledged() {
 		h.removeFront()
 	}
 }
-func (h *congestionHistory) ack(space Space, f wire.AckFrame) (recoveredPackets, recoveredBytes uint64) {
+
+// ack resolves the records of acked, the packets f newly acknowledges that
+// recovery still tracked, and of the lost packets f covers: a late ACK
+// that recovers them.
+func (h *congestionHistory) ack(space Space, f wire.AckFrame, acked []Packet) (recoveredPackets, recoveredBytes uint64) {
 	defer h.trimAcknowledged()
-	mark := func(e *congestionRecord) {
-		if e == nil {
-			return
+	for _, p := range acked {
+		if e := h.index[transmissionID{space, p.Number}]; e != nil && e.state == 0 {
+			e.state = 2
 		}
-		p := e
-		if p.state == 1 {
+	}
+	h.lostSet[space].covered(f, func(pn uint64) bool {
+		if e := h.index[transmissionID{space, pn}]; e != nil && e.state == 1 {
 			recoveredPackets++
-			recoveredBytes += uint64(p.bytes)
+			recoveredBytes += uint64(e.bytes)
+			e.state = 2
 		}
-		p.state = 2
-	}
-	if useACKLookup(f, len(h.index)) {
-		for _, span := range f.Ranges {
-			for pn := span.Smallest; pn <= span.Largest; pn++ {
-				mark(h.index[transmissionID{space, pn}])
-			}
-		}
-	} else {
-		for id, e := range h.index {
-			if id.space == space && f.Acknowledges(id.number) {
-				mark(e)
-			}
-		}
-	}
+		return true
+	})
 	return recoveredPackets, recoveredBytes
+}
+
+// resolve marks a record that recovery dropped without an ACK or a loss, an
+// expendable pure ACK it evicted, as settled: like an unresolved record, it
+// interrupts any run of losses, and it no longer holds the history open.
+func (h *congestionHistory) resolve(space Space, number uint64) {
+	if e := h.index[transmissionID{space, number}]; e != nil && e.state == 0 {
+		e.state = 2
+	}
 }
 func (h *congestionHistory) discard(space Space) {
 	defer h.trimAcknowledged()
+	h.lostSet[space].clear()
 	for id, e := range h.index {
 		if id.space == space {
 			p := e
@@ -124,9 +131,9 @@ func (h *congestionHistory) discard(space Space) {
 }
 func (h *congestionHistory) lost(space Space, packets []Packet) {
 	for _, p := range packets {
-		if e := h.index[transmissionID{space, p.Number}]; e != nil {
-			v := e
-			v.state = 1
+		if e := h.index[transmissionID{space, p.Number}]; e != nil && e.state != 1 {
+			e.state = 1
+			h.lostSet[space].add(p.Number)
 		}
 	}
 }
