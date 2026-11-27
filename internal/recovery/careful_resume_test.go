@@ -200,6 +200,19 @@ func TestCarefulResumeCongestion(t *testing.T) {
 	if b.ResumeFailed() {
 		t.Fatal("persistent congestion in Reconnaissance, before any jump, failed it")
 	}
+	// A path change during the jump, before the path validated it, fails
+	// it: its state goes unvalidated.
+	b = NewBBR(1200)
+	b.Resume(saved, 0)
+	b.delivered, b.minRTT, b.roundStart = b.initialWindow, 100*time.Millisecond, true
+	b.crOnACK(RateSample{})
+	if b.cr.phase != crUnvalidated {
+		t.Fatal("no jump")
+	}
+	b.Reset(1200)
+	if !b.ResumeFailed() {
+		t.Fatal("a path change during the jump didn't fail it")
+	}
 	b = NewBBR(1200)
 	b.Resume(saved, 0)
 	b.delivered, b.minRTT, b.roundStart = b.initialWindow, 100*time.Millisecond, true

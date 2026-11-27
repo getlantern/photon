@@ -175,9 +175,11 @@ func (b *BBR) Reset(maxDatagram uint64) {
 	if rng == nil {
 		rng = rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64()))
 	}
-	// A failed Careful Resume jump stays failed on a new path: the state
-	// it resumed from must not be saved back (see Resumer).
-	*b = BBR{smss: maxDatagram, rng: rng, cr: carefulResume{failed: b.cr.failed}}
+	// A Careful Resume jump that failed, or that a reset cuts short before
+	// the path validated it, stays failed on a new path: the state it
+	// resumed from must not be saved back (see Resumer).
+	failed := b.cr.failed || b.cr.phase == crUnvalidated || b.cr.phase == crRetreat
+	*b = BBR{smss: maxDatagram, rng: rng, cr: carefulResume{failed: failed}}
 	b.initialWindow = InitialWindow(maxDatagram)
 	b.cwnd = b.initialWindow
 	b.minRTT = time.Duration(math.MaxInt64)
@@ -259,10 +261,8 @@ func (b *BBR) OnPersistentCongestion() {
 	// The reset forgets the loss events so far, the one that led here
 	// included, so any marks on the same ACK count as the fresh model's.
 	now, inflight := b.now, b.inflight
-	// A jump that ends here failed, and the state it resumed from goes; in
-	// Reconnaissance there was no jump to fail. Reset keeps an earlier
-	// failure.
-	b.cr.failed = b.cr.failed || b.cr.phase == crUnvalidated || b.cr.phase == crRetreat
+	// Reset marks a jump that this cuts short failed; in Reconnaissance
+	// there was no jump to fail.
 	b.Reset(b.smss)
 	b.at(now)
 	b.inflight = inflight
