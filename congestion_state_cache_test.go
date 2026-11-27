@@ -68,6 +68,11 @@ func TestMemoryCongestionStateCacheBounds(t *testing.T) {
 	if _, ok := c.Take("d"); ok {
 		t.Fatal("putting a state back extended its lifetime")
 	}
+	// A state measured longer ago than the lifetime isn't kept.
+	c.Put("f", CongestionState{Bandwidth: 1e6, MinRTT: time.Millisecond, Saved: now.Add(-2 * time.Minute)})
+	if _, ok := c.Take("f"); ok {
+		t.Fatal("an expired state put")
+	}
 	// Putting back a state doesn't undo a newer one saved meanwhile.
 	old := CongestionState{Bandwidth: 9e6, MinRTT: time.Millisecond, Saved: now.Add(-time.Minute / 2)}
 	c.Put("e", CongestionState{Bandwidth: 1e6, MinRTT: time.Millisecond})

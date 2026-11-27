@@ -93,7 +93,7 @@ func (c *Conn) saveCongestionState() {
 // saveSnapshot saves the path's state, as saveCongestionState describes, and
 // reports whether it did.
 func (c *Conn) saveSnapshot(states CongestionStates, r recovery.Resumer) bool {
-	if c.multipath != nil && !c.multipath.baseOnly || !c.complete {
+	if c.multipathNegotiated() || !c.complete {
 		return false
 	}
 	var failure *ConnectionTransportError
