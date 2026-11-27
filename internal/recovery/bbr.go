@@ -349,6 +349,7 @@ func (b *BBR) OnACK(e ACKEvent) {
 	b.updateProbeBWCyclePhase(rs, e.Now)
 	b.updateMinRTT(rs, e.Now)
 	b.checkProbeRTT(rs, e.Now)
+	b.noteRoundStartState()
 	b.advanceLatestDeliverySignals(rs)
 	b.boundBWForModel()
 	// Leaving recovery comes after the model update, which checks whether
@@ -714,6 +715,15 @@ func (b *BBR) probeRTTCwndTarget() uint64 {
 // --- Model (section 5.5) ---
 
 func (b *BBR) startRound() { b.nextRoundDelivered = b.delivered }
+
+// noteRoundStartState records, for the loss baseline, whether BBR is quiet
+// as a round starts: in ProbeBW_DOWN or CRUISE once the ACK that started it
+// has moved the state machine, which can leave for ProbeRTT or a probe.
+func (b *BBR) noteRoundStartState() {
+	if b.roundStart {
+		b.baseline.roundQuiet = b.state == bbrProbeBWDown || b.state == bbrProbeBWCruise
+	}
+}
 
 func (b *BBR) updateRound(rs RateSample) {
 	if rs.PriorDelivered >= b.nextRoundDelivered {

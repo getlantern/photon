@@ -264,6 +264,23 @@ func TestLossBaselineRounds(t *testing.T) {
 	}
 }
 
+// A round that starts on the ACK that moves BBR into ProbeRTT or a probe
+// isn't quiet: its start state is taken after the state machine has run.
+func TestBBRRoundStartStateAfterTransition(t *testing.T) {
+	for _, tc := range []struct {
+		state bbrState
+		want  bool
+	}{{bbrProbeRTT, false}, {bbrProbeBWRefill, false}, {bbrProbeBWCruise, true}, {bbrProbeBWDown, true}} {
+		b := NewBBR(1200)
+		b.baseline.roundQuiet = !tc.want
+		b.roundStart, b.state = true, tc.state
+		b.noteRoundStartState()
+		if b.baseline.roundQuiet != tc.want {
+			t.Fatalf("round starting in state %d: quiet %v, want %v", tc.state, b.baseline.roundQuiet, tc.want)
+		}
+	}
+}
+
 // The first RTT after a loss is judged at the round's end, against the
 // path's lowest RTT by then: a sample that showed no queue against the
 // reference when it came can show one against a lower RTT seen later.
