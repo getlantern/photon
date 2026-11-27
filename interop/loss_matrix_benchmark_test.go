@@ -42,43 +42,88 @@ func startHysteriaServer(b *testing.B, ctx context.Context, serverTLS *tls.Confi
 // last flight, costing it a round trip, is luck that repeats.
 func BenchmarkLossMatrix(b *testing.B) {
 	runs := map[string]uint64{}
-	payload := bytes.Repeat([]byte("0123456789abcdef"), 8<<16)
-	windows := echoWindows{stream: 16 << 20, connection: 32 << 20, congestion: quic.CongestionControlBBR}
 	for _, rtt := range []time.Duration{50 * time.Millisecond, 150 * time.Millisecond, 300 * time.Millisecond} {
 		for _, loss := range []float64{0, 0.005, 0.01, 0.02, 0.05} {
 			link := wanLink{delay: rtt / 2, loss: loss, rate: 50e6 / 8, queue: rtt}
-			for _, sender := range []string{"photon-bbr", "quic-go", "hysteria-bbr"} {
+			for _, sender := range comparisonSenders {
 				b.Run(fmt.Sprintf("rtt%dms/loss%.1f%%/%s", rtt.Milliseconds(), 100*loss, sender), func(b *testing.B) {
-					clientTLS, serverTLS := tlsConfigs(b)
-					ctx, cancel := context.WithCancel(context.Background())
-					defer cancel()
-					var server echoServer
-					switch sender {
-					case "photon-bbr":
-						server = startEchoServer(b, ctx, true, serverTLS, windows)
-					case "quic-go":
-						server = startEchoServer(b, ctx, false, serverTLS, windows)
-					default:
-						server = startHysteriaServer(b, ctx, serverTLS, windows)
-					}
-					defer server.close()
 					runs[b.Name()]++
-					relay := newSharedWANRelay(b, server.addr, newWANBottleneck(link), newWANBottleneck(link), runs[b.Name()])
-					dialCtx, stop := context.WithTimeout(ctx, 30*time.Second)
-					peer, err := dialUpstreamAddr(b, dialCtx, relay.addr(), clientTLS, &upstream.Config{Versions: []upstream.Version{upstream.Version1}, InitialStreamReceiveWindow: windows.stream, MaxStreamReceiveWindow: windows.stream, InitialConnectionReceiveWindow: windows.connection, MaxConnectionReceiveWindow: windows.connection})
-					stop()
-					if err != nil {
-						b.Fatal(err)
-					}
-					defer peer.CloseWithError(0, "")
-					accept, closeServer, err := server.accept()
-					if err != nil {
-						b.Fatal(err)
-					}
-					defer closeServer()
-					runDownload(b, ctx, peer, accept, payload, 5*time.Minute)
+					runComparisonDownload(b, sender, link, runs[b.Name()], false)
 				})
 			}
 		}
+	}
+}
+
+// BenchmarkPathShapes downloads 8 MiB from each sender over paths shaped
+// unlike the loss matrix's: buffers too shallow for a bandwidth-delay
+// product, and a link whose rate drops or rises a second into the
+// download. These test what BBRv3 changed from BBRv1, which Hysteria2
+// runs: how hard it overfills a short queue, and how fast it follows a
+// rate change. Run with -benchtime=1x; there is no random loss, so repeats
+// differ only in timing.
+func BenchmarkPathShapes(b *testing.B) {
+	runs := map[string]uint64{}
+	for _, rtt := range []time.Duration{50 * time.Millisecond, 150 * time.Millisecond} {
+		shapes := []struct {
+			name string
+			link wanLink
+		}{
+			{"queue0.1bdp", wanLink{delay: rtt / 2, rate: 50e6 / 8, queue: rtt / 10}},
+			{"queue0.25bdp", wanLink{delay: rtt / 2, rate: 50e6 / 8, queue: rtt / 4}},
+			// The queue is a time, one RTT: a BDP at whichever rate is
+			// current, so in bytes it shrinks or grows fivefold at a step.
+			{"50to10mbit", wanLink{delay: rtt / 2, rate: 50e6 / 8, queue: rtt, stepAfter: time.Second, stepRate: 10e6 / 8}},
+			{"10to50mbit", wanLink{delay: rtt / 2, rate: 10e6 / 8, queue: rtt, stepAfter: time.Second, stepRate: 50e6 / 8}},
+		}
+		for _, shape := range shapes {
+			for _, sender := range comparisonSenders {
+				b.Run(fmt.Sprintf("rtt%dms/%s/%s", rtt.Milliseconds(), shape.name, sender), func(b *testing.B) {
+					runs[b.Name()]++
+					runComparisonDownload(b, sender, shape.link, runs[b.Name()], true)
+				})
+			}
+		}
+	}
+}
+
+var comparisonSenders = []string{"photon-bbr", "quic-go", "hysteria-bbr"}
+
+// runComparisonDownload downloads 8 MiB from sender's server, through a
+// relay applying link both ways with losses drawn from seed, and reports
+// the throughput and, with drops, the datagrams the relay dropped toward
+// the client in all.
+func runComparisonDownload(b *testing.B, sender string, link wanLink, seed uint64, drops bool) {
+	payload := bytes.Repeat([]byte("0123456789abcdef"), 8<<16)
+	windows := echoWindows{stream: 16 << 20, connection: 32 << 20, congestion: quic.CongestionControlBBR}
+	clientTLS, serverTLS := tlsConfigs(b)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var server echoServer
+	switch sender {
+	case "photon-bbr":
+		server = startEchoServer(b, ctx, true, serverTLS, windows)
+	case "quic-go":
+		server = startEchoServer(b, ctx, false, serverTLS, windows)
+	default:
+		server = startHysteriaServer(b, ctx, serverTLS, windows)
+	}
+	defer server.close()
+	relay := newSharedWANRelay(b, server.addr, newWANBottleneck(link), newWANBottleneck(link), seed)
+	dialCtx, stop := context.WithTimeout(ctx, 30*time.Second)
+	peer, err := dialUpstreamAddr(b, dialCtx, relay.addr(), clientTLS, &upstream.Config{Versions: []upstream.Version{upstream.Version1}, InitialStreamReceiveWindow: windows.stream, MaxStreamReceiveWindow: windows.stream, InitialConnectionReceiveWindow: windows.connection, MaxConnectionReceiveWindow: windows.connection})
+	stop()
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer peer.CloseWithError(0, "")
+	accept, closeServer, err := server.accept()
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer closeServer()
+	runDownload(b, ctx, peer, accept, payload, 5*time.Minute)
+	if drops {
+		b.ReportMetric(float64(relay.dropped[1].Load())/float64(b.N), "drops")
 	}
 }
