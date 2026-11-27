@@ -175,7 +175,9 @@ func (b *BBR) Reset(maxDatagram uint64) {
 	if rng == nil {
 		rng = rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64()))
 	}
-	*b = BBR{smss: maxDatagram, rng: rng}
+	// A failed Careful Resume jump stays failed on a new path: the state
+	// it resumed from must not be saved back (see Resumer).
+	*b = BBR{smss: maxDatagram, rng: rng, cr: carefulResume{failed: b.cr.failed}}
 	b.initialWindow = InitialWindow(maxDatagram)
 	b.cwnd = b.initialWindow
 	b.minRTT = time.Duration(math.MaxInt64)
@@ -258,12 +260,12 @@ func (b *BBR) OnPersistentCongestion() {
 	// included, so any marks on the same ACK count as the fresh model's.
 	now, inflight := b.now, b.inflight
 	// A jump that ends here failed, and the state it resumed from goes; in
-	// Reconnaissance there was no jump to fail.
-	failed := b.cr.failed || b.cr.phase == crUnvalidated || b.cr.phase == crRetreat
+	// Reconnaissance there was no jump to fail. Reset keeps an earlier
+	// failure.
+	b.cr.failed = b.cr.failed || b.cr.phase == crUnvalidated || b.cr.phase == crRetreat
 	b.Reset(b.smss)
 	b.at(now)
 	b.inflight = inflight
-	b.cr.failed = failed
 	b.cwnd = b.minPipeCwnd()
 	b.inRecovery, b.recoveryStart = true, now
 }
@@ -768,6 +770,7 @@ func (b *BBR) updateMaxBw(rs RateSample) {
 	if rate >= b.maxBw || !rs.AppLimited {
 		b.bwHi[0] = max(b.bwHi[0], rate)
 		b.maxBw = max(b.bwHi[0], b.bwHi[1])
+		b.cr.measured = b.now
 	}
 }
 

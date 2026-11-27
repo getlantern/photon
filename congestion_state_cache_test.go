@@ -68,6 +68,13 @@ func TestMemoryCongestionStateCacheBounds(t *testing.T) {
 	if _, ok := c.Take("d"); ok {
 		t.Fatal("putting a state back extended its lifetime")
 	}
+	// Putting back a state doesn't undo a newer one saved meanwhile.
+	old := CongestionState{Bandwidth: 9e6, MinRTT: time.Millisecond, Saved: now.Add(-time.Minute / 2)}
+	c.Put("e", CongestionState{Bandwidth: 1e6, MinRTT: time.Millisecond})
+	c.Put("e", old)
+	if got, _ := c.Take("e"); got.Bandwidth != 1e6 {
+		t.Fatal("an older state put back replaced a newer one")
+	}
 }
 
 // The listener adapter skips states that couldn't be resumed from.

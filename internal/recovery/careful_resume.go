@@ -64,6 +64,9 @@ type carefulResume struct {
 	deliveredStart uint64
 	retreatCwnd    uint64
 	failed         bool
+	// measured is when the path's bandwidth was last measured, which a
+	// snapshot reports as its Saved time.
+	measured time.Time
 }
 
 // bbrSnapshotMinWindows is the least saved window, in initial windows,
@@ -80,7 +83,9 @@ func (b *BBR) Resume(saved ResumeState, maxJump uint64) {
 
 // Snapshot implements Resumer. It saves the bandwidth and minimum RTT once
 // Startup has ended, so never an overshoot, and not in ProbeRTT, whose
-// samples understate the path, nor while retreating from a failed jump.
+// samples understate the path, nor while retreating from a failed jump. Its
+// Saved time is when the bandwidth was last measured, so that the state of
+// a connection that idled after measuring the path expires on time.
 func (b *BBR) Snapshot() (ResumeState, bool) {
 	if !b.fullBwReached || b.state == bbrProbeRTT || b.cr.phase == crRetreat || b.maxBw <= 0 || b.minRTT == time.Duration(1<<63-1) {
 		return ResumeState{}, false
@@ -88,7 +93,7 @@ func (b *BBR) Snapshot() (ResumeState, bool) {
 	if b.maxBw*b.minRTT.Seconds() < float64(bbrSnapshotMinWindows*b.initialWindow) {
 		return ResumeState{}, false
 	}
-	return ResumeState{Bandwidth: b.maxBw, MinRTT: b.minRTT}, true
+	return ResumeState{Bandwidth: b.maxBw, MinRTT: b.minRTT, Saved: b.cr.measured}, true
 }
 
 // ResumeFailed implements Resumer.
