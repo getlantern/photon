@@ -391,3 +391,34 @@ func TestMigrationRetirementsBounded(t *testing.T) {
 		t.Fatal("spent reservation not retired")
 	}
 }
+
+// RotatePeerID shares the bound on unacknowledged RETIREs: past it, a
+// rotation waits, leaving the CID state and connection as they were, and
+// goes once one is acknowledged.
+func TestRotationRetirementsBounded(t *testing.T) {
+	client, server := testPair(t, wire.Version1)
+	drivePair(t, client, server, false, false)
+	if !client.CanRotatePeerID() {
+		t.Fatal("missing spare CID")
+	}
+	limit := 2 * int(max(client.config.Parameters.ActiveConnectionIDLimit, 2))
+	space := &client.spaces[applicationSpace]
+	held := make([]*sendItem, limit)
+	for i := range held {
+		held[i] = &sendItem{frame: wire.RetireConnectionIDFrame{Sequence: uint64(1000 + i)}, queued: true}
+		space.queue = append(space.queue, held[i])
+		client.countRetire(held[i])
+	}
+	current, queued := client.peerIDs.current, len(space.queue)
+	if err := client.RotatePeerID(); !errors.Is(err, ErrSendBuffer) || client.Err() != nil {
+		t.Fatal("rotation past the bound", err, client.Err())
+	}
+	if client.peerIDs.current != current || len(space.queue) != queued {
+		t.Fatal("waiting rotation changed state")
+	}
+	held[0].acked = true
+	client.uncountRetire(held[0])
+	if err := client.RotatePeerID(); err != nil || client.peerIDs.current == current {
+		t.Fatal("rotation under the bound", err)
+	}
+}

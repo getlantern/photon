@@ -1693,6 +1693,11 @@ func (c *Conn) RotatePeerID() error {
 	if len(retired) > c.availableSendBytes()/16 {
 		return ErrSendBuffer
 	}
+	// Rotation shares the bound on unacknowledged RETIREs; past it, a
+	// rotation waits, as for a full queue.
+	if c.checkRetirements(0, len(retired), 0) != nil {
+		return ErrSendBuffer
+	}
 	items := make([]*sendItem, 0, len(retired))
 	for _, seq := range retired {
 		items = append(items, &sendItem{frame: wire.RetireConnectionIDFrame{Sequence: seq}, bytes: 16, queued: true})
