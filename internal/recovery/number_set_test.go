@@ -183,3 +183,31 @@ func TestUntrackedPureACKHistorySettles(t *testing.T) {
 		t.Fatal("acknowledged history not trimmed", n)
 	}
 }
+
+// A pure ACK evicted from a full ledger to make room for a packet in flight
+// is never ACKed through recovery either; its history record is settled at
+// eviction, and the acknowledged history trims.
+func TestEvictedPureACKHistorySettles(t *testing.T) {
+	r, err := NewSent(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(100, 0)
+	for pn := range uint64(2) {
+		if err := r.OnSent(Application, Packet{Number: pn, SentAt: now, Bytes: 50}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := r.OnSent(Application, Packet{Number: 2, SentAt: now, Bytes: 1200, AckEliciting: true, InFlight: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, tracked := r.spaces[Application].packets[0]; tracked {
+		t.Fatal("fixture must evict the oldest pure ACK")
+	}
+	if _, err := r.OnACK(Application, ack(1, 2), now.Add(time.Millisecond), 0, 0, true); err != nil {
+		t.Fatal(err)
+	}
+	if n := r.history.order.Len(); n != 0 {
+		t.Fatal("acknowledged history not trimmed", n)
+	}
+}
