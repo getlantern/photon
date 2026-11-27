@@ -49,6 +49,15 @@ func (c *Conn) retireMigrationReservations(id uint64, keep *migrationCandidate) 
 	if len(items) > c.availableSendBytes()/32 {
 		return ErrSendBuffer
 	}
+	// A peer can drive these too, replacing or expiring candidates whose
+	// probes went out: they share the bound on unacknowledged RETIREs.
+	trigger := uint64(0x18)
+	if id != 0 {
+		trigger = wire.FramePathNewConnectionID
+	}
+	if err := c.checkRetirements(id, len(items), trigger); err != nil {
+		return c.fail(err)
+	}
 	dest, ok := c.survivingPath(^uint64(0))
 	if !ok {
 		return errNoPathForControl

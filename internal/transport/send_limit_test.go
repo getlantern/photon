@@ -335,3 +335,28 @@ func TestCountRetirementsAcrossQueues(t *testing.T) {
 		t.Fatal("path 2 retirements", n)
 	}
 }
+
+// Retiring spent migration reservations shares the bound on unacknowledged
+// RETIREs: with the bound reached, it fails the connection rather than
+// queueing more.
+func TestMigrationRetirementsBounded(t *testing.T) {
+	client, _ := sendingPathPair(t, wire.Version1)
+	peers := client.multipath.paths[1].peer
+	candidate := &migrationCandidate{}
+	seq, ok := peers.reserveMigrationID(candidate)
+	if !ok || !peers.sentMigrationID(candidate, seq) || !peers.cancelMigrationID(candidate, seq) {
+		t.Fatal("missing spent reservation")
+	}
+	limit := 2 * int(max(client.config.Parameters.ActiveConnectionIDLimit, 2))
+	zero := client.multipath.paths[0].application.space
+	for i := range limit {
+		item := &sendItem{frame: wire.PathRetireConnectionIDFrame{PathID: 1, Sequence: uint64(1000 + i)}, queued: true}
+		zero.queue = append(zero.queue, item)
+		client.countRetire(item)
+	}
+	err := client.retireMigrationReservations(1, nil)
+	var te *TransportError
+	if !errors.As(err, &te) || te.Code != 9 || client.Err() == nil {
+		t.Fatal("migration retirement past the bound", err)
+	}
+}
