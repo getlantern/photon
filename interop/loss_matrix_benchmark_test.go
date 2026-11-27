@@ -36,8 +36,12 @@ func startHysteriaServer(b *testing.B, ctx context.Context, serverTLS *tls.Confi
 // BenchmarkLossMatrix downloads 8 MiB through a 50 Mbit/s relay at each RTT
 // and random loss rate, from photon BBR, quic-go and Hysteria2's BBR. Loss
 // applies both ways, to ACKs too; the queue holds one bandwidth-delay
-// product. Run with -benchtime=1x: one download a cell.
+// product. Run with -benchtime=1x: one download a cell. Each repeat of a
+// cell under -count draws its losses from the next seed: with one seed every
+// run drops the same packet indices, and whether those fall in a sender's
+// last flight, costing it a round trip, is luck that repeats.
 func BenchmarkLossMatrix(b *testing.B) {
+	runs := map[string]uint64{}
 	payload := bytes.Repeat([]byte("0123456789abcdef"), 8<<16)
 	windows := echoWindows{stream: 16 << 20, connection: 32 << 20, congestion: quic.CongestionControlBBR}
 	for _, rtt := range []time.Duration{50 * time.Millisecond, 150 * time.Millisecond, 300 * time.Millisecond} {
@@ -58,7 +62,8 @@ func BenchmarkLossMatrix(b *testing.B) {
 						server = startHysteriaServer(b, ctx, serverTLS, windows)
 					}
 					defer server.close()
-					relay := newWANRelay(b, server.addr, link, link)
+					runs[b.Name()]++
+					relay := newSharedWANRelay(b, server.addr, newWANBottleneck(link), newWANBottleneck(link), runs[b.Name()])
 					dialCtx, stop := context.WithTimeout(ctx, 30*time.Second)
 					peer, err := dialUpstreamAddr(b, dialCtx, relay.addr(), clientTLS, &upstream.Config{Versions: []upstream.Version{upstream.Version1}, InitialStreamReceiveWindow: windows.stream, MaxStreamReceiveWindow: windows.stream, InitialConnectionReceiveWindow: windows.connection, MaxConnectionReceiveWindow: windows.connection})
 					stop()
