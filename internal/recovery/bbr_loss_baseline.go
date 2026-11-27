@@ -57,10 +57,12 @@ type lossBaseline struct {
 	roundQuiet     bool
 	roundMinRTT    time.Duration
 	// lossPending is whether loss was declared since the last RTT sample,
-	// and roundLossQueued whether a sample just after a loss in the round
-	// showed a queue. A round's lowest RTT can miss a queue that overflowed
-	// and drained within it, as a loss-based flow's does on a short path.
-	lossPending, roundLossQueued bool
+	// and roundLossRTT the highest first sample after a loss in the round,
+	// judged at the round's end against the path's lowest RTT by then. A
+	// round's lowest RTT can miss a queue that overflowed and drained
+	// within it, as a loss-based flow's does on a short path.
+	lossPending  bool
+	roundLossRTT time.Duration
 	// baseRTT is the path's lowest RTT, the reference for telling a queue.
 	// Unlike BBR's min_rtt it never expires: on expiry min_rtt takes a
 	// fresh sample, which another flow's standing queue can inflate, and
@@ -82,9 +84,8 @@ func (l *lossBaseline) noteLost(bytes uint64) {
 	l.lossPending = l.lossPending || bytes > 0
 }
 
-// noteRTT notes an RTT sample from the round in progress. The first sample
-// after a loss also says whether a queue came with it (queueing).
-func (l *lossBaseline) noteRTT(rtt time.Duration, queueing func(time.Duration) bool) {
+// noteRTT notes an RTT sample from the round in progress.
+func (l *lossBaseline) noteRTT(rtt time.Duration) {
 	if rtt <= 0 {
 		return
 	}
@@ -95,7 +96,7 @@ func (l *lossBaseline) noteRTT(rtt time.Duration, queueing func(time.Duration) b
 		l.baseRTT = rtt
 	}
 	if l.lossPending {
-		l.roundLossQueued = l.roundLossQueued || queueing(rtt)
+		l.roundLossRTT = max(l.roundLossRTT, rtt)
 		l.lossPending = false
 	}
 }
@@ -109,7 +110,7 @@ func (l *lossBaseline) noteRTT(rtt time.Duration, queueing func(time.Duration) b
 // the connection began or its last baseline was dropped as stale.
 func (l *lossBaseline) endRound(delivered uint64, quietNext bool, queueing func(time.Duration) bool) (learned bool) {
 	began := l.roundQuiet
-	if !l.prevQuiet || l.roundLossQueued || l.roundMinRTT > 0 && queueing(l.roundMinRTT) {
+	if !l.prevQuiet || l.roundLossRTT > 0 && queueing(l.roundLossRTT) || l.roundMinRTT > 0 && queueing(l.roundMinRTT) {
 		l.roundQuiet = false
 	}
 	sent := delivered - l.roundDelivered + l.roundLost
@@ -133,7 +134,7 @@ func (l *lossBaseline) endRound(delivered uint64, quietNext bool, queueing func(
 			}
 		}
 	}
-	l.roundLost, l.roundDelivered, l.roundQuiet, l.roundMinRTT, l.prevQuiet, l.roundLossQueued = 0, delivered, quietNext, 0, began, false
+	l.roundLost, l.roundDelivered, l.roundQuiet, l.roundMinRTT, l.prevQuiet, l.roundLossRTT = 0, delivered, quietNext, 0, began, 0
 	if l.learned || l.rate == 0 {
 		return false
 	}

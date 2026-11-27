@@ -28,6 +28,26 @@ func TestBBRHoldsLinkUnderRandomLoss(t *testing.T) {
 	}
 }
 
+// CE marks are congestion whatever the loss: cuts they made to the
+// short-term bounds stay when the first baseline arrives, and others go.
+func TestFirstBaselineKeepsCECuts(t *testing.T) {
+	for _, ce := range []bool{false, true} {
+		b := NewBBR(1200)
+		b.state, b.maxBw, b.cwnd = bbrProbeBWCruise, 1e6, 100000
+		b.bwLatest, b.inflightLatest = 5e5, 50000
+		b.lossInRound, b.ceInRound = true, ce
+		b.adaptLowerBoundsFromCongestion()
+		if math.IsInf(b.bwShortterm, 1) {
+			t.Fatal("no cut")
+		}
+		b.lossInRound, b.ceInRound = false, false
+		b.dropPreBaselineCuts()
+		if kept := !math.IsInf(b.bwShortterm, 1); kept != ce {
+			t.Fatalf("CE cut %v: kept %v", ce, kept)
+		}
+	}
+}
+
 // The cuts to the short-term bounds made before there was a baseline
 // answered random loss, so the first baseline drops them: a short transfer
 // would otherwise cruise below the link until its next probe. On a 50 ms
@@ -62,7 +82,7 @@ func TestLossBaselineReportsFirstOnly(t *testing.T) {
 	learned := 0
 	round := func(lost uint64, q func(time.Duration) bool) {
 		l.noteLost(lost)
-		l.noteRTT(time.Millisecond, noQueueing)
+		l.noteRTT(time.Millisecond)
 		if l.endRound(l.roundDelivered+1000-lost, true, q) {
 			learned++
 		}
@@ -163,7 +183,7 @@ func TestLossBaselineRounds(t *testing.T) {
 			t.Fatal("baseline after", i, "rounds", l.rate)
 		}
 		l.noteLost(50)
-		l.noteRTT(time.Millisecond, noQueueing)
+		l.noteRTT(time.Millisecond)
 		quiet := i < bbrMinBaselineRounds-1
 		l.endRound(l.roundDelivered+950, quiet, noQueue)
 	}
@@ -184,27 +204,28 @@ func TestLossBaselineRounds(t *testing.T) {
 	}
 	// A quiet round with a queue is kept out too.
 	l.noteLost(500)
-	l.noteRTT(time.Millisecond, noQueueing)
+	l.noteRTT(time.Millisecond)
 	l.endRound(l.roundDelivered+500, true, queue)
 	if l.rate != 0.05 {
 		t.Fatal("queued round", l.rate)
 	}
 	// So is one whose lowest RTT shows none, if the first RTT after a loss
 	// in it shows one: a queue that overflowed and drained within the round.
-	l.noteRTT(time.Millisecond, noQueue)
+	over3ms := func(rtt time.Duration) bool { return rtt >= 3*time.Millisecond }
+	l.noteRTT(time.Millisecond)
 	l.noteLost(500)
-	l.noteRTT(5*time.Millisecond, queue)
-	l.endRound(l.roundDelivered+500, true, noQueue)
+	l.noteRTT(5 * time.Millisecond)
+	l.endRound(l.roundDelivered+500, true, over3ms)
 	if l.rate != 0.05 {
 		t.Fatal("round with a queue at its loss", l.rate)
 	}
 	// Only that first sample counts: a later one with a queue, or one before
 	// the loss, doesn't keep the round out.
-	l.noteRTT(5*time.Millisecond, queue)
+	l.noteRTT(5 * time.Millisecond)
 	l.noteLost(100)
-	l.noteRTT(time.Millisecond, noQueue)
-	l.noteRTT(5*time.Millisecond, queue)
-	l.endRound(l.roundDelivered+900, true, noQueue)
+	l.noteRTT(time.Millisecond)
+	l.noteRTT(5 * time.Millisecond)
+	l.endRound(l.roundDelivered+900, true, over3ms)
 	if l.rate == 0.05 {
 		t.Fatal("round with a queue away from its loss", l.rate)
 	}
@@ -220,19 +241,37 @@ func TestLossBaselineRounds(t *testing.T) {
 	}
 	if l.rate != bbrMaxLossBaseline {
 		t.Fatal("cap", l.rate)
-	} // Rounds that all show a queue keep the baseline, until there have been
+	}
+	// Rounds that all show a queue keep the baseline, until there have been
 	// bbrStaleBaselineRounds of them.
 	for range bbrStaleBaselineRounds - 1 {
-		l.noteRTT(time.Millisecond, noQueueing)
+		l.noteRTT(time.Millisecond)
 		l.endRound(l.roundDelivered+1000, true, queue)
 	}
 	if l.rate != bbrMaxLossBaseline {
 		t.Fatal("queued rounds", l.rate)
 	}
-	l.noteRTT(time.Millisecond, noQueueing)
+	l.noteRTT(time.Millisecond)
 	l.endRound(l.roundDelivered+1000, true, queue)
 	if l.rate != 0 || l.count != 0 {
 		t.Fatal("stale", l.rate, l.count)
+	}
+}
+
+// The first RTT after a loss is judged at the round's end, against the
+// path's lowest RTT by then: a sample that showed no queue against the
+// reference when it came can show one against a lower RTT seen later.
+func TestLossBaselineJudgesLossRTTAtRoundEnd(t *testing.T) {
+	b := NewBBR(1200)
+	b.baseline.endRound(0, true, b.queueing)
+	b.baseline.endRound(0, true, b.queueing)
+	b.baseline.noteRTT(60 * time.Millisecond)
+	b.baseline.noteLost(100)
+	b.baseline.noteRTT(60 * time.Millisecond)
+	b.baseline.noteRTT(40 * time.Millisecond)
+	b.baseline.endRound(b.baseline.roundDelivered+900, true, b.queueing)
+	if b.baseline.count != 0 {
+		t.Fatal("a round whose loss came 20 ms above the path's RTT joined the baseline")
 	}
 }
 
@@ -312,7 +351,7 @@ func TestBBRQueueing(t *testing.T) {
 	if !b.queueing(50 * time.Millisecond) {
 		t.Fatal("no RTT yet")
 	}
-	b.baseline.noteRTT(50*time.Millisecond, noQueueing)
+	b.baseline.noteRTT(50 * time.Millisecond)
 	for _, tc := range []struct {
 		rtt  time.Duration
 		want bool
@@ -322,12 +361,12 @@ func TestBBRQueueing(t *testing.T) {
 		}
 	}
 	b.minRTT = 80 * time.Millisecond
-	b.baseline.noteRTT(80*time.Millisecond, noQueueing)
+	b.baseline.noteRTT(80 * time.Millisecond)
 	if !b.queueing(80 * time.Millisecond) {
 		t.Fatal("an expired min_rtt resets the reference")
 	}
 	b = NewBBR(1200)
-	b.baseline.noteRTT(400*time.Millisecond, noQueueing)
+	b.baseline.noteRTT(400 * time.Millisecond)
 	if b.queueing(415*time.Millisecond) || !b.queueing(416*time.Millisecond) {
 		t.Fatal("16 ms cap")
 	}

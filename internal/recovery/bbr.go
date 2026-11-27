@@ -97,6 +97,7 @@ type BBR struct {
 	lossRoundStart     bool
 	lossInRound        bool
 	ceInRound          bool   // CE marks in the loss round, which no baseline discounts
+	shortTermByCE      bool   // CE marks have cut the short-term bounds since their last reset
 	lossRoundLost      uint64 // bytes lost in the loss round
 	lossRoundFrom      uint64 // delivered bytes as the loss round began
 	lossEventsInRound  int
@@ -326,7 +327,7 @@ func (b *BBR) OnACK(e ACKEvent) {
 		b.hasSeenRTT = true
 		b.pacingRate = bbrStartupPacingGain * float64(b.initialWindow) / rtt.Seconds()
 	}
-	b.baseline.noteRTT(rs.RTT, b.queueing)
+	b.baseline.noteRTT(rs.RTT)
 	// UpdateModelAndState.
 	b.updateLatestDeliverySignals(rs)
 	b.updateCongestionSignals(rs)
@@ -695,12 +696,7 @@ func (b *BBR) updateRound(rs RateSample) {
 	if rs.PriorDelivered >= b.nextRoundDelivered {
 		b.startRound()
 		if b.baseline.endRound(b.delivered, b.state == bbrProbeBWDown || b.state == bbrProbeBWCruise, b.queueing) {
-			// Until there was a baseline, any loss lowered the short-term
-			// bounds. Now that loss shows as random, those cuts answered
-			// it, not congestion: drop them rather than wait for the next
-			// probe, which a short transfer may never reach. Only the
-			// first baseline does this: a policer's comes and goes.
-			b.resetShortTermModel()
+			b.dropPreBaselineCuts()
 		}
 		b.roundCount++
 		b.roundsSinceProbeUp++
@@ -846,12 +842,26 @@ func (b *BBR) adaptLowerBoundsFromCongestion() {
 		// LossLowerBounds.
 		b.bwShortterm = max(b.bwLatest, bbrBeta*b.bwShortterm)
 		b.inflightShortterm = max(b.inflightLatest, uint64(bbrBeta*float64(b.inflightShortterm)))
+		b.shortTermByCE = b.shortTermByCE || b.ceInRound
 	}
 }
 
 func (b *BBR) resetShortTermModel() {
 	b.bwShortterm = math.Inf(1)
 	b.inflightShortterm = bbrInfinity
+	b.shortTermByCE = false
+}
+
+// dropPreBaselineCuts runs when the path gets its first baseline. Until
+// then, any loss lowered the short-term bounds; now that the loss shows as
+// random, those cuts answered it, not congestion, so they go rather than
+// wait for the next probe, which a short transfer may never reach. Only
+// the first baseline does this, since a policer's comes and goes, and only
+// if no CE marks cut the bounds: those are congestion.
+func (b *BBR) dropPreBaselineCuts() {
+	if !b.shortTermByCE {
+		b.resetShortTermModel()
+	}
 }
 
 func (b *BBR) boundBWForModel() { b.bw = min(b.maxBw, b.bwShortterm) }
