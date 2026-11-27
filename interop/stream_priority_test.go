@@ -11,6 +11,7 @@ import (
 	"time"
 
 	quic "github.com/getlantern/photon"
+	"github.com/getlantern/photon/internal/recovery"
 	upstream "github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/qlog"
 	"github.com/quic-go/quic-go/qlogwriter"
@@ -88,9 +89,17 @@ type streamPrioritySpec struct {
 	incremental bool
 }
 
-// RFC 9002 initial congestion window: what the first-written stream can send,
-// whatever its urgency, before the streams that precede it are queued.
-const priorityInitialFlight = 14720
+// The initial congestion window at photon's largest initial datagram: what
+// the first-written stream can send, whatever its urgency, before the streams
+// that precede it are queued.
+var priorityInitialFlight = recovery.InitialWindow(1452)
+
+// prioritySize is each stream's payload: large enough that a lead of half of
+// it exceeds the initial flight, so taking turns that large is caught.
+const prioritySize = 128 << 10
+
+// prioritySlack allows a few retransmitted packets ahead of fresh data.
+const prioritySlack = 8 << 10
 
 // arrivalOrderViolations replays what the peer received against the priorities
 // of streams ids. A stream is preceded by every stream of lower urgency value
@@ -191,7 +200,7 @@ func TestStreamPriorityIndependent(t *testing.T) {
 			// Lower priorities are queued first, so the default order would
 			// serve them first.
 			priorities := []streamPrioritySpec{{7, true}, {7, true}, {4, false}, {4, false}, {1, true}}
-			const size = 64 << 10
+			const size = prioritySize
 			streams := make([]*quic.SendStream, len(priorities))
 			payloads := map[uint64][]byte{}
 			gate.hold()
@@ -234,7 +243,7 @@ func TestStreamPriorityIndependent(t *testing.T) {
 			}
 			// Retransmissions legitimately precede fresh data of any priority,
 			// so allow a few packets rather than requiring exactly zero.
-			for _, violation := range arrivalOrderViolations(frames, ids, priorities, size, size/8) {
+			for _, violation := range arrivalOrderViolations(frames, ids, priorities, size, prioritySlack) {
 				t.Error(violation)
 			}
 		})
@@ -246,13 +255,13 @@ func TestStreamPriorityIndependent(t *testing.T) {
 func TestStreamPriorityArrivalOrderControls(t *testing.T) {
 	priorities := []streamPrioritySpec{{7, true}, {7, true}, {4, false}, {4, false}, {1, true}}
 	ids := []uint64{2, 6, 10, 14, 18}
-	const size, packet = 64 << 10, 1140
+	const size, packet = prioritySize, 1140
 	type step struct {
 		streams []int // served one packet each in turn
 		bytes   uint64
 	}
 	all := func(streams ...int) step { return step{streams, size} }
-	flight := step{[]int{0}, 10 * packet}
+	flight := step{[]int{0}, priorityInitialFlight}
 	for _, tc := range []struct {
 		name  string
 		steps []step
@@ -288,7 +297,7 @@ func TestStreamPriorityArrivalOrderControls(t *testing.T) {
 				}
 			}
 		}
-		if violations := arrivalOrderViolations(frames, ids, priorities, size, size/8); (len(violations) == 0) != tc.ok {
+		if violations := arrivalOrderViolations(frames, ids, priorities, size, prioritySlack); (len(violations) == 0) != tc.ok {
 			t.Errorf("%s: want accepted=%v, violations %q", tc.name, tc.ok, violations)
 		}
 	}

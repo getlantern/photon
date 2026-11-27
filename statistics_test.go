@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/getlantern/photon/internal/recovery"
 	"github.com/getlantern/photon/internal/transport"
 )
 
@@ -169,10 +170,10 @@ func TestConnectionStatisticsCongestionWindow(t *testing.T) {
 			drained(server)
 			drained(client)
 			initial, idle := window(client), window(server)
-			// RFC 9002 section 7.2 bounds NewReno's initial window for any
-			// datagram size. BBR's Startup also grows its window with the
-			// handshake's acknowledged bytes, but never below its minimum.
-			low, high := uint64(2*1200), uint64(10*1452)
+			// The initial window bounds NewReno's for any datagram size. BBR's
+			// Startup also grows its window with the handshake's acknowledged
+			// bytes, but never below its minimum.
+			low, high := uint64(2*1200), recovery.InitialWindow(1452)
 			if tc.congestion == CongestionControlBBR {
 				low, high = 4*1200, 64*1452
 			}

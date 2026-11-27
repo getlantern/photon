@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/getlantern/photon/internal/recovery"
 	"github.com/getlantern/photon/internal/wire"
 )
 
@@ -159,7 +160,7 @@ func TestMigrationCandidateProbeExchange(t *testing.T) {
 					if fresh && server.multipath.paths[1].peer.current != candidate.peerSequence {
 						t.Fatal("validated migration did not commit fresh CID")
 					}
-					if ipChanged && (app.sent.RTT.Sampled || app.sent.BytesInFlight != 0 || app.congestion.Window() != 12000) {
+					if ipChanged && (app.sent.RTT.Sampled || app.sent.BytesInFlight != 0 || app.congestion.Window() != recovery.InitialWindow(1200)) {
 						t.Fatal("IP change retained old network recovery")
 					}
 					if !ipChanged && !app.sent.RTT.Sampled {

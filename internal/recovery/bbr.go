@@ -163,7 +163,7 @@ func (b *BBR) Reset(maxDatagram uint64) {
 		rng = rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64()))
 	}
 	*b = BBR{smss: maxDatagram, rng: rng}
-	b.initialWindow = min(10*maxDatagram, max(14720, 2*maxDatagram))
+	b.initialWindow = InitialWindow(maxDatagram)
 	b.cwnd = b.initialWindow
 	b.minRTT = time.Duration(math.MaxInt64)
 	b.probeRTTCwnd = bbrInfinity

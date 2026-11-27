@@ -34,9 +34,10 @@ func TestEngineECNCongestion(t *testing.T) {
 			if err := c.handleAck(initialSpace, frame, at.Add(3*time.Millisecond)); err != nil {
 				t.Fatal(err)
 			}
-			want := uint64(6600)
+			iw := recovery.InitialWindow(1200)
+			want := (iw + 1200) / 2
 			if bad {
-				want = 14400 // Valid packet ACKs still grow the window despite invalid ECN.
+				want = iw + 2400 // Valid packet ACKs still grow the window despite invalid ECN.
 			}
 			if got := c.congestion.Window(); got != want {
 				t.Fatalf("v=%v bad=%v window=%d want=%d", v, bad, got, want)
@@ -64,8 +65,8 @@ func TestEngineECNCongestionNeedsValidation(t *testing.T) {
 	if err := c.handleAck(initialSpace, wire.AckFrame{Ranges: []wire.AckRange{{Smallest: 0, Largest: 0}}, ECN: &[3]uint64{0, 0, 1}}, at.Add(time.Millisecond)); err != nil {
 		t.Fatal(err)
 	}
-	if got := c.congestion.Window(); got != 13200 {
-		t.Fatalf("window %d after CE on an unvalidated path, want 13200", got)
+	if got, want := c.congestion.Window(), recovery.InitialWindow(1200)+1200; got != want {
+		t.Fatalf("window %d after CE on an unvalidated path, want %d", got, want)
 	}
 }
 
@@ -92,13 +93,14 @@ func TestMultipathECNCongestion(t *testing.T) {
 	if _, err := p.receiveACK(frame, at.Add(3*time.Millisecond), 3, 25*time.Millisecond, true); err != nil {
 		t.Fatal(err)
 	}
-	if a.congestion.Window() != 12000 || b.congestion.Window() != 6000 {
+	iw := recovery.InitialWindow(1200)
+	if a.congestion.Window() != iw || b.congestion.Window() != iw/2 {
 		t.Fatal("CE affected wrong path", a.congestion.Window(), b.congestion.Window())
 	}
 	if _, err := p.receiveACK(frame, at.Add(4*time.Millisecond), 3, 25*time.Millisecond, true); err != nil {
 		t.Fatal(err)
 	}
-	if b.congestion.Window() != 6000 {
+	if b.congestion.Window() != iw/2 {
 		t.Fatal("duplicate CE reduced twice")
 	}
 }

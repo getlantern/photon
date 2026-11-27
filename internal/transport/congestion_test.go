@@ -14,17 +14,19 @@ func TestEngineCongestionWindowAndPTO(t *testing.T) {
 		t.Run(vName(v), func(t *testing.T) {
 			client, _ := testPair(t, v)
 			now := time.Unix(100, 0)
-			for i := 0; i < 30; i++ {
+			iw := recovery.InitialWindow(1200)
+			packets := int(iw / 1200)
+			for i := 0; i < 3*packets; i++ {
 				if err := client.enqueue(initialSpace, wire.PingFrame{}, 1); err != nil {
 					t.Fatal(err)
 				}
 			}
 			flight := drain(t, client, now)
-			if len(flight) != 10 {
+			if len(flight) != packets {
 				t.Fatal("initial window packet count", len(flight))
 			}
 			window, bytes := client.CongestionStats()
-			if window != 12000 || bytes != 12000 {
+			if window != iw || bytes != iw {
 				t.Fatal(window, bytes)
 			}
 			// A pending padded Initial ACK must not hide the PTO probe behind a
@@ -40,10 +42,10 @@ func TestEngineCongestionWindowAndPTO(t *testing.T) {
 				t.Fatal("PTO allowance must permit exactly one packet", len(probes))
 			}
 			window, bytes = client.CongestionStats()
-			if window != 12000 || bytes != 13200 {
+			if window != iw || bytes != iw+1200 {
 				t.Fatal("PTO changed window or missed accounting", window, bytes)
 			}
-			if err := client.handleAck(initialSpace, wire.AckFrame{Ranges: []wire.AckRange{{Smallest: 0, Largest: 10}}}, deadline.Add(10*time.Millisecond)); err != nil {
+			if err := client.handleAck(initialSpace, wire.AckFrame{Ranges: []wire.AckRange{{Smallest: 0, Largest: uint64(packets)}}}, deadline.Add(10*time.Millisecond)); err != nil {
 				t.Fatal(err)
 			}
 			if _, bytes = client.CongestionStats(); bytes != 0 {
@@ -471,7 +473,7 @@ func TestControllerForcesAppLimited(t *testing.T) {
 			t.Fatal(err)
 		}
 		// More than a window, so data stays queued.
-		for data := make([]byte, 30000); len(data) > 0; {
+		for data := make([]byte, 3*client.congestion.Window()); len(data) > 0; {
 			n, err := client.WriteStream(id, data, false)
 			if err != nil {
 				t.Fatal(err)

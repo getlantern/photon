@@ -51,14 +51,14 @@ func TestMigrationRecoveryPreservesReliableLateACK(t *testing.T) {
 	if app.sent != ledger || app.congestion != controller || app.timer != timer || app.pacer != pacer {
 		t.Fatal("reset broke path-zero aliases")
 	}
-	if app.sent.BytesInFlight != 0 || app.sent.RTT.Sampled || app.congestion.Window() != 12000 || !app.timer.Deadline().IsZero() || app.timer.Backoff() != 0 || app.probePending || !app.pacingAt.IsZero() {
+	if app.sent.BytesInFlight != 0 || app.sent.RTT.Sampled || app.congestion.Window() != recovery.InitialWindow(1200) || !app.timer.Deadline().IsZero() || app.timer.Backoff() != 0 || app.probePending || !app.pacingAt.IsZero() {
 		t.Fatal("reset retained old network evidence")
 	}
 	if app.space.nextPN != pn+1 || app.space.sent[pn] != item || !item.queued || c.queuedBytes != beforeBytes {
 		t.Fatal("migration lost or recharged reliable item")
 	}
 	events, err := c.multipath.receiveReliableACK(wire.AckFrame{Ranges: []wire.AckRange{{Smallest: pn, Largest: pn}}}, now.Add(time.Second), 0, 0, false, func(item *sendItem) error { c.queuedBytes -= item.bytes; return nil })
-	if err != nil || len(events.Acked) != 0 || !item.acked || app.sent.RTT.Sampled || app.congestion.Window() != 12000 {
+	if err != nil || len(events.Acked) != 0 || !item.acked || app.sent.RTT.Sampled || app.congestion.Window() != recovery.InitialWindow(1200) {
 		t.Fatal("late ACK lost completion or changed network estimates", err)
 	}
 	if c.queuedBytes != beforeBytes-item.bytes {
