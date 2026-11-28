@@ -2,6 +2,7 @@ package interop
 
 import (
 	"encoding/binary"
+	"math"
 	"math/rand/v2"
 	"net"
 	"slices"
@@ -134,6 +135,9 @@ type wanShaper struct {
 	link      wanLink
 	busyUntil time.Time
 	first     time.Time
+	// backlog is the bytes queued, not yet sent, as of backlogAt.
+	backlog   float64
+	backlogAt time.Time
 }
 
 // admit returns when a datagram of n bytes arriving at now finishes
@@ -149,8 +153,13 @@ func (s *wanShaper) admit(now time.Time, n int) (time.Time, bool) {
 	// The queue holds link.queue's worth of bytes at the rate now: a
 	// backlog whose transmission will run past a step is measured in
 	// bytes, not in the time the new rate will take to send it.
-	if s.queued(now, departure) > s.link.queue.Seconds()*s.rateAt(now) {
+	s.backlog = max(s.backlog-s.sent(s.backlogAt, now), 0)
+	s.backlogAt = now
+	if rate := s.rateAt(now); rate > 0 && s.backlog > s.link.queue.Seconds()*rate {
 		return time.Time{}, false
+	}
+	if s.rateAt(now) > 0 {
+		s.backlog += float64(n)
 	}
 	s.busyUntil = s.transmitted(departure, n)
 	return s.busyUntil, true
@@ -164,20 +173,25 @@ func (s *wanShaper) rateAt(t time.Time) float64 {
 	return s.link.rate
 }
 
-// queued is how many bytes the link sends from now until until, which is
-// the backlog when until is when it finishes. An unlimited rate holds no
-// backlog.
-func (s *wanShaper) queued(now, until time.Time) float64 {
-	if !until.After(now) {
+// sent is how many bytes the link can send from a to b, infinitely many
+// once it runs at an unlimited rate.
+func (s *wanShaper) sent(a, b time.Time) float64 {
+	if !b.After(a) {
 		return 0
+	}
+	at := func(rate float64, d time.Duration) float64 {
+		if rate <= 0 {
+			return math.Inf(1)
+		}
+		return d.Seconds() * rate
 	}
 	if s.link.stepAfter > 0 {
 		step := s.first.Add(s.link.stepAfter)
-		if now.Before(step) && until.After(step) {
-			return step.Sub(now).Seconds()*max(s.link.rate, 0) + until.Sub(step).Seconds()*max(s.link.stepRate, 0)
+		if a.Before(step) && b.After(step) {
+			return at(s.link.rate, step.Sub(a)) + at(s.link.stepRate, b.Sub(step))
 		}
 	}
-	return until.Sub(now).Seconds() * max(s.rateAt(now), 0)
+	return at(s.rateAt(a), b.Sub(a))
 }
 
 // transmitted returns when n bytes whose transmission starts at start have
@@ -378,7 +392,7 @@ func TestWANShaperStep(t *testing.T) {
 	// Before a step, the queue admits its capacity at the rate then, in
 	// bytes, whatever the rate will be when they leave: 50 ms of queue at
 	// 100 KB/s holds 5000 bytes ahead, before a drop or a rise.
-	for _, stepRate := range []float64{10_000, 1_000_000} {
+	for _, stepRate := range []float64{10_000, 1_000_000, 0} {
 		p := wanShaper{link: wanLink{rate: 100_000, queue: 50 * time.Millisecond, stepAfter: time.Second, stepRate: stepRate}}
 		p.admit(start, 100)
 		now := start.Add(995 * time.Millisecond)
