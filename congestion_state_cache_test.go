@@ -94,7 +94,7 @@ func TestMemoryCongestionStateCacheGroups(t *testing.T) {
 	for i := range 40 {
 		c.Put(fmt.Sprintf("id:192.0.2.1/%02d", i), s)
 	}
-	if c.Len() != 2+maxCongestionStatesPerGroup || c.groups["id:192.0.2.1"] != maxCongestionStatesPerGroup {
+	if c.Len() != 2+maxCongestionStatesPerGroup || c.groupLen("id:192.0.2.1") != maxCongestionStatesPerGroup {
 		t.Fatal("entries", c.Len(), c.groups)
 	}
 	for _, key := range []string{"192.0.2.1", "id:198.51.100.9/aa", "id:192.0.2.1/39", "id:192.0.2.1/08"} {
@@ -105,7 +105,7 @@ func TestMemoryCongestionStateCacheGroups(t *testing.T) {
 	if _, ok := c.Take("id:192.0.2.1/07"); ok {
 		t.Fatal("the group's oldest kept")
 	}
-	if c.groups["id:192.0.2.1"] != maxCongestionStatesPerGroup-2 {
+	if c.groupLen("id:192.0.2.1") != maxCongestionStatesPerGroup-2 {
 		t.Fatal("group count", c.groups)
 	}
 	c.Flush()
@@ -125,7 +125,7 @@ func TestMemoryCongestionStateCacheSmallGroups(t *testing.T) {
 	for i := range 20 {
 		c.Put(fmt.Sprintf("id:198.51.100.1/%02d", i), s)
 	}
-	if c.groups["id:198.51.100.1"] != 2 || c.Len() != 16 {
+	if c.groupLen("id:198.51.100.1") != 2 || c.Len() != 16 {
 		t.Fatal("entries", c.Len(), c.groups)
 	}
 	for i := range 14 {

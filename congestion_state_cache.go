@@ -51,14 +51,17 @@ type MemoryCongestionStateCache struct {
 	lifetime   time.Duration
 	order      *list.List // most recently saved first
 	entries    map[string]*list.Element
-	groups     map[string]int // entries by resume-ID key group
-	now        func() time.Time
+	// groups orders each resume-ID key group's entries, most recently
+	// saved first, so that evicting a group's oldest doesn't scan others.
+	groups map[string]*list.List
+	now    func() time.Time
 }
 
 type savedCongestionState struct {
 	key   string
 	state CongestionState
 	saved time.Time
+	group *list.Element // in its group's list, if it has a group
 }
 
 const (
@@ -81,7 +84,7 @@ func NewMemoryCongestionStateCache(maxEntries int, lifetime time.Duration) *Memo
 	if lifetime <= 0 {
 		lifetime = defaultCongestionStateLifetime
 	}
-	return &MemoryCongestionStateCache{maxEntries: maxEntries, lifetime: lifetime, order: list.New(), entries: map[string]*list.Element{}, groups: map[string]int{}, now: time.Now}
+	return &MemoryCongestionStateCache{maxEntries: maxEntries, lifetime: lifetime, order: list.New(), entries: map[string]*list.Element{}, groups: map[string]*list.List{}, now: time.Now}
 }
 
 // Take implements CongestionStateCache.
@@ -93,7 +96,7 @@ func (c *MemoryCongestionStateCache) Take(key string) (CongestionState, bool) {
 		return CongestionState{}, false
 	}
 	c.remove(e)
-	s := e.Value.(savedCongestionState)
+	s := e.Value.(*savedCongestionState)
 	if c.now().Sub(s.saved) > c.lifetime {
 		return CongestionState{}, false
 	}
@@ -113,21 +116,23 @@ func (c *MemoryCongestionStateCache) Put(key string, s CongestionState) {
 		return
 	}
 	if e, ok := c.entries[key]; ok {
-		if e.Value.(savedCongestionState).saved.After(saved) {
+		if e.Value.(*savedCongestionState).saved.After(saved) {
 			return
 		}
 		c.remove(e)
 	}
-	c.entries[key] = c.order.PushFront(savedCongestionState{key, s, saved})
+	entry := &savedCongestionState{key: key, state: s, saved: saved}
+	e := c.order.PushFront(entry)
+	c.entries[key] = e
 	if group, ok := congestionStateGroup(key); ok {
-		c.groups[group]++
-		if c.groups[group] > c.groupLimit() {
-			for e := c.order.Back(); e != nil; e = e.Prev() {
-				if g, _ := congestionStateGroup(e.Value.(savedCongestionState).key); g == group {
-					c.remove(e)
-					break
-				}
-			}
+		members := c.groups[group]
+		if members == nil {
+			members = list.New()
+			c.groups[group] = members
+		}
+		entry.group = members.PushFront(e)
+		if members.Len() > c.groupLimit() {
+			c.remove(members.Back().Value.(*list.Element))
 		}
 	}
 	for c.order.Len() > c.maxEntries {
@@ -179,14 +184,25 @@ func (c *MemoryCongestionStateCache) Len() int {
 }
 
 func (c *MemoryCongestionStateCache) remove(e *list.Element) {
-	key := e.Value.(savedCongestionState).key
-	delete(c.entries, key)
+	entry := e.Value.(*savedCongestionState)
+	delete(c.entries, entry.key)
 	c.order.Remove(e)
-	if group, ok := congestionStateGroup(key); ok {
-		if c.groups[group]--; c.groups[group] <= 0 {
+	if entry.group != nil {
+		group, _ := congestionStateGroup(entry.key)
+		members := c.groups[group]
+		members.Remove(entry.group)
+		if members.Len() == 0 {
 			delete(c.groups, group)
 		}
 	}
+}
+
+// groupLen reports how many states key group holds.
+func (c *MemoryCongestionStateCache) groupLen(group string) int {
+	if members := c.groups[group]; members != nil {
+		return members.Len()
+	}
+	return 0
 }
 
 // congestionStates adapts a CongestionStateCache to the transport's.
