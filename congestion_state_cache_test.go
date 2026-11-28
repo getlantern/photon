@@ -1,6 +1,7 @@
 package quic
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
@@ -79,6 +80,37 @@ func TestMemoryCongestionStateCacheBounds(t *testing.T) {
 	c.Put("e", old)
 	if got, _ := c.Take("e"); got.Bandwidth != 1e6 {
 		t.Fatal("an older state put back replaced a newer one")
+	}
+}
+
+// One address holds at most 32 resume-ID states, its least recently saved
+// evicted first, so it can't evict other clients' states; address keys and
+// other addresses' IDs are untouched.
+func TestMemoryCongestionStateCacheGroups(t *testing.T) {
+	c := NewMemoryCongestionStateCache(0, 0)
+	s := CongestionState{Bandwidth: 1e6, MinRTT: time.Millisecond}
+	c.Put("192.0.2.1", s)
+	c.Put("id:198.51.100.9/aa", s)
+	for i := range 40 {
+		c.Put(fmt.Sprintf("id:192.0.2.1/%02d", i), s)
+	}
+	if c.Len() != 2+maxCongestionStatesPerGroup || c.groups["id:192.0.2.1"] != maxCongestionStatesPerGroup {
+		t.Fatal("entries", c.Len(), c.groups)
+	}
+	for _, key := range []string{"192.0.2.1", "id:198.51.100.9/aa", "id:192.0.2.1/39", "id:192.0.2.1/08"} {
+		if _, ok := c.Take(key); !ok {
+			t.Fatal("evicted", key)
+		}
+	}
+	if _, ok := c.Take("id:192.0.2.1/07"); ok {
+		t.Fatal("the group's oldest kept")
+	}
+	if c.groups["id:192.0.2.1"] != maxCongestionStatesPerGroup-2 {
+		t.Fatal("group count", c.groups)
+	}
+	c.Flush()
+	if len(c.groups) != 0 {
+		t.Fatal("Flush kept groups")
 	}
 }
 

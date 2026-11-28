@@ -78,9 +78,9 @@ func TestCongestionStateResumeID(t *testing.T) {
 		want      recovery.ResumeState
 		left      string // the state not taken
 	}{
-		{"its own", true, map[string]recovery.ResumeState{"192.0.2.7": shared, resumeIDKey(id): mine}, mine, "192.0.2.7"},
+		{"its own", true, map[string]recovery.ResumeState{"192.0.2.7": shared, resumeIDKey(id, address): mine}, mine, "192.0.2.7"},
 		{"first redemption", true, map[string]recovery.ResumeState{"192.0.2.7": shared}, shared, ""},
-		{"no token", false, map[string]recovery.ResumeState{"192.0.2.7": shared, resumeIDKey(id): mine}, shared, resumeIDKey(id)},
+		{"no token", false, map[string]recovery.ResumeState{"192.0.2.7": shared, resumeIDKey(id, address): mine}, shared, resumeIDKey(id, address)},
 	} {
 		states := &testStates{saved: tc.saved}
 		r := &testResumer{snapshot: &snap}
@@ -97,7 +97,7 @@ func TestCongestionStateResumeID(t *testing.T) {
 		}
 		states.saved = map[string]recovery.ResumeState{}
 		c.saveCongestionState()
-		_, byID := states.saved[resumeIDKey(c.carefulResume.id)]
+		_, byID := states.saved[resumeIDKey(c.carefulResume.id, address)]
 		_, byAddress := states.saved["192.0.2.7"]
 		if byID != tc.fromToken || byAddress == tc.fromToken {
 			t.Fatalf("%s: saved by ID %v, by address %v", tc.name, byID, byAddress)
