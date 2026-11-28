@@ -245,3 +245,38 @@ func TestRiseChecksSeeEndedLossRound(t *testing.T) {
 		t.Fatal("UP restarted Startup on a lossy round")
 	}
 }
+
+// A loss found by a timer ends a mini-probe at once, pacing and windowing
+// as cruising does, since sends can follow with no ACK.
+func TestMiniProbeTimerLossEndsIt(t *testing.T) {
+	b := cruising(time.Unix(100, 0))
+	b.minRTT, b.cwnd = 100*time.Millisecond, 1_000_000
+	rounds(b, bbrMiniProbeRounds, 1e6)
+	b.pacingRate = 1.25e6
+	b.OnLoss(LossEvent{Lost: []Packet{{Bytes: 1200, InFlight: true}}, TotalLost: 1200, Now: time.Unix(100, 0)})
+	if b.mini.phase != miniOff || b.pacingGain != 1 {
+		t.Fatal("timer loss didn't end the mini-probe")
+	}
+	if b.pacingRate >= 1.25e6 || b.cwnd > b.inflightWithHeadroom() {
+		t.Fatal("still probing: pacing", b.pacingRate, "window", b.cwnd)
+	}
+}
+
+// A peak UP measures in a round that turns out congested is dropped, so a later clean round at
+// the old rate doesn't restart Startup on it; a clean rise still does.
+func TestUpDropsCongestedPeak(t *testing.T) {
+	now := time.Unix(100, 0)
+	b := cruising(now)
+	b.state, b.mini.fromBw = bbrProbeBWUp, 1e6
+	b.roundStart = false
+	b.upFoundRise(RateSample{Valid: true, Rate: 1.4e6}) // before loss shows
+	b.lossInRound = true
+	b.upFoundRise(RateSample{Valid: true, Rate: 1.4e6})
+	b.lossInRound, b.roundStart = false, true
+	if b.upFoundRise(RateSample{Valid: true, Rate: 1e6}) {
+		t.Fatal("restarted on a peak measured under congestion")
+	}
+	if !b.upFoundRise(RateSample{Valid: true, Rate: 1.4e6}) {
+		t.Fatal("no restart on a clean rise")
+	}
+}

@@ -300,7 +300,11 @@ func (b *BBR) OnLoss(e LossEvent) {
 		b.inRecovery, b.recoveryStart = true, e.Now
 	}
 	b.noteLoss()
-	state := b.state
+	state, mini := b.state, b.mini.phase
+	if mini != miniOff {
+		// Loss ends a mini-probe, as on an ACK.
+		b.endMiniProbe()
+	}
 	// Each packet sees the loss as it stood at its turn: the total before
 	// this batch, plus the packets up to and including it.
 	lost := e.TotalLost - batch
@@ -311,9 +315,10 @@ func (b *BBR) OnLoss(e LossEvent) {
 		lost += uint64(p.Bytes)
 		b.handleLostPacket(p, lost, e.TotalCE)
 	}
-	if b.state != state {
-		// A probe ended: apply ProbeBW_DOWN's pacing rate and window now,
-		// since a timer-detected loss can be followed by sends with no ACK.
+	if b.state != state || mini != miniOff {
+		// A probe or mini-probe ended: apply its successor's pacing rate and
+		// window now, since a timer-detected loss can be followed by sends
+		// with no ACK.
 		b.setPacingRate()
 		b.boundCwndForModel()
 	}
