@@ -83,6 +83,7 @@ func TestCongestionStateResumeID(t *testing.T) {
 		{"no token", false, map[string]recovery.ResumeState{"192.0.2.7": shared, resumeIDKey(id, address): mine}, shared, resumeIDKey(id, address)},
 	} {
 		states := &testStates{saved: tc.saved}
+		before := len(tc.saved)
 		r := &testResumer{snapshot: &snap}
 		c := resumeTestConn(states, r)
 		c.resumeCongestionState(address, true, id, tc.fromToken)
@@ -92,7 +93,7 @@ func TestCongestionStateResumeID(t *testing.T) {
 		if r.resumed == nil || *r.resumed != tc.want {
 			t.Fatalf("%s: resumed %+v, want %+v", tc.name, r.resumed, tc.want)
 		}
-		if _, ok := states.saved[tc.left]; tc.left != "" && !ok || len(states.saved) != len(tc.saved) {
+		if _, ok := states.saved[tc.left]; tc.left != "" && !ok || len(states.saved) != before-1 {
 			t.Fatalf("%s: took the wrong state, left %v", tc.name, states.saved)
 		}
 		states.saved = map[string]recovery.ResumeState{}

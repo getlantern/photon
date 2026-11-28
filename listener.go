@@ -134,7 +134,10 @@ type Config struct {
 	// the server seals into the client's NEW_TOKEN address tokens, so a
 	// client that keeps them, with a TokenStore, has its own even behind an
 	// address other clients share; a client that doesn't shares one with
-	// the others behind its IP address. Only a connection
+	// the others behind its IP address. A client's first connection saves
+	// under its address, and a client presenting an ID with nothing saved
+	// under it, as on its next connection, resumes from its address's state,
+	// perhaps another client's, then saves under the ID. Only a connection
 	// admitted from a verified address resumes: ListenAddr and Listen send a
 	// Retry to verify each, but a Transport listener without
 	// VerifySourceAddress sends none, so there only clients presenting a
