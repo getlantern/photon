@@ -283,7 +283,7 @@ func TestUpDropsCongestedPeak(t *testing.T) {
 
 // A reordered ACK can report loss or ECN-CE from its packet's flight after
 // the loss round that held it has ended; UP drops that sample and the peak
-// before it, and a mini-probe ends on it.
+// before it, and a mini-probe neither starts nor goes on with it.
 func TestRiseChecksRejectCongestedSamples(t *testing.T) {
 	now := time.Unix(100, 0)
 	for _, rs := range []RateSample{{Valid: true, Rate: 1.4e6, CE: 1200}, {Valid: true, Rate: 1.4e6, Lost: 1200}} {
@@ -300,6 +300,17 @@ func TestRiseChecksRejectCongestedSamples(t *testing.T) {
 		b.updateMiniProbe(rs)
 		if b.mini.phase != miniOff {
 			t.Fatalf("%+v didn't end the mini-probe", rs)
+		}
+		b = cruising(now)
+		rounds(b, bbrMiniProbeRounds-1, 1e6)
+		b.roundStart = true
+		b.updateMiniProbe(rs)
+		if b.mini.phase != miniOff || b.pacingGain != 1 {
+			t.Fatalf("%+v started a mini-probe", rs)
+		}
+		rounds(b, 1, 1e6)
+		if b.mini.phase != miniUp {
+			t.Fatal("no mini-probe on the next clean round")
 		}
 	}
 }
