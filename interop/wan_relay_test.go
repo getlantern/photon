@@ -146,11 +146,38 @@ func (s *wanShaper) admit(now time.Time, n int) (time.Time, bool) {
 	if s.busyUntil.After(now) {
 		departure = s.busyUntil
 	}
-	if departure.Sub(now) > s.link.queue {
+	// The queue holds link.queue's worth of bytes at the rate now: a
+	// backlog whose transmission will run past a step is measured in
+	// bytes, not in the time the new rate will take to send it.
+	if s.queued(now, departure) > s.link.queue.Seconds()*s.rateAt(now) {
 		return time.Time{}, false
 	}
 	s.busyUntil = s.transmitted(departure, n)
 	return s.busyUntil, true
+}
+
+// rateAt is the link's rate at t.
+func (s *wanShaper) rateAt(t time.Time) float64 {
+	if s.link.stepAfter > 0 && !t.Before(s.first.Add(s.link.stepAfter)) {
+		return s.link.stepRate
+	}
+	return s.link.rate
+}
+
+// queued is how many bytes the link sends from now until until, which is
+// the backlog when until is when it finishes. An unlimited rate holds no
+// backlog.
+func (s *wanShaper) queued(now, until time.Time) float64 {
+	if !until.After(now) {
+		return 0
+	}
+	if s.link.stepAfter > 0 {
+		step := s.first.Add(s.link.stepAfter)
+		if now.Before(step) && until.After(step) {
+			return step.Sub(now).Seconds()*max(s.link.rate, 0) + until.Sub(step).Seconds()*max(s.link.stepRate, 0)
+		}
+	}
+	return until.Sub(now).Seconds() * max(s.rateAt(now), 0)
 }
 
 // transmitted returns when n bytes whose transmission starts at start have
@@ -347,6 +374,23 @@ func TestWANShaperStep(t *testing.T) {
 	q.admit(start, 100)
 	if at := q.transmitted(start.Add(995*time.Millisecond), 1000); at.Sub(start) != time.Second+50*time.Millisecond {
 		t.Fatal("across the step:", at.Sub(start))
+	}
+	// Before a step, the queue admits its capacity at the rate then, in
+	// bytes, whatever the rate will be when they leave: 50 ms of queue at
+	// 100 KB/s holds 5000 bytes ahead, before a drop or a rise.
+	for _, stepRate := range []float64{10_000, 1_000_000} {
+		p := wanShaper{link: wanLink{rate: 100_000, queue: 50 * time.Millisecond, stepAfter: time.Second, stepRate: stepRate}}
+		p.admit(start, 100)
+		now := start.Add(995 * time.Millisecond)
+		admitted := 0
+		for range 20 {
+			if _, ok := p.admit(now, 1000); ok {
+				admitted++
+			}
+		}
+		if admitted != 6 {
+			t.Fatalf("step to %.0f B/s: admitted %d of 1000 bytes before it, want 6", stepRate, admitted)
+		}
 	}
 	// A step to an unlimited rate still departs after the backlog.
 	u := wanShaper{link: wanLink{rate: 100_000, queue: time.Second, stepAfter: time.Second}}
