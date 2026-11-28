@@ -13,14 +13,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The root module and the interop module test in parallel jobs: each takes
+  # about three minutes under -race, so running them in one job doubled CI's
+  # wall time.
   test:
-    name: test (${{ matrix.os }})
+    name: test (${{ matrix.os }}, ${{ matrix.module }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
+        module: [root, interop]
+    defaults:
+      run:
+        working-directory: ${{ matrix.module == 'interop' && 'interop' || '.' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -30,6 +37,7 @@ jobs:
             go.sum
             interop/go.sum
       - name: gofmt
+        if: matrix.module == 'root'
         run: |
           unformatted="$(gofmt -l .)"
           if [ -n "$unformatted" ]; then
@@ -38,21 +46,16 @@ jobs:
             exit 1
           fi
       - name: go mod tidy is clean
+        if: matrix.module == 'root'
         run: |
           go mod tidy
           (cd interop && go mod tidy)
           git diff --exit-code -- go.mod go.sum interop/go.mod interop/go.sum
       - name: vet
         run: go vet ./...
-      - name: test
-        run: go test -race -count=1 ./...
       # The interop module tests against pinned upstream quic-go. Picoquic and
       # ls-qpack fixtures are not built here, so those tests skip.
-      - name: interop vet
-        working-directory: interop
-        run: go vet ./...
-      - name: interop test
-        working-directory: interop
+      - name: test
         run: go test -race -count=1 ./...
 
   # Type-check platforms the test job does not run on.

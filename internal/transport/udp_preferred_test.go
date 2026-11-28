@@ -18,6 +18,7 @@ func TestUDPPreferredMigration(t *testing.T) {
 		for _, network := range []string{"udp4", "udp6"} {
 			for _, respond := range []bool{false, true} {
 				t.Run(fmt.Sprintf("%x/%s/respond=%v", version, network, respond), func(t *testing.T) {
+					t.Parallel()
 					ip := net.IPv4(127, 0, 0, 1)
 					if network == "udp6" {
 						ip = net.IPv6loopback
