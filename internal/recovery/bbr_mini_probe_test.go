@@ -367,29 +367,28 @@ func TestStartupOvershootLeavesMiniProbesOn(t *testing.T) {
 	}
 }
 
-// Startup ends, for congestion's evidence, when BBR reaches ProbeBW: it
+// Startup ends, for congestion's evidence, when BBR enters ProbeBW: it
 // stays unset through Startup, Drain and a ProbeRTT that interrupts them,
 // later probes and ProbeRTT don't move it, and entering Startup again
-// clears it at once.
-func TestNoteStartupDone(t *testing.T) {
-	b := cruising(time.Unix(100, 0))
-	for _, st := range []bbrState{bbrStartup, bbrProbeRTT, bbrStartup, bbrDrain} {
-		b.state = st
-		b.noteStartupDone()
-		if !b.startupDoneAt.IsZero() {
-			t.Fatalf("state %d: Startup done", st)
-		}
+// clears it.
+func TestStartupDoneAt(t *testing.T) {
+	now := time.Unix(100, 0)
+	b := cruising(now)
+	b.enterStartup()
+	b.enterProbeRTT()
+	if !b.startupDoneAt.IsZero() {
+		t.Fatal("Startup done in Startup or a ProbeRTT that interrupted it")
 	}
-	b.state = bbrProbeBWDown
-	b.noteStartupDone()
-	done := b.now
-	for _, st := range []bbrState{bbrProbeBWCruise, bbrProbeBWRefill, bbrProbeBWUp, bbrProbeRTT} {
-		b.now = b.now.Add(time.Second)
-		b.state = st
-		b.noteStartupDone()
-		if !b.startupDoneAt.Equal(done) {
-			t.Fatalf("state %d moved Startup's end", st)
-		}
+	b.startProbeBWDown()
+	if !b.startupDoneAt.Equal(now) {
+		t.Fatal("Startup not done in ProbeBW")
+	}
+	b.now = now.Add(time.Second)
+	b.startProbeBWCruise()
+	b.enterProbeRTT()
+	b.startProbeBWDown()
+	if !b.startupDoneAt.Equal(now) {
+		t.Fatal("ProbeRTT and a later ProbeBW moved Startup's end")
 	}
 	b.enterStartup()
 	if !b.startupDoneAt.IsZero() {

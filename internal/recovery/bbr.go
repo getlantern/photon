@@ -380,7 +380,6 @@ func (b *BBR) OnACK(e ACKEvent) {
 	b.updateMinRTT(rs, e.Now)
 	b.checkProbeRTT(rs, e.Now)
 	b.noteRoundStartState()
-	b.noteStartupDone()
 	b.crOnACK(rs)
 	b.advanceLatestDeliverySignals(rs)
 	b.boundBWForModel()
@@ -491,6 +490,11 @@ func (b *BBR) isProbingBW() bool {
 }
 
 func (b *BBR) startProbeBWDown() {
+	if b.startupDoneAt.IsZero() {
+		// Every way into ProbeBW, from Drain or a ProbeRTT that interrupted
+		// Startup or Drain, on an ACK or a send, passes here.
+		b.startupDoneAt = b.now
+	}
 	b.resetCongestionSignals()
 	b.probeUpAckedPerInc = bbrInfinity
 	b.pickProbeWait()
@@ -893,17 +897,6 @@ func (b *BBR) advanceLatestDeliverySignals(rs RateSample) {
 		}
 		b.inflightLatest = rs.Delivered
 		b.lossEventsInRound = 0
-	}
-}
-
-// noteStartupDone records when BBR reached ProbeBW from Startup and Drain
-// (see startupDoneAt). ProbeRTT leaves it as it was: it can interrupt
-// Startup, and return to it.
-func (b *BBR) noteStartupDone() {
-	if b.state == bbrStartup || b.state == bbrDrain {
-		b.startupDoneAt = time.Time{}
-	} else if b.inProbeBW() && b.startupDoneAt.IsZero() {
-		b.startupDoneAt = b.now
 	}
 }
 
