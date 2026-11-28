@@ -210,3 +210,38 @@ func TestRestartAndProbeRTTClearProbeState(t *testing.T) {
 		t.Fatal("ProbeRTT kept the mini-probe")
 	}
 }
+
+// Loss in the current loss round keeps a mini-probe from starting. The ACK
+// that ends a loss round clears its loss before the rise checks run; they
+// still see it, so a lossy round lets neither a mini-probe nor UP restart
+// Startup.
+func TestRiseChecksSeeEndedLossRound(t *testing.T) {
+	now := time.Unix(100, 0)
+	lossy := func(b *BBR, prior uint64) {
+		b.cycleStamp, b.bwProbeWait = now, 3*time.Second
+		b.bdp, b.cwnd, b.minRTT = 50_000, 100_000, 50*time.Millisecond
+		b.delivered, b.lossRoundDelivered, b.nextRoundDelivered = 10_000_000, 9_000_000, 9_000_000
+		b.OnLoss(LossEvent{Lost: []Packet{{Bytes: 1200, InFlight: true}}, TotalLost: 1200, TotalDelivered: 10_000_000, Flight: 50_000, Now: now})
+		b.OnACK(ACKEvent{Rate: RateSample{Valid: true, Rate: 2e6, NewlyAcked: 1200, PriorDelivered: prior, TotalDelivered: 10_001_200, Delivered: 50_000, RTT: 50 * time.Millisecond}, Flight: 50_000, SmoothedRTT: 50 * time.Millisecond, Now: now})
+	}
+	// A round starts, but not a loss round.
+	b := cruising(now)
+	b.mini.rounds = bbrMiniProbeRounds - 1
+	lossy(b, 9_500_000)
+	if b.state != bbrProbeBWCruise || b.mini.phase != miniOff {
+		t.Fatalf("lossy round: state %d, mini-probe phase %d", b.state, b.mini.phase)
+	}
+	// Both end.
+	b = cruising(now)
+	b.mini.phase, b.mini.fromBw = miniDown, 1e6
+	lossy(b, 10_000_000)
+	if b.state == bbrStartup {
+		t.Fatal("a mini-probe restarted Startup on a lossy round")
+	}
+	b = cruising(now)
+	b.state, b.mini.fromBw, b.pacingGain = bbrProbeBWUp, 1e6, 1.25
+	lossy(b, 10_000_000)
+	if b.state == bbrStartup {
+		t.Fatal("UP restarted Startup on a lossy round")
+	}
+}

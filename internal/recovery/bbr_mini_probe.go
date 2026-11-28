@@ -46,10 +46,16 @@ func (b *BBR) quietState() bool {
 	return (b.state == bbrProbeBWDown || b.state == bbrProbeBWCruise) && b.mini.phase == miniOff
 }
 
+// congestedNow reports loss or ECN-CE in the current loss round, or in the
+// one this ACK ended, whose end has already cleared them.
+func (b *BBR) congestedNow() bool {
+	return b.lossInRound || b.ceInRound || b.lossRoundStart && b.lossRoundEndedCongested
+}
+
 // updateMiniProbe runs on each ACK in ProbeBW_CRUISE.
 func (b *BBR) updateMiniProbe(rs RateSample) {
 	if b.mini.phase != miniOff {
-		if b.lossInRound || rs.CE > 0 || rs.AppLimited {
+		if b.congestedNow() || rs.CE > 0 || rs.AppLimited {
 			// Contention or an idle sender: no reading, and no probe.
 			b.endMiniProbe()
 			return
@@ -64,7 +70,7 @@ func (b *BBR) updateMiniProbe(rs RateSample) {
 	switch b.mini.phase {
 	case miniOff:
 		quiet := b.mini.congestedAt.IsZero() || b.now.Sub(b.mini.congestedAt) > bbrMiniProbeQuiet
-		if b.mini.rounds++; b.mini.rounds >= bbrMiniProbeRounds && !rs.AppLimited && quiet {
+		if b.mini.rounds++; b.mini.rounds >= bbrMiniProbeRounds && !rs.AppLimited && quiet && !b.congestedNow() && rs.CE == 0 {
 			b.mini.phase, b.mini.maxBw, b.mini.fromBw = miniUp, 0, b.bw
 			b.pacingGain = 1.25
 		}
@@ -94,7 +100,7 @@ func (b *BBR) upFoundRise(rs RateSample) bool {
 		b.mini.maxBw = max(b.mini.maxBw, float64(rs.Rate))
 	}
 	quiet := b.mini.congestedAt.IsZero() || b.now.Sub(b.mini.congestedAt) > bbrMiniProbeQuiet
-	return b.roundStart && quiet && !b.lossInRound && b.mini.fromBw > 0 && b.mini.maxBw > bbrRiseGrowth*b.mini.fromBw
+	return b.roundStart && quiet && !b.congestedNow() && b.mini.fromBw > 0 && b.mini.maxBw > bbrRiseGrowth*b.mini.fromBw
 }
 
 // restartStartup re-enters Startup after a mini-probe found the path's rate
