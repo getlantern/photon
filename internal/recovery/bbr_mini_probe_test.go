@@ -280,3 +280,26 @@ func TestUpDropsCongestedPeak(t *testing.T) {
 		t.Fatal("no restart on a clean rise")
 	}
 }
+
+// A reordered ACK can report loss or ECN-CE from its packet's flight after
+// the loss round that held it has ended; UP drops that sample and the peak
+// before it, and a mini-probe ends on it.
+func TestRiseChecksRejectCongestedSamples(t *testing.T) {
+	now := time.Unix(100, 0)
+	for _, rs := range []RateSample{{Valid: true, Rate: 1.4e6, CE: 1200}, {Valid: true, Rate: 1.4e6, Lost: 1200}} {
+		b := cruising(now)
+		b.state, b.mini.fromBw = bbrProbeBWUp, 1e6
+		b.upFoundRise(RateSample{Valid: true, Rate: 1.4e6})
+		b.upFoundRise(rs)
+		b.roundStart = true
+		if b.upFoundRise(RateSample{Valid: true, Rate: 1e6}) {
+			t.Fatalf("UP restarted on a peak before %+v", rs)
+		}
+		b = cruising(now)
+		rounds(b, bbrMiniProbeRounds, 1e6)
+		b.updateMiniProbe(rs)
+		if b.mini.phase != miniOff {
+			t.Fatalf("%+v didn't end the mini-probe", rs)
+		}
+	}
+}
