@@ -22,8 +22,9 @@ type CongestionState struct {
 }
 
 // CongestionStateCache keeps servers' saved congestion state for Careful
-// Resume (draft-ietf-tsvwg-careful-resume), keyed by client IP address. A
-// connection Takes its client's state on admission, so that one connection
+// Resume (draft-ietf-tsvwg-careful-resume). Keys are opaque: a client's IP
+// address, or a resume ID from its address tokens. A connection Takes its
+// client's state on admission, so that one connection
 // at a time resumes from it, and Puts its own at close. Put must replace a
 // state only if it was measured no later than the one put, by Saved: a
 // connection puts back a state it took and didn't use, which mustn't undo

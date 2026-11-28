@@ -208,3 +208,69 @@ func BenchmarkCarefulResume(b *testing.B) {
 		}
 	}
 }
+
+// A client that keeps its address tokens gets a resume ID in them. Its
+// first connection saves under its address; its second, presenting the ID,
+// takes the address's state and saves under the ID; its third takes the
+// ID's, leaving anything saved under the address to clients behind it that
+// don't keep tokens.
+func TestCarefulResumeByToken(t *testing.T) {
+	clientTLS, serverTLS := tlsConfigs(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cache := quic.NewMemoryCongestionStateCache(0, 0)
+	server := resumeServer(t, ctx, serverTLS, cache)
+	link := wanLink{delay: 50 * time.Millisecond, rate: 20e6 / 8, queue: 100 * time.Millisecond}
+	relay := newWANRelay(t, server, link, link)
+	tokens := quic.NewLRUTokenStore(4, 4)
+	download := func(during func()) {
+		dialCtx, stop := context.WithTimeout(ctx, 30*time.Second)
+		defer stop()
+		const window = 32 << 20
+		peer, err := quic.DialAddr(dialCtx, relay.addr(), clientTLS, &quic.Config{Versions: []quic.Version{quic.Version1}, TokenStore: tokens, InitialStreamReceiveWindow: window / 2, MaxStreamReceiveWindow: window / 2, InitialConnectionReceiveWindow: window, MaxConnectionReceiveWindow: window})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer peer.CloseWithError(0, "")
+		s, err := peer.OpenStreamSync(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var req [8]byte
+		binary.BigEndian.PutUint64(req[:], 4<<20)
+		if _, err := s.Write(req[:]); err != nil {
+			t.Fatal(err)
+		}
+		s.Close()
+		var first [1]byte
+		if _, err := io.ReadFull(s, first[:]); err != nil {
+			t.Fatal(err)
+		}
+		if during != nil {
+			during()
+		}
+		if got, err := io.Copy(io.Discard, s); err != nil || got != 4<<20-1 {
+			t.Fatal("download", got, err)
+		}
+	}
+	emptyDuring := func() {
+		if cache.Len() != 0 {
+			t.Errorf("cache holds %d states during a resumed connection, want 0", cache.Len())
+		}
+	}
+	download(nil)
+	waitForStates(t, cache, 1)
+	download(emptyDuring)
+	waitForStates(t, cache, 1)
+	if _, ok := cache.Take("127.0.0.1"); ok {
+		t.Fatal("the client's state was saved under its address, not its ID")
+	}
+	cache.Put("127.0.0.1", quic.CongestionState{Bandwidth: 1, MinRTT: time.Hour})
+	// Its own state, under its ID, not the address's.
+	download(func() {
+		if cache.Len() != 1 {
+			t.Errorf("cache holds %d states during the third connection, want the address's alone", cache.Len())
+		}
+	})
+	waitForStates(t, cache, 2)
+}

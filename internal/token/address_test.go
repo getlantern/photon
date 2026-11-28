@@ -9,6 +9,51 @@ import (
 	"github.com/getlantern/photon/internal/wire"
 )
 
+// A version 3 token carries its resume ID, sealed: two tokens for one ID
+// differ, tampering fails, and flipping the format byte between versions 2
+// and 3 fails either way.
+func TestAddressTokenResumeID(t *testing.T) {
+	tokens, err := NewAddressTokens([32]byte{1}, nil, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := netip.MustParseAddrPort("192.0.2.1:4433")
+	now := time.Unix(1000, 0)
+	id := ResumeID{1, 2, 3, 4, 5, 6, 7, 8}
+	token, err := tokens.IssueResume(address, wire.Version1, now, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := tokens.ValidateResume(token, address, wire.Version1, now)
+	if err != nil || !ok || got != id {
+		t.Fatal("resume ID", got, ok, err)
+	}
+	if again, _ := tokens.IssueResume(address, wire.Version1, now, id); bytes.Equal(again, token) {
+		t.Fatal("two tokens for one ID are equal")
+	}
+	for i := range token {
+		bad := bytes.Clone(token)
+		bad[i] ^= 1
+		if _, _, err := tokens.ValidateResume(bad, address, wire.Version1, now); err == nil {
+			t.Fatal("tamper", i)
+		}
+	}
+	plain, _ := tokens.Issue(address, wire.Version1, now)
+	if _, ok, err := tokens.ValidateResume(plain, address, wire.Version1, now); err != nil || ok {
+		t.Fatal("version 2 token", ok, err)
+	}
+	for _, tc := range []struct {
+		token  []byte
+		format byte
+	}{{plain, 3}, {token, 2}} {
+		bad := bytes.Clone(tc.token)
+		bad[1] = tc.format
+		if _, _, err := tokens.ValidateResume(bad, address, wire.Version1, now); err == nil {
+			t.Fatal("format flipped to", tc.format)
+		}
+	}
+}
+
 func TestAddressTokenBindingAndRotation(t *testing.T) {
 	var oldKey, newKey [32]byte
 	oldKey[0] = 1

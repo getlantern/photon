@@ -127,11 +127,14 @@ type Config struct {
 	CongestionControl CongestionControl
 	// CongestionStateCache, on a listener using BBR, enables Careful Resume
 	// (draft-ietf-tsvwg-careful-resume): each connection saves its path's
-	// bandwidth and minimum RTT at close, keyed by client IP address, and a
-	// client's next connection, once its first round confirms the path
-	// looks the same, jumps to half that window instead of ramping up from
-	// the initial window, retreating if the jump meets congestion.
-	// Connections behind one IP address share a state. Only a connection
+	// bandwidth and minimum RTT at close, and a client's next connection,
+	// once its first round confirms the path looks the same, jumps to half
+	// that window instead of ramping up from the initial window, retreating
+	// if the jump meets congestion. A state is keyed by a random resume ID
+	// the server seals into the client's NEW_TOKEN address tokens, so a
+	// client that keeps them, with a TokenStore, has its own even behind an
+	// address other clients share; a client that doesn't shares one with
+	// the others behind its IP address. Only a connection
 	// admitted from a verified address resumes: ListenAddr and Listen send a
 	// Retry to verify each, but a Transport listener without
 	// VerifySourceAddress sends none, so there only clients presenting a

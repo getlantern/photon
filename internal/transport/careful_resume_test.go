@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/getlantern/photon/internal/recovery"
+	"github.com/getlantern/photon/internal/token"
 	"github.com/getlantern/photon/internal/wire"
 )
 
@@ -51,9 +52,55 @@ func TestResumeCongestionStateNeedsVerifiedAddress(t *testing.T) {
 		states := &testStates{saved: map[string]recovery.ResumeState{"192.0.2.7": state}}
 		r := &testResumer{}
 		c := resumeTestConn(states, r)
-		c.resumeCongestionState(address, verified)
+		c.resumeCongestionState(address, verified, token.ResumeID{}, false)
 		if took := r.resumed != nil; took != verified || (len(states.saved) == 0) != verified {
 			t.Fatalf("verified %v: resumed %v, left %d states", verified, took, len(states.saved))
+		}
+	}
+}
+
+// A client whose address token carries a resume ID takes the state saved
+// under it, even if another client's is saved under the shared address, or
+// the address's the first time it presents the ID; a client without one
+// takes its address's and gets a fresh ID. A client saves under the ID it
+// presented, or else under its address alone, so that clients that don't
+// keep tokens can't fill the cache with unused IDs.
+func TestCongestionStateResumeID(t *testing.T) {
+	address := netip.MustParseAddrPort("192.0.2.7:4433")
+	id := token.ResumeID{1, 2, 3, 4, 5, 6, 7, 8}
+	mine := recovery.ResumeState{Bandwidth: 1e6, MinRTT: 1e8}
+	shared := recovery.ResumeState{Bandwidth: 9e6, MinRTT: 1e8}
+	snap := recovery.ResumeState{Bandwidth: 2e6, MinRTT: 1e8}
+	for _, tc := range []struct {
+		name      string
+		fromToken bool
+		saved     map[string]recovery.ResumeState
+		want      recovery.ResumeState
+		left      string // the state not taken
+	}{
+		{"its own", true, map[string]recovery.ResumeState{"192.0.2.7": shared, resumeIDKey(id): mine}, mine, "192.0.2.7"},
+		{"first redemption", true, map[string]recovery.ResumeState{"192.0.2.7": shared}, shared, ""},
+		{"no token", false, map[string]recovery.ResumeState{"192.0.2.7": shared, resumeIDKey(id): mine}, shared, resumeIDKey(id)},
+	} {
+		states := &testStates{saved: tc.saved}
+		r := &testResumer{snapshot: &snap}
+		c := resumeTestConn(states, r)
+		c.resumeCongestionState(address, true, id, tc.fromToken)
+		if !tc.fromToken && (c.carefulResume.id == id || c.carefulResume.id == (token.ResumeID{})) {
+			t.Fatalf("%s: no fresh resume ID", tc.name)
+		}
+		if r.resumed == nil || *r.resumed != tc.want {
+			t.Fatalf("%s: resumed %+v, want %+v", tc.name, r.resumed, tc.want)
+		}
+		if _, ok := states.saved[tc.left]; tc.left != "" && !ok || len(states.saved) != len(tc.saved) {
+			t.Fatalf("%s: took the wrong state, left %v", tc.name, states.saved)
+		}
+		states.saved = map[string]recovery.ResumeState{}
+		c.saveCongestionState()
+		_, byID := states.saved[resumeIDKey(c.carefulResume.id)]
+		_, byAddress := states.saved["192.0.2.7"]
+		if byID != tc.fromToken || byAddress == tc.fromToken {
+			t.Fatalf("%s: saved by ID %v, by address %v", tc.name, byID, byAddress)
 		}
 	}
 }

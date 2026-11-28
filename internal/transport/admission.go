@@ -64,7 +64,14 @@ func AdmitInitialECN(ctx context.Context, template Config, tokens *token.RetryTo
 		return nil, nil, nil
 	}
 	newToken := token.IsAddressToken(h.Token)
-	addressValidated := newToken && template.AddressTokens != nil && template.AddressTokens.Validate(h.Token, address, h.Version, now) == nil
+	var resumeID token.ResumeID
+	var hasResumeID bool
+	addressValidated := false
+	if newToken && template.AddressTokens != nil {
+		var err error
+		resumeID, hasResumeID, err = template.AddressTokens.ValidateResume(h.Token, address, h.Version, now)
+		addressValidated = err == nil
+	}
 	var original []byte
 	if !addressValidated && len(h.Token) > 0 {
 		original, err = tokens.Validate(h.Token, address, h.Version, h.DCID, now)
@@ -172,7 +179,7 @@ func AdmitInitialECN(ctx context.Context, template Config, tokens *token.RetryTo
 	if verified {
 		c.budget.Validate()
 	}
-	c.resumeCongestionState(address, verified)
+	c.resumeCongestionState(address, verified, resumeID, hasResumeID)
 	err = c.HandleDatagramECN(data, now, marking)
 	return c, nil, err
 }
