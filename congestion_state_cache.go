@@ -42,7 +42,8 @@ type CongestionStateCache interface {
 
 // MemoryCongestionStateCache is an in-memory CongestionStateCache that
 // holds at most a fixed number of states, evicting the least recently
-// saved, and at most 32 resume-ID states for one address, and drops each a fixed lifetime after it was measured. It is never
+// saved, and at most 32 resume-ID states for one address, or an eighth of
+// its capacity if that is fewer, and drops each a fixed lifetime after it was measured. It is never
 // persisted. Create one with NewMemoryCongestionStateCache.
 type MemoryCongestionStateCache struct {
 	mu         sync.Mutex
@@ -120,7 +121,7 @@ func (c *MemoryCongestionStateCache) Put(key string, s CongestionState) {
 	c.entries[key] = c.order.PushFront(savedCongestionState{key, s, saved})
 	if group, ok := congestionStateGroup(key); ok {
 		c.groups[group]++
-		if c.groups[group] > maxCongestionStatesPerGroup {
+		if c.groups[group] > c.groupLimit() {
 			for e := c.order.Back(); e != nil; e = e.Prev() {
 				if g, _ := congestionStateGroup(e.Value.(savedCongestionState).key); g == group {
 					c.remove(e)
@@ -132,6 +133,12 @@ func (c *MemoryCongestionStateCache) Put(key string, s CongestionState) {
 	for c.order.Len() > c.maxEntries {
 		c.remove(c.order.Back())
 	}
+}
+
+// groupLimit is how many resume-ID states one address may hold: at most an
+// eighth of the cache, so that one address can't fill a small one.
+func (c *MemoryCongestionStateCache) groupLimit() int {
+	return min(maxCongestionStatesPerGroup, max(1, c.maxEntries/8))
 }
 
 // congestionStateGroup returns a resume-ID key's group, its address.

@@ -153,6 +153,12 @@ func (c *Conn) saveSnapshot(states CongestionStates, r recovery.Resumer) bool {
 		return false
 	}
 	if c.carefulResume.fromToken {
+		// The ID's key carries the address it was presented from; a
+		// connection that migrated measured another path, so it saves
+		// nothing under it, and puts back what it took.
+		if remote.Addr().Unmap() != c.carefulResume.admitted.Addr().Unmap() {
+			return false
+		}
 		states.Put(resumeIDKey(c.carefulResume.id, c.carefulResume.admitted), s)
 	} else {
 		states.Put(congestionStateKey(remote), s)
