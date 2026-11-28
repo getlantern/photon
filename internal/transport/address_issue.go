@@ -25,7 +25,14 @@ func (c *Conn) IssueAddressToken(address netip.AddrPort, now time.Time) error {
 	if c.config.AddressTokens == nil {
 		return errors.New("quic: address token issuance disabled")
 	}
-	opaque, err := c.config.AddressTokens.Issue(address, c.config.Version, now)
+	issue := c.config.AddressTokens.Issue
+	if c.carefulResume.enabled {
+		id := c.carefulResume.id
+		issue = func(address netip.AddrPort, version wire.Version, now time.Time) ([]byte, error) {
+			return c.config.AddressTokens.IssueResume(address, version, now, id)
+		}
+	}
+	opaque, err := issue(address, c.config.Version, now)
 	if err != nil {
 		return err
 	}
