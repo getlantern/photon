@@ -2,6 +2,7 @@ package quic
 
 import (
 	"container/list"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,9 +23,12 @@ type CongestionState struct {
 }
 
 // CongestionStateCache keeps servers' saved congestion state for Careful
-// Resume (draft-ietf-tsvwg-careful-resume). Keys are opaque: a client's IP
-// address, or a resume ID from its address tokens. A connection Takes its
-// client's state on admission, so that one connection
+// Resume (draft-ietf-tsvwg-careful-resume). A key is a client's IP address,
+// or "id:", that address, "/" and a resume ID from its address tokens; the
+// part before the slash is the key's group. A client could gather many
+// resume IDs, so a cache should bound the entries one group holds, as
+// MemoryCongestionStateCache does, lest one address evict other clients'
+// states. A connection Takes its client's state on admission, so that one connection
 // at a time resumes from it, and Puts its own at close. Put must replace a
 // state only if it was measured no later than the one put, by Saved: a
 // connection puts back a state it took and didn't use, which mustn't undo
@@ -38,7 +42,7 @@ type CongestionStateCache interface {
 
 // MemoryCongestionStateCache is an in-memory CongestionStateCache that
 // holds at most a fixed number of states, evicting the least recently
-// saved, and drops each a fixed lifetime after it was measured. It is never
+// saved, and at most 32 resume-ID states for one address, and drops each a fixed lifetime after it was measured. It is never
 // persisted. Create one with NewMemoryCongestionStateCache.
 type MemoryCongestionStateCache struct {
 	mu         sync.Mutex
@@ -46,6 +50,7 @@ type MemoryCongestionStateCache struct {
 	lifetime   time.Duration
 	order      *list.List // most recently saved first
 	entries    map[string]*list.Element
+	groups     map[string]int // entries by resume-ID key group
 	now        func() time.Time
 }
 
@@ -58,6 +63,10 @@ type savedCongestionState struct {
 const (
 	defaultCongestionStateEntries  = 4096
 	defaultCongestionStateLifetime = 10 * time.Minute
+	// maxCongestionStatesPerGroup bounds the resume-ID states one address
+	// holds: enough for the clients behind a shared address, too few for
+	// one address to evict the cache.
+	maxCongestionStatesPerGroup = 32
 )
 
 // NewMemoryCongestionStateCache returns a cache of at most maxEntries
@@ -71,7 +80,7 @@ func NewMemoryCongestionStateCache(maxEntries int, lifetime time.Duration) *Memo
 	if lifetime <= 0 {
 		lifetime = defaultCongestionStateLifetime
 	}
-	return &MemoryCongestionStateCache{maxEntries: maxEntries, lifetime: lifetime, order: list.New(), entries: map[string]*list.Element{}, now: time.Now}
+	return &MemoryCongestionStateCache{maxEntries: maxEntries, lifetime: lifetime, order: list.New(), entries: map[string]*list.Element{}, groups: map[string]int{}, now: time.Now}
 }
 
 // Take implements CongestionStateCache.
@@ -109,9 +118,32 @@ func (c *MemoryCongestionStateCache) Put(key string, s CongestionState) {
 		c.remove(e)
 	}
 	c.entries[key] = c.order.PushFront(savedCongestionState{key, s, saved})
+	if group, ok := congestionStateGroup(key); ok {
+		c.groups[group]++
+		if c.groups[group] > maxCongestionStatesPerGroup {
+			for e := c.order.Back(); e != nil; e = e.Prev() {
+				if g, _ := congestionStateGroup(e.Value.(savedCongestionState).key); g == group {
+					c.remove(e)
+					break
+				}
+			}
+		}
+	}
 	for c.order.Len() > c.maxEntries {
 		c.remove(c.order.Back())
 	}
+}
+
+// congestionStateGroup returns a resume-ID key's group, its address.
+func congestionStateGroup(key string) (string, bool) {
+	if !strings.HasPrefix(key, "id:") {
+		return "", false
+	}
+	slash := strings.LastIndexByte(key, '/')
+	if slash < 0 {
+		return "", false
+	}
+	return key[:slash], true
 }
 
 // Delete drops key's state.
@@ -129,6 +161,7 @@ func (c *MemoryCongestionStateCache) Flush() {
 	defer c.mu.Unlock()
 	c.order.Init()
 	clear(c.entries)
+	clear(c.groups)
 }
 
 // Len reports how many states the cache holds, expired ones included.
@@ -139,8 +172,14 @@ func (c *MemoryCongestionStateCache) Len() int {
 }
 
 func (c *MemoryCongestionStateCache) remove(e *list.Element) {
-	delete(c.entries, e.Value.(savedCongestionState).key)
+	key := e.Value.(savedCongestionState).key
+	delete(c.entries, key)
 	c.order.Remove(e)
+	if group, ok := congestionStateGroup(key); ok {
+		if c.groups[group]--; c.groups[group] <= 0 {
+			delete(c.groups, group)
+		}
+	}
 }
 
 // congestionStates adapts a CongestionStateCache to the transport's.

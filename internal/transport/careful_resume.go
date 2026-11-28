@@ -40,9 +40,12 @@ func congestionStateKey(address netip.AddrPort) string {
 }
 
 // resumeIDKey keys a client's saved state by the resume ID in its address
-// tokens, apart from other clients behind its address.
-func resumeIDKey(id token.ResumeID) string {
-	return "id:" + hex.EncodeToString(id[:])
+// tokens, apart from other clients behind its address. The key's group,
+// before its slash, is that address: an address token binds the client's
+// IP, so an ID is only ever presented from it, and a cache can bound the
+// entries one address holds (see quic.CongestionStateCache).
+func resumeIDKey(id token.ResumeID, address netip.AddrPort) string {
+	return "id:" + congestionStateKey(address) + "/" + hex.EncodeToString(id[:])
 }
 
 // resumeCongestionState starts Careful Resume on a newly admitted server
@@ -76,7 +79,7 @@ func (c *Conn) resumeCongestionState(address netip.AddrPort, verified bool, id t
 	}
 	keys := []string{c.carefulResume.key}
 	if fromToken {
-		keys = []string{resumeIDKey(id), c.carefulResume.key}
+		keys = []string{resumeIDKey(id, address), c.carefulResume.key}
 	}
 	for _, key := range keys {
 		if s, ok := states.Take(key); ok {
@@ -150,7 +153,7 @@ func (c *Conn) saveSnapshot(states CongestionStates, r recovery.Resumer) bool {
 		return false
 	}
 	if c.carefulResume.fromToken {
-		states.Put(resumeIDKey(c.carefulResume.id), s)
+		states.Put(resumeIDKey(c.carefulResume.id, c.carefulResume.admitted), s)
 	} else {
 		states.Put(congestionStateKey(remote), s)
 	}
