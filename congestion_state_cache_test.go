@@ -114,6 +114,27 @@ func TestMemoryCongestionStateCacheGroups(t *testing.T) {
 	}
 }
 
+// In a small cache one address may hold at most an eighth of it, so its
+// resume IDs can't evict the others.
+func TestMemoryCongestionStateCacheSmallGroups(t *testing.T) {
+	c := NewMemoryCongestionStateCache(16, 0)
+	s := CongestionState{Bandwidth: 1e6, MinRTT: time.Millisecond}
+	for i := range 14 {
+		c.Put(fmt.Sprintf("192.0.2.%d", i), s)
+	}
+	for i := range 20 {
+		c.Put(fmt.Sprintf("id:198.51.100.1/%02d", i), s)
+	}
+	if c.groups["id:198.51.100.1"] != 2 || c.Len() != 16 {
+		t.Fatal("entries", c.Len(), c.groups)
+	}
+	for i := range 14 {
+		if _, ok := c.Take(fmt.Sprintf("192.0.2.%d", i)); !ok {
+			t.Fatal("evicted another address's state", i)
+		}
+	}
+}
+
 // The listener adapter skips states that couldn't be resumed from.
 func TestCongestionStatesAdapter(t *testing.T) {
 	c := NewMemoryCongestionStateCache(0, 0)

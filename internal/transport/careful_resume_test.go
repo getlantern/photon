@@ -106,6 +106,24 @@ func TestCongestionStateResumeID(t *testing.T) {
 	}
 }
 
+// A connection that came with a resume ID and migrated to another address
+// measured another path: it saves nothing under the ID, whose key carries
+// the address it was presented from, and puts back what it took.
+func TestCongestionStateResumeIDMigrated(t *testing.T) {
+	address := netip.MustParseAddrPort("192.0.2.7:4433")
+	id := token.ResumeID{9}
+	mine := recovery.ResumeState{Bandwidth: 1e6, MinRTT: 1e8}
+	snap := recovery.ResumeState{Bandwidth: 2e6, MinRTT: 1e8}
+	states := &testStates{saved: map[string]recovery.ResumeState{resumeIDKey(id, address): mine}}
+	c := resumeTestConn(states, &testResumer{snapshot: &snap})
+	c.resumeCongestionState(address, true, id, true)
+	c.publishRemoteAddress(netip.MustParseAddrPort("203.0.113.5:4433"))
+	c.saveCongestionState()
+	if got, ok := states.saved[resumeIDKey(id, address)]; !ok || got != mine || len(states.saved) != 1 {
+		t.Fatal("after migrating, saved", states.saved)
+	}
+}
+
 // A connection saves its path's state once, under its client's current
 // address, unmapped, and only after a completed handshake and an end not
 // caused by a protocol violation it detected. A failed jump doesn't put
