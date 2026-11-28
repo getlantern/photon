@@ -116,12 +116,39 @@ func TestMiniProbeContention(t *testing.T) {
 	if b.mini.phase != miniUp {
 		t.Fatal("no mini-probe long after congestion")
 	}
-	// A congestive cut marks congestion.
-	b = cruising(now)
-	b.lossInRound, b.bwLatest, b.inflightLatest = true, 5e5, 50_000
-	b.adaptLowerBoundsFromCongestion()
-	if !b.mini.congestedAt.Equal(now) {
-		t.Fatal("a congestive cut didn't mark congestion")
+	// A congestive cut marks congestion if it lost a packet sent after
+	// Startup and Drain, or saw ECN-CE in a loss round that began after
+	// them; not for Startup's own losses.
+	for _, tc := range []struct {
+		name                                    string
+		lostSinceStartup, ce, roundAfterStartup bool
+		marked                                  bool
+	}{
+		{"loss of a packet sent after Startup", true, false, false, true},
+		{"loss of a packet sent in Startup", false, false, true, false},
+		{"ECN-CE in a round begun after Startup", false, true, true, true},
+		{"ECN-CE in a round begun in Startup", false, true, false, false},
+	} {
+		b = cruising(now)
+		b.lossInRound, b.ceInRound, b.lostSinceStartup, b.lossRoundAfterStartup = true, tc.ce, tc.lostSinceStartup, tc.roundAfterStartup
+		b.bwLatest, b.inflightLatest = 5e5, 50_000
+		b.adaptLowerBoundsFromCongestion()
+		if marked := b.mini.congestedAt.Equal(now); marked != tc.marked {
+			t.Fatalf("%s: congestion marked %v, want %v", tc.name, marked, tc.marked)
+		}
+	}
+	// A loss notes whether its packet was sent after Startup and Drain.
+	for _, sentAfter := range []bool{true, false} {
+		b = cruising(now)
+		b.startupDoneAt = now.Add(-time.Second)
+		sent := now.Add(-time.Second / 2)
+		if !sentAfter {
+			sent = now.Add(-2 * time.Second)
+		}
+		b.OnLoss(LossEvent{Lost: []Packet{{Bytes: 1200, InFlight: true, SentAt: sent}}, TotalLost: 1200, Now: now})
+		if b.lostSinceStartup != sentAfter {
+			t.Fatalf("a packet sent after Startup %v: noted %v", sentAfter, b.lostSinceStartup)
+		}
 	}
 }
 
@@ -311,6 +338,56 @@ func TestRiseChecksRejectCongestedSamples(t *testing.T) {
 		rounds(b, 1, 1e6)
 		if b.mini.phase != miniUp {
 			t.Fatal("no mini-probe on the next clean round")
+		}
+	}
+}
+
+// Startup's overshoot, whose losses come to light once BBR is cruising and
+// cut the short-term bounds on a shallow buffer, doesn't keep mini-probes
+// off: they show BBR's own queue, not another flow's. A NewReno flow
+// joining does.
+func TestStartupOvershootLeavesMiniProbesOn(t *testing.T) {
+	for _, seed := range []uint64{3, 7, 11} {
+		b := newBBRFlow(seed)().(*BBR)
+		cut, probed := false, false
+		simulate(t, b, bufferedLink(50e6, 50*time.Millisecond, 0.25), 3*time.Second, func(time.Time) {
+			cut = cut || !math.IsInf(b.bwShortterm, 1)
+			probed = probed || b.mini.phase != miniOff
+		})
+		t.Logf("seed %d: short-term cut %v, congestion marked %v, mini-probed %v", seed, cut, !b.mini.congestedAt.IsZero(), probed)
+		if !cut || !b.mini.congestedAt.IsZero() || !probed {
+			t.Fatalf("seed %d: short-term cut %v, Startup's losses marked congestion %v, mini-probed %v; want a cut, no mark and mini-probes", seed, cut, !b.mini.congestedAt.IsZero(), probed)
+		}
+	}
+	b := newBBRFlow(3)().(*BBR)
+	simulateFlows(t, bufferedLink(20e6, 50*time.Millisecond, 1), 20*time.Second,
+		&simFlow{c: b}, &simFlow{c: newRenoFlow(), start: simStart.Add(3 * time.Second)})
+	if b.mini.congestedAt.IsZero() {
+		t.Fatal("a NewReno flow on the path didn't mark congestion")
+	}
+}
+
+// Startup ends, for congestion's evidence, when BBR leaves Drain: it stays
+// unset through Startup and Drain, and later probes, ProbeRTT and a
+// restarted Startup's own end don't move it.
+func TestNoteStartupDone(t *testing.T) {
+	b := cruising(time.Unix(100, 0))
+	for _, st := range []bbrState{bbrStartup, bbrDrain} {
+		b.state = st
+		b.noteStartupDone()
+		if !b.startupDoneAt.IsZero() {
+			t.Fatalf("state %d: Startup done", st)
+		}
+	}
+	b.state = bbrProbeBWDown
+	b.noteStartupDone()
+	done := b.now
+	for _, st := range []bbrState{bbrProbeBWCruise, bbrProbeBWRefill, bbrProbeBWUp, bbrProbeRTT} {
+		b.now = b.now.Add(time.Second)
+		b.state = st
+		b.noteStartupDone()
+		if !b.startupDoneAt.Equal(done) {
+			t.Fatalf("state %d moved Startup's end", st)
 		}
 	}
 }
