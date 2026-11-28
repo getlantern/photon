@@ -109,7 +109,7 @@ func runComparisonDownload(b *testing.B, sender string, link wanLink, seed uint6
 		server = startHysteriaServer(b, ctx, serverTLS, windows)
 	}
 	defer server.close()
-	up, down := newWANBottleneck(link), newWANBottleneck(link)
+	up, down := newArmedWANBottleneck(link), newArmedWANBottleneck(link)
 	relay := newSharedWANRelay(b, server.addr, up, down, seed)
 	dialCtx, stop := context.WithTimeout(ctx, 30*time.Second)
 	peer, err := dialUpstreamAddr(b, dialCtx, relay.addr(), clientTLS, &upstream.Config{Versions: []upstream.Version{upstream.Version1}, InitialStreamReceiveWindow: windows.stream, MaxStreamReceiveWindow: windows.stream, InitialConnectionReceiveWindow: windows.connection, MaxConnectionReceiveWindow: windows.connection})
