@@ -52,10 +52,15 @@ func (b *BBR) congestedNow() bool {
 	return b.lossInRound || b.ceInRound || b.lossRoundStart && b.lossRoundEndedCongested
 }
 
+// congestedSample reports whether a rate sample saw loss or ECN-CE while its
+// packet was in flight, which a reordered ACK can report after the loss
+// round that held it has ended.
+func congestedSample(rs RateSample) bool { return rs.Lost > 0 || rs.CE > 0 }
+
 // updateMiniProbe runs on each ACK in ProbeBW_CRUISE.
 func (b *BBR) updateMiniProbe(rs RateSample) {
 	if b.mini.phase != miniOff {
-		if b.congestedNow() || rs.CE > 0 || rs.AppLimited {
+		if b.congestedNow() || congestedSample(rs) || rs.AppLimited {
 			// Contention or an idle sender: no reading, and no probe.
 			b.endMiniProbe()
 			return
@@ -70,7 +75,7 @@ func (b *BBR) updateMiniProbe(rs RateSample) {
 	switch b.mini.phase {
 	case miniOff:
 		quiet := b.mini.congestedAt.IsZero() || b.now.Sub(b.mini.congestedAt) > bbrMiniProbeQuiet
-		if b.mini.rounds++; b.mini.rounds >= bbrMiniProbeRounds && !rs.AppLimited && quiet && !b.congestedNow() && rs.CE == 0 {
+		if b.mini.rounds++; b.mini.rounds >= bbrMiniProbeRounds && !rs.AppLimited && quiet && !b.congestedNow() && !congestedSample(rs) {
 			b.mini.phase, b.mini.maxBw, b.mini.fromBw = miniUp, 0, b.bw
 			b.pacingGain = 1.25
 		}
@@ -96,7 +101,7 @@ const bbrRiseGrowth = 1.25
 // bbrRiseGrowth, as a path whose rate rose by more than a probe's gain
 // does: then Startup finds the new rate in far fewer rounds than UP.
 func (b *BBR) upFoundRise(rs RateSample) bool {
-	if b.congestedNow() {
+	if b.congestedNow() || congestedSample(rs) {
 		// A peak measured under congestion isn't evidence of a rise, now
 		// or once the congestion has passed.
 		b.mini.maxBw = 0
