@@ -96,11 +96,17 @@ const bbrRiseGrowth = 1.25
 // bbrRiseGrowth, as a path whose rate rose by more than a probe's gain
 // does: then Startup finds the new rate in far fewer rounds than UP.
 func (b *BBR) upFoundRise(rs RateSample) bool {
+	if b.congestedNow() {
+		// A peak measured under congestion isn't evidence of a rise, now
+		// or once the congestion has passed.
+		b.mini.maxBw = 0
+		return false
+	}
 	if rs.Valid && !rs.AppLimited {
 		b.mini.maxBw = max(b.mini.maxBw, float64(rs.Rate))
 	}
 	quiet := b.mini.congestedAt.IsZero() || b.now.Sub(b.mini.congestedAt) > bbrMiniProbeQuiet
-	return b.roundStart && quiet && !b.congestedNow() && b.mini.fromBw > 0 && b.mini.maxBw > bbrRiseGrowth*b.mini.fromBw
+	return b.roundStart && quiet && b.mini.fromBw > 0 && b.mini.maxBw > bbrRiseGrowth*b.mini.fromBw
 }
 
 // restartStartup re-enters Startup after a mini-probe found the path's rate
