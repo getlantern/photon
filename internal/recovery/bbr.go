@@ -97,7 +97,18 @@ type BBR struct {
 
 	lossRoundDelivered uint64
 	lossRoundStart     bool
-	lossInRound        bool
+	// startupDoneAt is when BBR last left Startup and Drain, and zero while
+	// in them. Congestion that cuts the short-term bounds marks another flow
+	// on the path for mini-probes (see miniProbe) only if it struck packets
+	// sent since: Startup's overshoot, whose losses can come to light once
+	// BBR is cruising, shows its own queue. lostSinceStartup is whether the
+	// loss round lost such a packet, and lossRoundAfterStartup whether it
+	// began after Startup and Drain, which stands in for ECN-CE marks,
+	// reported on ACKs rather than packets.
+	startupDoneAt         time.Time
+	lostSinceStartup      bool
+	lossRoundAfterStartup bool
+	lossInRound           bool
 	// lossRoundEndedCongested is whether the loss round this ACK ended saw
 	// loss or ECN-CE, which its end has cleared from lossInRound and ceInRound.
 	lossRoundEndedCongested bool
@@ -284,6 +295,9 @@ func (b *BBR) OnLoss(e LossEvent) {
 	for _, p := range e.Lost {
 		if p.InFlight && !p.MTUProbe {
 			batch += uint64(p.Bytes)
+			if !b.startupDoneAt.IsZero() && !p.SentAt.Before(b.startupDoneAt) {
+				b.lostSinceStartup = true
+			}
 		}
 	}
 	// Whether this detection was a loss event, for the ACK that may follow.
@@ -366,6 +380,7 @@ func (b *BBR) OnACK(e ACKEvent) {
 	b.updateMinRTT(rs, e.Now)
 	b.checkProbeRTT(rs, e.Now)
 	b.noteRoundStartState()
+	b.noteStartupDone()
 	b.crOnACK(rs)
 	b.advanceLatestDeliverySignals(rs)
 	b.boundBWForModel()
@@ -878,8 +893,19 @@ func (b *BBR) advanceLatestDeliverySignals(rs RateSample) {
 	}
 }
 
+// noteStartupDone records when BBR left Startup and Drain (see
+// startupDoneAt).
+func (b *BBR) noteStartupDone() {
+	if b.state == bbrStartup || b.state == bbrDrain {
+		b.startupDoneAt = time.Time{}
+	} else if b.startupDoneAt.IsZero() {
+		b.startupDoneAt = b.now
+	}
+}
+
 func (b *BBR) resetCongestionSignals() {
 	b.lossInRound, b.ceInRound, b.lossRoundLost = false, false, 0
+	b.lostSinceStartup = false
 	b.lossEventsInRound = 0
 	b.bwLatest = 0
 	b.inflightLatest = 0
@@ -893,6 +919,7 @@ func (b *BBR) updateCongestionSignals(rs RateSample) {
 	b.adaptLowerBoundsFromCongestion()
 	b.lossRoundEndedCongested = b.lossInRound || b.ceInRound
 	b.lossInRound, b.ceInRound, b.lossRoundLost = false, false, 0
+	b.lossRoundAfterStartup, b.lostSinceStartup = !b.startupDoneAt.IsZero(), false
 }
 
 func (b *BBR) adaptLowerBoundsFromCongestion() {
@@ -911,7 +938,9 @@ func (b *BBR) adaptLowerBoundsFromCongestion() {
 		b.bwShortterm = max(b.bwLatest, bbrBeta*b.bwShortterm)
 		b.inflightShortterm = max(b.inflightLatest, uint64(bbrBeta*float64(b.inflightShortterm)))
 		b.shortTermByCE = b.shortTermByCE || b.ceInRound
-		b.mini.congestedAt = b.now
+		if b.lostSinceStartup || b.ceInRound && b.lossRoundAfterStartup {
+			b.mini.congestedAt = b.now
+		}
 	}
 }
 
