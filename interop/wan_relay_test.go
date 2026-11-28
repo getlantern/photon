@@ -21,9 +21,11 @@ type wanLink struct {
 	loss  float64
 	rate  float64
 	queue time.Duration
-	// stepAfter, if set, is how long after the link's first datagram its
-	// rate changes to stepRate. A datagram is charged at the rate when it
-	// arrives, so a backlog queued before the step drains at the old one.
+	// stepAfter, if set, is how long after the link's first datagram, or
+	// after its clock was started (wanBottleneck.startClock), its rate
+	// changes to stepRate. The link serves at whichever rate holds as
+	// it transmits, so a backlog queued before the step drains at the new
+	// one once the step comes.
 	stepAfter time.Duration
 	stepRate  float64
 }
@@ -58,6 +60,16 @@ type wanBottleneck struct {
 
 func newWANBottleneck(link wanLink) *wanBottleneck {
 	return &wanBottleneck{link: link, shape: wanShaper{link: link}}
+}
+
+// startClock starts the link's step clock now, rather than at its first
+// datagram, so that a step lands at the same point of a download however
+// long a sender's handshake took: a server that sends Retry takes one round
+// trip more.
+func (b *wanBottleneck) startClock() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.shape.first = time.Now()
 }
 
 // admit admits a datagram of n bytes arriving now. It reads the clock under
@@ -130,23 +142,39 @@ func (s *wanShaper) admit(now time.Time, n int) (time.Time, bool) {
 	if s.first.IsZero() {
 		s.first = now
 	}
-	rate := s.link.rate
-	if s.link.stepAfter > 0 && now.Sub(s.first) >= s.link.stepAfter {
-		rate = s.link.stepRate
-	}
 	departure := now
 	if s.busyUntil.After(now) {
 		departure = s.busyUntil
 	}
-	if rate <= 0 {
-		// Unlimited, but after any backlog from a finite rate before a step.
-		return departure, true
-	}
 	if departure.Sub(now) > s.link.queue {
 		return time.Time{}, false
 	}
-	s.busyUntil = departure.Add(time.Duration(float64(n) / rate * float64(time.Second)))
+	s.busyUntil = s.transmitted(departure, n)
 	return s.busyUntil, true
+}
+
+// transmitted returns when n bytes whose transmission starts at start have
+// left the link, at the rate before its step, if any, and after.
+func (s *wanShaper) transmitted(start time.Time, n int) time.Time {
+	rate := s.link.rate
+	if s.link.stepAfter > 0 {
+		step := s.first.Add(s.link.stepAfter)
+		if !start.Before(step) {
+			rate = s.link.stepRate
+		} else if rate > 0 {
+			before := step.Sub(start).Seconds() * rate
+			if float64(n) > before {
+				if s.link.stepRate <= 0 {
+					return step
+				}
+				return step.Add(time.Duration((float64(n) - before) / s.link.stepRate * float64(time.Second)))
+			}
+		}
+	}
+	if rate <= 0 {
+		return start
+	}
+	return start.Add(time.Duration(float64(n) / rate * float64(time.Second)))
 }
 
 // direction reads datagrams, applies the link, and delivers them in order from
@@ -311,6 +339,14 @@ func TestWANShaperStep(t *testing.T) {
 	later := start.Add(time.Second)
 	if at, _ := s.admit(later, 1000); at.Sub(later) != 100*time.Millisecond {
 		t.Fatal("after the step:", at.Sub(later))
+	}
+	// A backlog queued before the step drains at the new rate once it
+	// comes: 1000 bytes starting 5 ms before it send 500 at the old rate
+	// and 500 at the new.
+	q := wanShaper{link: wanLink{rate: 100_000, queue: time.Second, stepAfter: time.Second, stepRate: 10_000}}
+	q.admit(start, 100)
+	if at := q.transmitted(start.Add(995*time.Millisecond), 1000); at.Sub(start) != time.Second+50*time.Millisecond {
+		t.Fatal("across the step:", at.Sub(start))
 	}
 	// A step to an unlimited rate still departs after the backlog.
 	u := wanShaper{link: wanLink{rate: 100_000, queue: time.Second, stepAfter: time.Second}}
