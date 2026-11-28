@@ -26,6 +26,7 @@ func runECNRelayFallback(t *testing.T, drop bool) {
 	for _, v := range []quic.Version{quic.Version1, quic.Version2} {
 		for _, address := range []string{"127.0.0.1:0", "[::1]:0"} {
 			t.Run(fmt.Sprintf("%x/%s", v, address), func(t *testing.T) {
+				t.Parallel()
 				ct, st := tlsConfigs(t)
 				trace := &ecnSenderTrace{datagrams: make(chan qlog.ECN, 64)}
 				listener, err := upstream.ListenAddr(address, st, &upstream.Config{Versions: []upstream.Version{upstream.Version(v)}, EnableDatagrams: true, Tracer: func(context.Context, bool, upstream.ConnectionID) qlogwriter.Trace { return trace }})

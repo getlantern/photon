@@ -18,6 +18,7 @@ func TestIndependentClientMigrationUpstreamServer(t *testing.T) {
 	for _, version := range []independent.Version{independent.Version1, independent.Version2} {
 		for _, loss := range []string{"clean", "request", "response", "both"} {
 			t.Run(fmt.Sprintf("%x/%s", uint32(version), loss), func(t *testing.T) {
+				t.Parallel()
 				runIndependentMigration(t, version, loss, false)
 			})
 		}
