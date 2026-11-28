@@ -109,7 +109,8 @@ func runComparisonDownload(b *testing.B, sender string, link wanLink, seed uint6
 		server = startHysteriaServer(b, ctx, serverTLS, windows)
 	}
 	defer server.close()
-	relay := newSharedWANRelay(b, server.addr, newWANBottleneck(link), newWANBottleneck(link), seed)
+	up, down := newArmedWANBottleneck(link), newArmedWANBottleneck(link)
+	relay := newSharedWANRelay(b, server.addr, up, down, seed)
 	dialCtx, stop := context.WithTimeout(ctx, 30*time.Second)
 	peer, err := dialUpstreamAddr(b, dialCtx, relay.addr(), clientTLS, &upstream.Config{Versions: []upstream.Version{upstream.Version1}, InitialStreamReceiveWindow: windows.stream, MaxStreamReceiveWindow: windows.stream, InitialConnectionReceiveWindow: windows.connection, MaxConnectionReceiveWindow: windows.connection})
 	stop()
@@ -122,6 +123,11 @@ func runComparisonDownload(b *testing.B, sender string, link wanLink, seed uint6
 		b.Fatal(err)
 	}
 	defer closeServer()
+	// A step lands a fixed time into the download, not the handshake,
+	// which a server sending Retry, as photon's does, makes a round trip
+	// longer.
+	up.startClock()
+	down.startClock()
 	runDownload(b, ctx, peer, accept, payload, 5*time.Minute)
 	if drops {
 		b.ReportMetric(float64(relay.dropped[1].Load())/float64(b.N), "drops")
