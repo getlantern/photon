@@ -104,6 +104,7 @@ func (b *BBR) upFoundRise(rs RateSample) bool {
 // its gain each round until it stops growing, as it does on a new path; the
 // old in-flight limit goes, as it describes the slower path.
 func (b *BBR) restartStartup() {
+	b.checkProbeLoss, b.prevProbeTooHigh, b.prevProbePrecautionary = false, false, false
 	b.fullBwReached = false
 	b.resetFullBW()
 	b.inflightLongterm = bbrInfinity

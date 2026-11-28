@@ -11,7 +11,7 @@ import (
 // back faster than the estimate, or a probe's UP sees them come back faster
 // than a probe's gain, and BBR re-enters Startup. BBRv3 alone waited for
 // its next probe, two to three seconds on, and climbed in UP for seconds
-// more: 0.65-2.7 s at 50 ms and 3.1-3.6 s at 150 ms.
+// more: 0.65-2.7 s at 50 ms and 3.2-3.8 s at 150 ms.
 func TestBBRFindsRateRise(t *testing.T) {
 	for _, tc := range []struct {
 		rtt, within time.Duration
@@ -79,11 +79,12 @@ func TestMiniProbe(t *testing.T) {
 			t.Fatal("no drain round", b.mini.phase, b.pacingGain)
 		}
 		b.bw = tc.rate // as the samples raise it
+		b.bwShortterm, b.inflightShortterm = 5e5, 50_000
 		rounds(b, 1, tc.rate)
 		if startup := b.state == bbrStartup; startup != tc.startup {
 			t.Fatalf("samples at %.2f of the estimate: Startup %v, want %v", tc.rate/1e6, startup, tc.startup)
 		}
-		if tc.startup && (b.fullBwReached || b.inflightLongterm != bbrInfinity || !math.IsInf(b.bwShortterm, 1)) {
+		if tc.startup && (b.fullBwReached || b.inflightShortterm != bbrInfinity || b.inflightLongterm != bbrInfinity || !math.IsInf(b.bwShortterm, 1)) {
 			t.Fatal("Startup kept the old model")
 		}
 		if !tc.startup && (b.mini.phase != miniOff || b.pacingGain != 1) {
@@ -175,5 +176,37 @@ func TestMiniProbeRoundsAreProbes(t *testing.T) {
 		if b.cwnd != tc.want {
 			t.Fatalf("mini-probe phase %d: window %d, want %d", tc.phase, b.cwnd, tc.want)
 		}
+	}
+}
+
+// ECN-CE or an app-limited sample ends a mini-probe with no reading, as
+// loss does.
+func TestMiniProbeAborts(t *testing.T) {
+	now := time.Unix(100, 0)
+	for _, rs := range []RateSample{{Valid: true, Rate: 2e6, CE: 1}, {Valid: true, Rate: 2e6, AppLimited: true}} {
+		b := cruising(now)
+		rounds(b, bbrMiniProbeRounds, 1e6)
+		b.updateMiniProbe(rs)
+		if b.mini.phase != miniOff || b.pacingGain != 1 || b.mini.maxBw != 0 {
+			t.Fatalf("%+v didn't end the mini-probe", rs)
+		}
+	}
+}
+
+// Re-entering Startup from UP drops UP's loss check, so Startup's overshoot
+// doesn't set a new in-flight limit for the faster path; and ProbeRTT ends a
+// mini-probe.
+func TestRestartAndProbeRTTClearProbeState(t *testing.T) {
+	b := cruising(time.Unix(100, 0))
+	b.state, b.checkProbeLoss, b.prevProbeTooHigh, b.prevProbePrecautionary = bbrProbeBWUp, true, true, true
+	b.restartStartup()
+	if b.checkProbeLoss || b.prevProbeTooHigh || b.prevProbePrecautionary {
+		t.Fatal("Startup kept UP's loss check")
+	}
+	b = cruising(time.Unix(100, 0))
+	b.mini.phase = miniUp
+	b.enterProbeRTT()
+	if b.mini.phase != miniOff {
+		t.Fatal("ProbeRTT kept the mini-probe")
 	}
 }
