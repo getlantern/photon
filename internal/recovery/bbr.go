@@ -690,6 +690,7 @@ func (b *BBR) checkProbeRTT(rs RateSample, now time.Time) {
 }
 
 func (b *BBR) enterProbeRTT() {
+	b.mini = miniProbe{congestedAt: b.mini.congestedAt}
 	b.state = bbrProbeRTT
 	b.pacingGain = 1
 	b.cwndGain = bbrProbeRTTCwndGain
