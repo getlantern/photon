@@ -92,6 +92,7 @@ type BBR struct {
 	fullBwCount              int
 
 	baseline lossBaseline
+	mini     miniProbe
 	cr       carefulResume
 
 	lossRoundDelivered uint64
@@ -477,11 +478,13 @@ func (b *BBR) startProbeBWDown() {
 }
 
 func (b *BBR) startProbeBWCruise() {
+	b.mini = miniProbe{congestedAt: b.mini.congestedAt}
 	b.state = bbrProbeBWCruise
 	b.pacingGain, b.cwndGain = 1, bbrDefaultCwndGain
 }
 
 func (b *BBR) startProbeBWRefill() {
+	b.mini = miniProbe{congestedAt: b.mini.congestedAt}
 	b.resetShortTermModel()
 	b.bwProbeUpRounds = 0
 	b.bwProbeUpAcked = 0
@@ -497,6 +500,7 @@ func (b *BBR) startProbeBWUp(rs RateSample) {
 	b.resetFullBW()
 	b.fullBw = float64(rs.Rate)
 	b.state = bbrProbeBWUp
+	b.mini.fromBw, b.mini.maxBw = b.bw, 0
 	b.pacingGain, b.cwndGain = 1.25, 2.25
 	b.raiseInflightLongtermSlope()
 }
@@ -520,13 +524,19 @@ func (b *BBR) updateProbeBWCyclePhase(rs RateSample, now time.Time) {
 			b.startProbeBWCruise()
 		}
 	case bbrProbeBWCruise:
-		b.isTimeToProbeBW(now)
+		if !b.isTimeToProbeBW(now) {
+			b.updateMiniProbe(rs)
+		}
 	case bbrProbeBWRefill:
 		if b.roundStart {
 			b.checkProbeLoss = true
 			b.startProbeBWUp(rs)
 		}
 	case bbrProbeBWUp:
+		if b.upFoundRise(rs) {
+			b.restartStartup()
+			return
+		}
 		if b.isTimeToGoDown(rs) {
 			b.prevProbeTooHigh = false
 			b.startProbeBWDown()
@@ -733,14 +743,14 @@ func (b *BBR) startRound() { b.nextRoundDelivered = b.delivered }
 // has moved the state machine, which can leave for ProbeRTT or a probe.
 func (b *BBR) noteRoundStartState() {
 	if b.roundStart {
-		b.baseline.roundQuiet = b.state == bbrProbeBWDown || b.state == bbrProbeBWCruise
+		b.baseline.roundQuiet = b.quietState()
 	}
 }
 
 func (b *BBR) updateRound(rs RateSample) {
 	if rs.PriorDelivered >= b.nextRoundDelivered {
 		b.startRound()
-		if b.baseline.endRound(b.delivered, b.state == bbrProbeBWDown || b.state == bbrProbeBWCruise, b.queueing) {
+		if b.baseline.endRound(b.delivered, b.quietState(), b.queueing) {
 			b.dropPreBaselineCuts()
 		}
 		b.roundCount++
@@ -891,6 +901,7 @@ func (b *BBR) adaptLowerBoundsFromCongestion() {
 		b.bwShortterm = max(b.bwLatest, bbrBeta*b.bwShortterm)
 		b.inflightShortterm = max(b.inflightLatest, uint64(bbrBeta*float64(b.inflightShortterm)))
 		b.shortTermByCE = b.shortTermByCE || b.ceInRound
+		b.mini.congestedAt = b.now
 	}
 }
 
@@ -990,7 +1001,7 @@ func (b *BBR) setCwnd(rs RateSample) {
 
 func (b *BBR) boundCwndForModel() {
 	cap := uint64(bbrInfinity)
-	if b.inProbeBW() && b.state != bbrProbeBWCruise {
+	if b.inProbeBW() && b.state != bbrProbeBWCruise || b.mini.phase == miniUp {
 		cap = b.inflightLongterm
 	} else if b.state == bbrProbeRTT || b.state == bbrProbeBWCruise {
 		cap = b.inflightWithHeadroom()
