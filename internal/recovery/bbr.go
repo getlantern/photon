@@ -97,8 +97,8 @@ type BBR struct {
 
 	lossRoundDelivered uint64
 	lossRoundStart     bool
-	// startupDoneAt is when BBR last left Startup and Drain, and zero while
-	// in them. Congestion that cuts the short-term bounds marks another flow
+	// startupDoneAt is when BBR last reached ProbeBW from Startup and Drain,
+	// and zero while in them. Congestion that cuts the short-term bounds marks another flow
 	// on the path for mini-probes (see miniProbe) only if it struck packets
 	// sent since: Startup's overshoot, whose losses can come to light once
 	// BBR is cruising, shows its own queue. lostSinceStartup is whether the
@@ -408,6 +408,7 @@ func (b *BBR) minPipeCwnd() uint64 { return 4 * b.smss }
 
 func (b *BBR) enterStartup() {
 	b.state = bbrStartup
+	b.startupDoneAt = time.Time{}
 	b.pacingGain = bbrStartupPacingGain
 	b.cwndGain = bbrDefaultCwndGain
 }
@@ -841,8 +842,10 @@ func (b *BBR) handleInflightTooHigh(appLimited bool, txInFlight uint64) {
 func (b *BBR) noteLoss() {
 	b.crCongestion()
 	if !b.lossInRound {
+		// A new loss round begins here.
 		b.lossRoundDelivered = b.delivered
 		b.lossRoundFrom = b.delivered
+		b.lossRoundAfterStartup = !b.startupDoneAt.IsZero()
 		b.saveStateUponLoss()
 	}
 	b.lossInRound = true
@@ -893,12 +896,13 @@ func (b *BBR) advanceLatestDeliverySignals(rs RateSample) {
 	}
 }
 
-// noteStartupDone records when BBR left Startup and Drain (see
-// startupDoneAt).
+// noteStartupDone records when BBR reached ProbeBW from Startup and Drain
+// (see startupDoneAt). ProbeRTT leaves it as it was: it can interrupt
+// Startup, and return to it.
 func (b *BBR) noteStartupDone() {
 	if b.state == bbrStartup || b.state == bbrDrain {
 		b.startupDoneAt = time.Time{}
-	} else if b.startupDoneAt.IsZero() {
+	} else if b.inProbeBW() && b.startupDoneAt.IsZero() {
 		b.startupDoneAt = b.now
 	}
 }

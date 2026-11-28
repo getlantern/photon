@@ -367,12 +367,13 @@ func TestStartupOvershootLeavesMiniProbesOn(t *testing.T) {
 	}
 }
 
-// Startup ends, for congestion's evidence, when BBR leaves Drain: it stays
-// unset through Startup and Drain, and later probes, ProbeRTT and a
-// restarted Startup's own end don't move it.
+// Startup ends, for congestion's evidence, when BBR reaches ProbeBW: it
+// stays unset through Startup, Drain and a ProbeRTT that interrupts them,
+// later probes and ProbeRTT don't move it, and entering Startup again
+// clears it at once.
 func TestNoteStartupDone(t *testing.T) {
 	b := cruising(time.Unix(100, 0))
-	for _, st := range []bbrState{bbrStartup, bbrDrain} {
+	for _, st := range []bbrState{bbrStartup, bbrProbeRTT, bbrStartup, bbrDrain} {
 		b.state = st
 		b.noteStartupDone()
 		if !b.startupDoneAt.IsZero() {
@@ -388,6 +389,28 @@ func TestNoteStartupDone(t *testing.T) {
 		b.noteStartupDone()
 		if !b.startupDoneAt.Equal(done) {
 			t.Fatalf("state %d moved Startup's end", st)
+		}
+	}
+	b.enterStartup()
+	if !b.startupDoneAt.IsZero() {
+		t.Fatal("entering Startup left Startup done")
+	}
+}
+
+// ECN-CE that begins a loss round after Startup notes that the round began
+// after it, so a cut on its marks alone arms the guard.
+func TestCEStartsLossRoundAfterStartup(t *testing.T) {
+	now := time.Unix(100, 0)
+	for _, after := range []bool{true, false} {
+		b := cruising(now)
+		b.delivered, b.lossRoundDelivered, b.nextRoundDelivered = 100_000, 200_000, 200_000
+		b.lossRoundAfterStartup = !after
+		if after {
+			b.startupDoneAt = now.Add(-time.Second)
+		}
+		b.OnACK(ACKEvent{Rate: RateSample{NewlyAcked: 1200, NewCE: 1200, CE: 1200, PriorDelivered: 90_000, TotalDelivered: 101_200}, Flight: 50_000, Now: now})
+		if !b.lossInRound || b.lossRoundAfterStartup != after {
+			t.Fatalf("CE after Startup %v: loss round %v, began after Startup %v", after, b.lossInRound, b.lossRoundAfterStartup)
 		}
 	}
 }
