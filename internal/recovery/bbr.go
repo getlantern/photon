@@ -98,14 +98,17 @@ type BBR struct {
 	lossRoundDelivered uint64
 	lossRoundStart     bool
 	lossInRound        bool
-	ceInRound          bool   // CE marks in the loss round, which no baseline discounts
-	shortTermByCE      bool   // CE marks have cut the short-term bounds since their last reset
-	lossRoundLost      uint64 // bytes lost in the loss round
-	lossRoundFrom      uint64 // delivered bytes as the loss round began
-	lossEventsInRound  int
-	lossNoted          bool // OnLoss noted a loss event since the last OnACK
-	inRecovery         bool
-	recoveryStart      time.Time
+	// lossRoundEndedCongested is whether the loss round this ACK ended saw
+	// loss or ECN-CE, which its end has cleared from lossInRound and ceInRound.
+	lossRoundEndedCongested bool
+	ceInRound               bool   // CE marks in the loss round, which no baseline discounts
+	shortTermByCE           bool   // CE marks have cut the short-term bounds since their last reset
+	lossRoundLost           uint64 // bytes lost in the loss round
+	lossRoundFrom           uint64 // delivered bytes as the loss round began
+	lossEventsInRound       int
+	lossNoted               bool // OnLoss noted a loss event since the last OnACK
+	inRecovery              bool
+	recoveryStart           time.Time
 
 	bwProbeStopping, checkProbeLoss          bool
 	bwProbeUpAcked, probeUpAckedPerInc       uint64
@@ -883,6 +886,7 @@ func (b *BBR) updateCongestionSignals(rs RateSample) {
 		return
 	}
 	b.adaptLowerBoundsFromCongestion()
+	b.lossRoundEndedCongested = b.lossInRound || b.ceInRound
 	b.lossInRound, b.ceInRound, b.lossRoundLost = false, false, 0
 }
 
