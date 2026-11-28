@@ -204,6 +204,14 @@ func TestBBRProbeRTTExitOnSendBoundsWindow(t *testing.T) {
 	}
 	if want := b.inflightWithHeadroom(); b.cwnd != want {
 		t.Fatal("window", b.cwnd, "after leaving ProbeRTT, want the Cruise cap", want)
+	} // A ProbeRTT that interrupted Drain ends Startup here, so this send's
+	// loss is evidence of congestion.
+	if !b.startupDoneAt.Equal(start.Add(time.Millisecond)) {
+		t.Fatal("Startup's end", b.startupDoneAt, "want this send's time")
+	}
+	b.OnLoss(LossEvent{Lost: []Packet{{Bytes: 1200, InFlight: true, SentAt: start.Add(time.Millisecond)}}, TotalLost: 1200, Now: start.Add(time.Second)})
+	if !b.lostSinceStartup {
+		t.Fatal("the send's loss counted as Startup's")
 	}
 }
 
